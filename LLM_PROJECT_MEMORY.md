@@ -70,35 +70,43 @@ The model should use a modern decoder-only Transformer design suitable for small
 
 Begin with a very small experimental model before choosing the final sub-1B model.
 
-### 5. Create the Tokenizer
+### 5. Adopt and Freeze the Tokenizer
 
-Choose or train a tokenizer for English text.
+Use the GPT-2 byte-level BPE tokenizer already used by Nemotron-ClimbMix rather than training a custom tokenizer.
 
-The tokenizer should:
+The source documents already contain GPT-2 token IDs. The production corpus therefore reuses those IDs directly instead of decoding and retokenizing every accepted document.
 
-- Represent English efficiently.
-- Preserve punctuation and formatting.
-- Handle uncommon words and symbols.
-- Include all special tokens needed later for chat and instructions.
+Before model creation:
+
+- Freeze the base GPT-2 vocabulary.
+- Decide and append the small set of project special tokens needed for padding, document boundaries, chat, and instruction tuning.
+- Save the tokenizer files, configuration, and hashes.
+- Verify special-token behavior and basic source-token compatibility on a small test.
+
+Tokenizer training is outside the current project scope unless a concrete limitation of GPT-2 tokenization is discovered later.
 
 ### 6. Collect and Prepare Pretraining Data
 
-Use a manageable, publicly available English corpus that fits the project's storage and compute limits. Process it locally as a fixed, tokenized training corpus rather than attempting to manage a multi-terabyte mixture.
+Use a manageable, publicly available English corpus that fits the project's storage and compute limits. Process it locally as a fixed, training-ready token corpus rather than attempting to manage a multi-terabyte mixture during training.
 
-The current provisional source is a roughly 25% category-stratified subset of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. Programming-heavy *documents* are excluded from the initial scope, since coding capability is explicitly deferred; useful natural-language technical explanations can stay.
+The current source is a roughly 25% cluster-stratified subset of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. NVIDIA's numeric `cluster_id` is the sole semantic/content-selection heuristic for the first production corpus.
 
-The selected corpus is expected to be roughly 400 GB / 80–100B unique tokens. The working training target is 2T token presentations, implying roughly 20–25 passes over that corpus. This is an experiment assumption to validate with held-out loss and downstream evaluations, not a claim that repeated epochs substitute fully for more unique data.
+Programming-oriented clusters are excluded or assigned no quota because coding capability is deferred. No document-level code-density, quality, topic, or LLM classifier is applied during this first production extraction. Incidental code, low-quality text, or broad-topic mismatches may therefore remain inside accepted clusters and are recorded as a known limitation.
 
-Before training, the subset must be tokenized, cleaned, deduplicated where applicable, organized into train/validation partitions, and checked for overlap with private evaluation sets.
+The selected corpus is expected to be roughly 400 GB / 80–100B unique source tokens. The working training target is 2T token presentations, implying roughly 20–25 passes over that corpus. This is an experimental assumption to validate with held-out loss and downstream evaluations, not a claim that repeated epochs fully substitute for more unique data.
 
-### Programming-Content Audit
+The production extraction should:
 
-Validate the code exclusion rather than relying only on dataset labels:
+1. Stream Nemotron-ClimbMix source records.
+2. Read each record's `cluster_id` and existing GPT-2 token IDs.
+3. Accept records only while the configured cluster quota is unfilled.
+4. Perform structural validation only, such as checking required fields, valid token-ID ranges, and non-empty token arrays.
+5. Assign accepted documents reproducibly to train or validation data.
+6. Write the existing token IDs directly into sharded binary training files with document or sequence-boundary indexes.
+7. Maintain resumable checkpoints, per-cluster token/document counters, output hashes, and a manifest.
+8. Check the final corpus for overlap with private evaluation sets where feasible.
 
-1. Apply a code-density filter to the full selected subset.
-2. Sample documents across `cluster_id` values and shards, oversampling borderline cases.
-3. Classify audit samples as explicit code, mixed technical prose, or normal prose; inspect a smaller set manually, with emphasis on classifier disagreements.
-4. Repeat the audit after filtering and estimate the residual code rate.
+The full corpus is not detokenized into plain-text JSON and is not passed through an LLM. Decoding a tiny number of records remains optional for debugging, but it is not a production filter or approval gate.
 
 FineWeb-Edu, DCLM-Baseline, and selected Dolma 3 sources remain candidate alternatives for a later corpus comparison, not the current pretraining plan.
 
@@ -106,9 +114,9 @@ FineWeb-Edu, DCLM-Baseline, and selected Dolma 3 sources remain candidate altern
 
 The numeric `cluster_id` values must use NVIDIA's published CLIMB topic table. The earlier project map was wrong for all 20 numeric IDs and must not be reused. In particular: cluster 11 is software/programming, 15 is film/comics, 16 is sustainability/climate, 18 is cybersecurity/networking, and 20 is public safety/political history rather than Python code.
 
-A bounded live check sampled five documents from every ID (100 documents total) and sent 20 fixed-schema Gemini reviews against the published map. It found 11 matches, 6 partial matches, and 3 broad-topic mismatches. This supports the map while also showing that semantic clusters are broad, not exclusive. The full evidence is stored in `cluster_map_validation.json` at the repository root.
+A bounded live check sampled five documents from every ID (100 documents total) and sent 20 fixed-schema Gemini reviews against the published map. It found 11 matches, 6 partial matches, and 3 broad-topic mismatches. This supports using NVIDIA's map as a broad selection heuristic while confirming that clusters are not perfectly pure. The evidence is stored in `cluster_map_validation.json` at the repository root.
 
-The current `dataset/config.py` keeps all 20 clusters with provisional balanced quotas. Clusters 1, 6, 11, 12, and 18 are `keep_without_code`; the deterministic source/API-dump filter still applies to every cluster. Do not run production selection until the 50-document-per-cluster sample, LLM review, and manual worksheet have confirmed or revised these provisional quotas.
+The production decision is now to trust these cluster IDs without a second mandatory 50-document-per-cluster review, manual worksheet, document-level code filter, or LLM approval gate. Production selection may begin once the desired cluster quotas and output-shard settings are configured. The resulting corpus should be described as **programming-cluster-excluded**, not guaranteed code-free.
 
 ### 7. Pretrain the Base Model
 
@@ -222,7 +230,7 @@ Record:
 - Tokenizer.
 - Dataset sources.
 - Data mixture.
-- Cleaning process.
+- Selection and structural-validation process.
 - Training settings.
 - Compute usage.
 - Evaluation results.
@@ -234,9 +242,13 @@ Record:
 
 ## Current Dataset Decision
 
-The provisional initial pretraining corpus is a category-stratified subset (about 25%) of **Nemotron-ClimbMix**, with programming-heavy documents filtered out at document level. The goal is an English/general-knowledge base model rather than a coding model; technical prose is retained when it is mostly natural language.
+The initial pretraining corpus is a cluster-stratified subset of **Nemotron-ClimbMix**, targeting approximately 80–100B unique GPT-2 tokens and roughly 400 GB of local storage.
 
-The working plan is to prepare approximately 80–100B unique tokens and train for a 2T-token presentation budget, while monitoring loss and held-out evaluations for signs that repeated epochs are no longer beneficial.
+NVIDIA's published `cluster_id` map is the only content-selection heuristic for the first production extraction. Programming-oriented clusters receive no quota; accepted clusters are sampled according to the final configured mixture. There is no document-level code, quality, topic, or LLM filter. The corpus may contain incidental code and other cluster impurities, so it is programming-cluster-excluded rather than guaranteed code-free.
+
+The source GPT-2 token IDs are retained directly and written into binary train/validation shards. The full corpus is not converted to plain-text JSON, Parquet, or another tokenizer during production.
+
+The working training target remains 2T token presentations, while monitoring held-out loss and downstream evaluations for signs that repeated epochs are no longer beneficial.
 
 ---
 
@@ -246,8 +258,9 @@ The working plan is to prepare approximately 80–100B unique tokens and train f
 Define goals and evaluation
 → Set the compute budget
 → Build and validate a small model
-→ Create the tokenizer
-→ Prepare and audit the selected Nemotron-ClimbMix subset
+→ Adopt and freeze the GPT-2 tokenizer plus project special tokens
+→ Configure Nemotron-ClimbMix cluster quotas
+→ Stream selected records directly into binary train/validation token shards
 → Pretrain the English base model
 → Continue training for reasoning
 → Evaluate the base model
@@ -255,7 +268,6 @@ Define goals and evaluation
 → Improve it through distillation and verified reasoning data
 → Evaluate, optimize, document, and release
 ```
-
 
 - Reasoning is learned from a mix of normal pretraining, clear worked examples, and practice on problems with correct answers.
 - For this project, build strong English first, then add verified reasoning examples and later improve reasoning through guided practice.
@@ -266,8 +278,9 @@ Define goals and evaluation
 
 - Final parameter count.
 - Whether the 2T-token presentation target and repeated-epoch schedule are justified by evaluation results.
-- Exact category mix and final corpus size within Nemotron-ClimbMix.
-- Tokenizer vocabulary size.
+- Exact selected cluster list, per-cluster quotas, and final corpus size within Nemotron-ClimbMix.
+- Exact project special-token set.
+- Binary shard size, indexing scheme, and sequence-packing policy.
 - Reasoning datasets and generation process.
 - Teacher model used for distillation.
 - Evaluation benchmark suite.
