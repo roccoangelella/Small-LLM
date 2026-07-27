@@ -581,5 +581,8 @@
     85,
     97
   ],
-  "status": "passed"
+  "status": "passed",
+  "superseded": true,
+  "superseded_by": "cluster_map_validation.json",
+  "superseded_reason": "This historical seven-call trace used the obsolete cluster-topic hypotheses that were replaced after the full numeric-map validation."
 }

@@ -7,8 +7,11 @@ and deterministic code/API-dump exclusion as a guardrail.
 
 All tunable values, including the 20 cluster policies and per-cluster quota
 percentages, live in [dataset/config.py](dataset/config.py).  The default policy
-keeps clusters 1--19, applies stricter code removal to 15 and 17, and excludes
-the Python/code cluster 20.
+uses NVIDIA's published numeric cluster map, which we checked on bounded live
+samples in [cluster_map_validation.json](cluster_map_validation.json). No numeric
+cluster is thrown away wholesale: code-heavy clusters 1, 6, 11, 12, and 18 keep
+useful prose but lose source code, repositories, and generated API material.
+Cluster 20 is civic/political material, not the Python cluster.
 
 Install dependencies once:
 

@@ -48,8 +48,8 @@ class DatasetIntegrationTest(unittest.TestCase):
                     len(list(read_jsonl(config.SAMPLES_PATH))),
                     20 * config.SAMPLE_DOCUMENTS_PER_CLUSTER,
                 )
-                self.assertEqual(inventory["clusters"]["20"].get("eligible_documents", 0), 0)
-                self.assertGreater(inventory["clusters"]["15"]["rejected_documents"], 0)
+                self.assertGreater(inventory["clusters"]["20"].get("eligible_documents", 0), 0)
+                self.assertGreater(inventory["clusters"]["11"]["rejected_documents"], 0)
                 plan = create_selection_plan()
                 self.assertTrue(
                     all(
@@ -79,7 +79,7 @@ class DatasetIntegrationTest(unittest.TestCase):
                 selected = list(iter_selected_documents())
                 self.assertTrue(selected)
                 self.assertEqual(len({record["document_id"] for record in selected}), len(selected))
-                self.assertNotIn(20, {record["cluster_id"] for record in selected})
+                self.assertIn(20, {record["cluster_id"] for record in selected})
                 self.assertTrue(all(not inspect_text(record["text"]).code_dominated for record in selected))
                 self.assertGreater(len(list(config.OUTPUT_DIR.glob("part-*.jsonl"))), 1)
 
@@ -128,9 +128,7 @@ class DatasetIntegrationTest(unittest.TestCase):
         source_index = 0
         for cluster_id in range(1, 21):
             for number in range(80):
-                if cluster_id == 20:
-                    text = """module.py\n\nfrom pathlib import Path\n\ndef load_items(path: str) -> list[str]:\n    return Path(path).read_text().splitlines()\n\nfor item in load_items('input.txt'):\n    print(item)\n""" * 4
-                elif cluster_id in {15, 17} and number % 8 == 0:
+                if cluster_id in {1, 6, 11, 12, 18} and number % 8 == 0:
                     text = """example.py\n\nimport json\n\ndef render(value: dict[str, str]) -> str:\n    return json.dumps(value)\n\nfor value in range(10):\n    print(render({'value': str(value)}))\n""" * 4
                 else:
                     text = (

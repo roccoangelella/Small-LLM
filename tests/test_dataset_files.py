@@ -20,7 +20,13 @@ from dataset.src.storage import read_jsonl
 class DatasetFilesTest(unittest.TestCase):
     def test_cluster_policy_has_requested_balance(self) -> None:
         config.validate_config()
-        self.assertEqual(config.CLUSTER_POLICIES[20].decision, config.EXCLUDE)
+        self.assertEqual(
+            config.CLUSTER_POLICIES[11].expected_topic,
+            "Software Development, Programming, Web Development, JavaScript, Databases",
+        )
+        self.assertEqual(config.CLUSTER_POLICIES[11].decision, config.KEEP_WITHOUT_CODE)
+        self.assertEqual(config.CLUSTER_POLICIES[20].decision, config.KEEP)
+        self.assertIn("Public Safety", config.CLUSTER_POLICIES[20].expected_topic)
         self.assertEqual(
             sum(
                 policy.quota_percent

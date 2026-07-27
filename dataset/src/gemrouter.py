@@ -88,6 +88,7 @@ def gemrouter_json(
     )
     failures: list[str] = []
     for attempt in range(1, config.LLM_RETRY_ATTEMPTS + 1):
+        content: str | None = None
         try:
             with urlopen(request, timeout=config.GEMROUTER_TIMEOUT_SECONDS) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -113,7 +114,10 @@ def gemrouter_json(
             failure = f"attempt {attempt}: {type(error).__name__}: {error}"
             failures.append(failure)
             if trace_events is not None:
-                trace_events.append({"attempt": attempt, "request": body, "error": failure})
+                event: dict[str, Any] = {"attempt": attempt, "request": body, "error": failure}
+                if content is not None:
+                    event["raw_response"] = content
+                trace_events.append(event)
             if attempt < config.LLM_RETRY_ATTEMPTS:
                 time.sleep(config.LLM_RETRY_DELAY_SECONDS * attempt)
     raise RuntimeError("GemRouter review failed: " + " | ".join(failures))

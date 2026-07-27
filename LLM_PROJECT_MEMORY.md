@@ -85,7 +85,7 @@ The tokenizer should:
 
 Use a manageable, publicly available English corpus that fits the project's storage and compute limits. Process it locally as a fixed, tokenized training corpus rather than attempting to manage a multi-terabyte mixture.
 
-The current provisional source is a roughly 25% category-stratified subset of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. Programming-heavy material is excluded from the initial scope, since coding capability is explicitly deferred.
+The current provisional source is a roughly 25% category-stratified subset of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. Programming-heavy *documents* are excluded from the initial scope, since coding capability is explicitly deferred; useful natural-language technical explanations can stay.
 
 The selected corpus is expected to be roughly 400 GB / 80–100B unique tokens. The working training target is 2T token presentations, implying roughly 20–25 passes over that corpus. This is an experiment assumption to validate with held-out loss and downstream evaluations, not a claim that repeated epochs substitute fully for more unique data.
 
@@ -101,6 +101,14 @@ Validate the code exclusion rather than relying only on dataset labels:
 4. Repeat the audit after filtering and estimate the residual code rate.
 
 FineWeb-Edu, DCLM-Baseline, and selected Dolma 3 sources remain candidate alternatives for a later corpus comparison, not the current pretraining plan.
+
+### Verified Nemotron-ClimbMix Cluster Map — 2026-07-27
+
+The numeric `cluster_id` values must use NVIDIA's published CLIMB topic table. The earlier project map was wrong for all 20 numeric IDs and must not be reused. In particular: cluster 11 is software/programming, 15 is film/comics, 16 is sustainability/climate, 18 is cybersecurity/networking, and 20 is public safety/political history rather than Python code.
+
+A bounded live check sampled five documents from every ID (100 documents total) and sent 20 fixed-schema Gemini reviews against the published map. It found 11 matches, 6 partial matches, and 3 broad-topic mismatches. This supports the map while also showing that semantic clusters are broad, not exclusive. The full evidence is stored in `cluster_map_validation.json` at the repository root.
+
+The current `dataset/config.py` keeps all 20 clusters with provisional balanced quotas. Clusters 1, 6, 11, 12, and 18 are `keep_without_code`; the deterministic source/API-dump filter still applies to every cluster. Do not run production selection until the 50-document-per-cluster sample, LLM review, and manual worksheet have confirmed or revised these provisional quotas.
 
 ### 7. Pretrain the Base Model
 
@@ -226,7 +234,7 @@ Record:
 
 ## Current Dataset Decision
 
-The provisional initial pretraining corpus is a category-stratified subset (about 25%) of **Nemotron-ClimbMix**, with programming-heavy content filtered out. The goal is an English/general-knowledge base model rather than a coding model.
+The provisional initial pretraining corpus is a category-stratified subset (about 25%) of **Nemotron-ClimbMix**, with programming-heavy documents filtered out at document level. The goal is an English/general-knowledge base model rather than a coding model; technical prose is retained when it is mostly natural language.
 
 The working plan is to prepare approximately 80–100B unique tokens and train for a 2T-token presentation budget, while monitoring loss and held-out evaluations for signs that repeated epochs are no longer beneficial.
 

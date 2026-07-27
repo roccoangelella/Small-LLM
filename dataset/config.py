@@ -26,6 +26,8 @@ DATASET_SPLIT = "train"
 DATASET_DATA_FILES_GLOB = "part_*.tokenized.jsonl"
 TOKENIZER_ENCODING = "gpt2"
 RANDOM_SEED = "small-llm-climbmix-v1"
+# NVIDIA's numeric ClimbLab topic table, used for the matching ClimbMix IDs.
+CLUSTER_TOPIC_SOURCE_URL = "https://research.nvidia.com/labs/lpr/climb/"
 
 
 # ---------------------------------------------------------------------------
@@ -48,8 +50,11 @@ AUDIT_DIR = ARTIFACTS_DIR / "audit"
 
 
 # ---------------------------------------------------------------------------
-# Cluster policy and quota.  These are the production defaults to validate
-# against the sample review.  Percentages must total 100 across accepted IDs.
+# Cluster policy and quota. Topics use NVIDIA's published CLIMB table for these
+# numeric IDs, verified against bounded live samples in
+# ``cluster_map_validation.json``. Individual documents can still sit near a
+# cluster boundary, so the 50-document review is the final policy check.
+# Percentages must total 100 across accepted IDs.
 # ---------------------------------------------------------------------------
 
 KEEP = "keep"
@@ -68,26 +73,26 @@ class ClusterPolicy:
 
 
 CLUSTER_POLICIES: dict[int, ClusterPolicy] = {
-    1: ClusterPolicy("Environment, public health, policy development, medical innovation", KEEP, 5, "Useful scientific and policy prose."),
-    2: ClusterPolicy("Technology, neurophysiology, health and safety, innovative research, rehabilitation", KEEP, 6, "Useful technical and health prose."),
-    3: ClusterPolicy("Restoration efforts, climate, ecosystems, community engagement", KEEP, 5, "Environment and civic knowledge."),
-    4: ClusterPolicy("Diagnostics, diseases, prevention and control", KEEP, 5, "Medical and public-health knowledge."),
-    5: ClusterPolicy("Vehicles, ecology, communities, conservation", KEEP, 4, "General and environmental knowledge."),
-    6: ClusterPolicy("Energy, science, materials, nanostructures, quantum computing", KEEP, 6, "Scientific and technical prose; code filter still applies."),
-    7: ClusterPolicy("Physics, particle accelerators, materials, architecture, systems", KEEP, 6, "Scientific and systems prose; code filter still applies."),
-    8: ClusterPolicy("Biology, genetics, astronomy, climate science", KEEP, 6, "Core scientific knowledge."),
-    9: ClusterPolicy("Earth science, space science, scientific collaboration", KEEP, 6, "Core scientific knowledge."),
-    10: ClusterPolicy("Health, symptoms, treatments, therapy, disorders and medical conditions", KEEP, 5, "Medical prose."),
-    11: ClusterPolicy("Communication, biographies, history, society and policy", KEEP, 5, "General knowledge and humanities."),
-    12: ClusterPolicy("Culture, education, sustainability, community, public health, crime and economics", KEEP, 5, "General knowledge and social science."),
-    13: ClusterPolicy("Arts, literature, education and history", KEEP, 4, "Humanities balance."),
-    14: ClusterPolicy("Geography, government, organizations, religion, agriculture, economics and civilizations", KEEP, 4, "General knowledge balance."),
-    15: ClusterPolicy("Science, technology, education, engineering and collaboration", KEEP_WITHOUT_CODE, 7, "Retain explanatory prose while strictly excluding code-heavy material."),
-    16: ClusterPolicy("Science, health, minerals, population, agriculture, vaccination, welfare and management", KEEP, 6, "Applied science and general knowledge."),
-    17: ClusterPolicy("Role-playing, problem solving, mathematics and algorithms", KEEP_WITHOUT_CODE, 5, "Keep mathematics and reasoning prose, but no implementation-heavy documents."),
-    18: ClusterPolicy("Revolutions, parliament, efficiency, communication and animal behaviour", KEEP, 5, "History, society, and general knowledge."),
-    19: ClusterPolicy("History, culture, economics, energy, markets and policy", KEEP, 5, "Humanities, economics, and policy balance."),
-    20: ClusterPolicy("Python and programming code", EXCLUDE, 0, "Explicit programming cluster; excluded at cluster level."),
+    1: ClusterPolicy("Mathematics, Algorithms, Programming, Software Development, Data Analysis", KEEP_WITHOUT_CODE, 3, "Retain mathematics and explanatory material, not implementations or repositories."),
+    2: ClusterPolicy("Books, Education, Writing, Literature, AI Ethics, History, Philosophy", KEEP, 6, "Humanities and education balance."),
+    3: ClusterPolicy("Environmental Education, History, Architecture, Engineering, Classical Music", KEEP, 6, "Broad factual and cultural prose."),
+    4: ClusterPolicy("Education, Teaching, Science, Engineering, Psychology, Special Education", KEEP, 7, "Useful educational and scientific prose."),
+    5: ClusterPolicy("International Trade, Business, Economics, AI Consulting, Ethical Decision Making", KEEP, 5, "Economics, institutions, and applied reasoning."),
+    6: ClusterPolicy("Genetics, Biotechnology, AI, Robotics, Aging, Healthcare, Industrial Automation", KEEP_WITHOUT_CODE, 6, "Keep scientific explanation while removing implementation-heavy material."),
+    7: ClusterPolicy("Chemistry, Insects, Taxonomy, Agriculture, Gardening, Veterinary Science", KEEP, 5, "Natural science and practical knowledge."),
+    8: ClusterPolicy("Gaming, Role-Playing, Board Games, Video Games, Strategy, Fantasy, Virtual Reality", KEEP, 4, "Keep useful narrative, strategy, and cultural prose; audit quality."),
+    9: ClusterPolicy("Astronomy, Cosmology, Astrophysics, Space Exploration, Urban Planning", KEEP, 4, "Scientific and factual prose."),
+    10: ClusterPolicy("Health, Sleep, Clinical Technology, Healthcare, Fitness, Addiction, Early Childhood Education", KEEP, 7, "Health and public-interest knowledge."),
+    11: ClusterPolicy("Software Development, Programming, Web Development, JavaScript, Databases", KEEP_WITHOUT_CODE, 2, "Retain natural-language technical explanation only; source and API material must go."),
+    12: ClusterPolicy("Technology, Mathematics, Legal Content, Human Rights, Energy Efficiency, Industrial Equipment", KEEP_WITHOUT_CODE, 7, "Keep explanatory technical and civic prose, not code-heavy pages."),
+    13: ClusterPolicy("Sports, Cricket, Soccer, Tennis, Basketball, Cultural Heritage, Competition", KEEP, 3, "Cultural and general-knowledge balance."),
+    14: ClusterPolicy("Music, Instrumental Practice, Guitar, Jazz, Singing, Composition, Music Theory", KEEP, 3, "Arts and music education."),
+    15: ClusterPolicy("Film, Cinema, Horror, Sci-Fi, Comics, Literature, Criticism, Philosophy", KEEP, 4, "Arts, criticism, and narrative balance."),
+    16: ClusterPolicy("Sustainability, Climate Change, Renewable Energy, Environmental Conservation", KEEP, 8, "Core environmental and scientific knowledge."),
+    17: ClusterPolicy("Cardiovascular Health, Medical Research, Immunology, Cancer Prevention, Drug Therapy", KEEP, 8, "Medical and biomedical knowledge."),
+    18: ClusterPolicy("Technology, Cybersecurity, Social Media, Privacy, Artificial Intelligence, Cloud Computing", KEEP_WITHOUT_CODE, 4, "Keep technical prose while excluding implementation, logs, and dumps."),
+    19: ClusterPolicy("Social Media, Digital Communication, Internet Culture, Misinformation, Psychology", KEEP, 4, "Modern society and communication knowledge."),
+    20: ClusterPolicy("Public Safety, Law Enforcement, Political History, Social Justice, Government", KEEP, 4, "Civic and historical prose; this is not the programming cluster."),
 }
 
 ACCEPTED_DECISIONS = frozenset({KEEP, KEEP_WITHOUT_CODE})
