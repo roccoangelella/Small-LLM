@@ -1,228 +1,238 @@
-"""All tunable settings for the Nemotron-ClimbMix curation pipeline.
+"""Frozen production policy for the Nemotron-ClimbMix token-only corpus.
 
-The pipeline deliberately keeps policy in this file and its implementation in
-focused modules under ``dataset/src/``. Change the settings here after inspecting
-the sample and review artifacts; do not edit a generated selection plan by hand.
+Everything that defines *what* the production corpus is lives here as plain
+constants.  The implementation in :mod:`dataset.src` reads these defaults and
+never invents policy of its own.  Safe command-line overrides (smoke targets,
+output location, buffer sizes) are applied by :mod:`dataset.src.build` and do
+not change the frozen policy itself.
+
+The production path never decodes accepted documents.  It reads existing GPT-2
+token IDs by deterministic HTTP byte-range access to the pinned Hugging Face
+source, keeps records by numeric ``cluster_id`` (the only semantic signal),
+appends little-endian ``uint16`` token IDs to one ``train.bin`` and one
+``validation.bin``, and is crash-safe and resumable.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# Input and reproducibility
+# Source identity (frozen)
 # ---------------------------------------------------------------------------
 
 DATASET_REPOSITORY = "nvidia/Nemotron-ClimbMix"
-# Pin this to an immutable Hugging Face commit before a production run.  The
-# current short revision is intentionally explicit instead of silently using
-# a future version of ``main``.
-DATASET_REVISION = "5eaa64b"
-DATASET_SPLIT = "train"
-# The repository also has ``climbmix_small``.  It is a duplicate small subset,
-# so only the root tokenized JSONL files are part of the source stream.
-DATASET_DATA_FILES_GLOB = "part_*.tokenized.jsonl"
-TOKENIZER_ENCODING = "gpt2"
-RANDOM_SEED = "small-llm-climbmix-v1"
-# NVIDIA's numeric ClimbLab topic table, used for the matching ClimbMix IDs.
-CLUSTER_TOPIC_SOURCE_URL = "https://research.nvidia.com/labs/lpr/climb/"
+# Full immutable commit SHA corresponding to the verified short revision
+# ``5eaa64b``.  Resolved from the Hugging Face Hub API on 2026-07-27 and pinned
+# so a future change to the repository's ``main`` branch can never silently
+# alter the production source.  Do not shorten this.
+DATASET_REVISION = "5eaa64b9c0c85b7f56af01d7dffdb0795816b12b"
+SHORT_REVISION = "5eaa64b"
+# Only the root tokenized JSONL shards are part of the source stream.  The
+# repository also contains ``climbmix_small`` (a duplicate small subset),
+# ``assets``, and ``nanoGPT``; all subdirectories are excluded by this glob.
+SOURCE_DATA_GLOB = "part_*.tokenized.jsonl"
+
+# Tokenizer: we reuse the source's existing GPT-2 byte-level BPE token IDs
+# directly and never re-tokenize.  The vocabulary plus the end-of-document
+# marker fits in an unsigned 16-bit integer.
+TOKENIZER_ID = "gpt2"
+TOKENIZER_DESCRIPTION = "climbmix GPT-2 token IDs reused verbatim"
+VOCAB_SIZE = 50257
+
+# End-of-document marker appended between accepted documents.  50256 is GPT-2's
+# <|endoftext|> id and is already the last vocabulary entry.
+EOD_TOKEN_ID = 50256
+TOKEN_MIN = 0
+TOKEN_MAX = 50256
 
 
 # ---------------------------------------------------------------------------
-# Paths and file layout
+# Reproducibility
 # ---------------------------------------------------------------------------
 
-DATASET_DIR = Path(__file__).resolve().parent
-ARTIFACTS_DIR = DATASET_DIR / "artifacts"
-SAMPLES_PATH = ARTIFACTS_DIR / "cluster_samples.jsonl"
-INVENTORY_PATH = ARTIFACTS_DIR / "cluster_inventory.json"
-SELECTION_PLAN_PATH = ARTIFACTS_DIR / "selection_plan.json"
-MANUAL_REVIEW_PATH = ARTIFACTS_DIR / "manual_review.md"
-LLM_REVIEW_DIR = ARTIFACTS_DIR / "llm_reviews"
-REVIEW_SUMMARY_PATH = ARTIFACTS_DIR / "cluster_review_summary.json"
+# Versioned, fixed seed for all deterministic choices (work-plan shuffle,
+# train/validation split).  Changing this changes every downstream artefact.
+SELECTION_SEED = "small-llm-climbmix-production-v1"
 
-OUTPUT_DIR = DATASET_DIR / "output"
-SELECTION_STATE_PATH = OUTPUT_DIR / "selection_state.json"
-SELECTION_MANIFEST_PATH = OUTPUT_DIR / "selection_manifest.json"
-AUDIT_DIR = ARTIFACTS_DIR / "audit"
+# Approximately 0.1 % of accepted documents are reserved for validation using a
+# stable deterministic hash of the source identity.
+VALIDATION_PROBABILITY = 0.001
+SPLIT_HASH_VERSION = "small-llm-train-validation-v1"
 
 
 # ---------------------------------------------------------------------------
-# Cluster policy and quota. Topics use NVIDIA's published CLIMB table for these
-# numeric IDs, verified against bounded live samples in
-# ``cluster_map_validation.json``. Individual documents can still sit near a
-# cluster boundary, so the 50-document review is the final policy check.
-# Percentages must total 100 across accepted IDs.
+# Cluster policy: the only semantic selection mechanism
 # ---------------------------------------------------------------------------
 
-KEEP = "keep"
-KEEP_WITHOUT_CODE = "keep_without_code"
-EXCLUDE = "exclude_or_downweight"
+# NVIDIA's numeric CLIMB topic map (verified against bounded live samples in
+# ``cluster_map_validation.json`` at the repository root).  These strings are
+# documentation/manifest material only; selection is the numeric IDs below.
+CLUSTER_TOPICS: dict[int, str] = {
+    1: "Mathematics, Algorithms, Data Analysis",
+    2: "Books, Education, Writing, Literature, Philosophy",
+    3: "Environmental Education, History, Architecture, Engineering",
+    4: "Education, Teaching, Science, Psychology",
+    5: "International Trade, Business, Economics",
+    6: "Genetics, Biotechnology, AI, Robotics, Healthcare",
+    7: "Chemistry, Taxonomy, Agriculture, Veterinary Science",
+    8: "Gaming, Strategy, Fantasy, Virtual Reality",
+    9: "Astronomy, Cosmology, Space Exploration, Urban Planning",
+    10: "Health, Sleep, Clinical Technology, Fitness",
+    11: "Software Development, Programming, Web Development, Databases",
+    12: "Technology, Mathematics, Legal, Energy, Industrial Equipment",
+    13: "Sports, Cultural Heritage, Competition",
+    14: "Music, Instrumental Practice, Theory, Composition",
+    15: "Film, Cinema, Horror, Sci-Fi, Comics, Criticism",
+    16: "Sustainability, Climate Change, Renewable Energy",
+    17: "Cardiovascular Health, Medical Research, Immunology, Cancer",
+    18: "Technology, Cybersecurity, Social Media, Cloud Computing",
+    19: "Digital Communication, Internet Culture, Psychology",
+    20: "Public Safety, Law Enforcement, Political History, Government",
+}
+
+# Accept clusters 1-10 and 12-20.  Exclude cluster 11 (software/programming).
+# No per-cluster quotas: the source mixture is preserved approximately by
+# sampling source byte regions uniformly (see :mod:`dataset.src.workplan`).
+ACCEPTED_CLUSTER_IDS: frozenset[int] = frozenset(range(1, 11)) | frozenset(range(12, 21))
+EXCLUDED_CLUSTER_IDS: frozenset[int] = frozenset({11})
+ALL_CLUSTER_IDS: frozenset[int] = frozenset(range(1, 21))
+
+
+# ---------------------------------------------------------------------------
+# Corpus size targets
+# ---------------------------------------------------------------------------
+
+# Selection stops on accepted *source* tokens (tokens originally present in
+# accepted documents), NOT on written tokens (source + inserted EOD markers).
+TARGET_ACCEPTED_SOURCE_TOKENS = 90_000_000_000
+MINIMUM_ACCEPTED_SOURCE_TOKENS = 80_000_000_000
+MAXIMUM_ACCEPTED_SOURCE_TOKENS = 100_000_000_000
+
+
+# ---------------------------------------------------------------------------
+# Binary output format
+# ---------------------------------------------------------------------------
+
+# Raw GPT-2 token IDs as unsigned 16-bit integers, explicit little-endian, no
+# header, no JSON framing, no compression.  Documents are separated by EOD.
+INT_TYPE = "uint16"
+BYTE_ORDER = "little"
+
+
+# ---------------------------------------------------------------------------
+# Work plan and throughput defaults
+# ---------------------------------------------------------------------------
+
+# Each source file is divided into fixed-size logical byte regions; the full set
+# of regions is deterministically shuffled (see SELECTION_SEED) and processed in
+# that saved order.  256 MiB is small enough to bound single-record memory and
+# large enough to keep HTTP request overhead negligible.
+REGION_BYTES = 256 * 1024 * 1024
+
+# In-memory write buffers per active writer before a soft flush to the OS.
+WRITER_BUFFER_BYTES = 256 * 1024 * 1024
+
+# A durable checkpoint is taken at most every CHECKPOINT_BYTES_THRESHOLD written
+# bytes so a crash never loses more than roughly this much work.
+CHECKPOINT_BYTES_THRESHOLD = 1 * 1024 * 1024 * 1024  # 1 GiB
+
+# Boundary recovery reads in fixed chunks so a single multi-gigabyte record can
+# never be held whole while locating its edges.
+BOUNDARY_SCAN_CHUNK_BYTES = 4 * 1024 * 1024
+FORWARD_FETCH_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Source HTTP access (Hugging Face resolve endpoint)
+# ---------------------------------------------------------------------------
+
+HF_HUB_BASE = "https://huggingface.co"
+# Base URL template for resolving a single source file's raw bytes.
+RESOLVE_URL_TEMPLATE = (
+    HF_HUB_BASE + "/datasets/{repository}/resolve/{revision}/{path}"
+)
+# Tree/listing API used once to resolve the immutable file list and sizes.
+TREE_URL_TEMPLATE = HF_HUB_BASE + "/api/datasets/{repository}/tree/{revision}"
+
+HTTP_TIMEOUT_SECONDS = 60.0
+HTTP_MAX_RETRIES = 6
+HTTP_BACKOFF_BASE_SECONDS = 1.5
+HTTP_BACKOFF_MAX_SECONDS = 30.0
+HTTP_USER_AGENT = "small-llm-token-only-corpus/1.0"
+
+
+# ---------------------------------------------------------------------------
+# Disk-space preflight
+# ---------------------------------------------------------------------------
+
+# Required free space = target_tokens * 2 bytes * (1 + EOD overhead) * safety
+# multiplier.  The multiplier makes the requirement scale with the target: the
+# 90 B default requires ~222 GiB (~239 GB), inside the conservative 230-250 GB
+# window, while a bounded smoke run needs only a few MB.
+DISK_EOD_OVERHEAD_FRACTION = 0.02
+DISK_SAFETY_MULTIPLIER = 1.30
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+from pathlib import Path  # noqa: E402
+
+DATASET_DIR: Path = Path(__file__).resolve().parent
+DEFAULT_OUTPUT_DIR: Path = DATASET_DIR / "output"
+
+TRAIN_FILENAME = "train.bin"
+VALIDATION_FILENAME = "validation.bin"
+PROGRESS_FILENAME = "progress.json"
+WORK_PLAN_FILENAME = "work_plan.json"
+MANIFEST_FILENAME = "manifest.json"
+
+
+# ---------------------------------------------------------------------------
+# Artefact schema versions
+# ---------------------------------------------------------------------------
+
+PROGRESS_SCHEMA_VERSION = 3
+WORK_PLAN_SCHEMA_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 2
+
+
+# ---------------------------------------------------------------------------
+# Dataset attribution
+# ---------------------------------------------------------------------------
+
+DATASET_LICENSE = "cc-by-nc-4.0"
+ATTRIBUTION = (
+    "NVIDIA Nemotron-ClimbMix (https://huggingface.co/datasets/nvidia/"
+    "Nemotron-ClimbMix). Built from the official GPT-2-tokenized JSONL shards."
+)
+# The corpus is cluster-filtered (cluster 11 excluded), not guaranteed code-free.
+CORPUS_DESCRIPTION = "cluster-filtered Nemotron-ClimbMix subset, programming cluster excluded"
 
 
 @dataclass(frozen=True)
-class ClusterPolicy:
-    """A reviewable per-cluster decision and the target share of selected tokens."""
+class EffectiveConfig:
+    """Frozen resolved settings for a single build or verify invocation.
 
-    expected_topic: str
-    decision: str
-    quota_percent: int
-    rationale: str
+    Production defaults come from module constants; only safe smoke/test
+    overrides populate the optional fields.  The frozen policy (source
+    revision, seed, cluster policy, format, split) is never overridden here.
+    """
 
-
-CLUSTER_POLICIES: dict[int, ClusterPolicy] = {
-    1: ClusterPolicy("Mathematics, Algorithms, Programming, Software Development, Data Analysis", KEEP_WITHOUT_CODE, 3, "Retain mathematics and explanatory material, not implementations or repositories."),
-    2: ClusterPolicy("Books, Education, Writing, Literature, AI Ethics, History, Philosophy", KEEP, 6, "Humanities and education balance."),
-    3: ClusterPolicy("Environmental Education, History, Architecture, Engineering, Classical Music", KEEP, 6, "Broad factual and cultural prose."),
-    4: ClusterPolicy("Education, Teaching, Science, Engineering, Psychology, Special Education", KEEP, 7, "Useful educational and scientific prose."),
-    5: ClusterPolicy("International Trade, Business, Economics, AI Consulting, Ethical Decision Making", KEEP, 5, "Economics, institutions, and applied reasoning."),
-    6: ClusterPolicy("Genetics, Biotechnology, AI, Robotics, Aging, Healthcare, Industrial Automation", KEEP_WITHOUT_CODE, 6, "Keep scientific explanation while removing implementation-heavy material."),
-    7: ClusterPolicy("Chemistry, Insects, Taxonomy, Agriculture, Gardening, Veterinary Science", KEEP, 5, "Natural science and practical knowledge."),
-    8: ClusterPolicy("Gaming, Role-Playing, Board Games, Video Games, Strategy, Fantasy, Virtual Reality", KEEP, 4, "Keep useful narrative, strategy, and cultural prose; audit quality."),
-    9: ClusterPolicy("Astronomy, Cosmology, Astrophysics, Space Exploration, Urban Planning", KEEP, 4, "Scientific and factual prose."),
-    10: ClusterPolicy("Health, Sleep, Clinical Technology, Healthcare, Fitness, Addiction, Early Childhood Education", KEEP, 7, "Health and public-interest knowledge."),
-    11: ClusterPolicy("Software Development, Programming, Web Development, JavaScript, Databases", KEEP_WITHOUT_CODE, 2, "Retain natural-language technical explanation only; source and API material must go."),
-    12: ClusterPolicy("Technology, Mathematics, Legal Content, Human Rights, Energy Efficiency, Industrial Equipment", KEEP_WITHOUT_CODE, 7, "Keep explanatory technical and civic prose, not code-heavy pages."),
-    13: ClusterPolicy("Sports, Cricket, Soccer, Tennis, Basketball, Cultural Heritage, Competition", KEEP, 3, "Cultural and general-knowledge balance."),
-    14: ClusterPolicy("Music, Instrumental Practice, Guitar, Jazz, Singing, Composition, Music Theory", KEEP, 3, "Arts and music education."),
-    15: ClusterPolicy("Film, Cinema, Horror, Sci-Fi, Comics, Literature, Criticism, Philosophy", KEEP, 4, "Arts, criticism, and narrative balance."),
-    16: ClusterPolicy("Sustainability, Climate Change, Renewable Energy, Environmental Conservation", KEEP, 8, "Core environmental and scientific knowledge."),
-    17: ClusterPolicy("Cardiovascular Health, Medical Research, Immunology, Cancer Prevention, Drug Therapy", KEEP, 8, "Medical and biomedical knowledge."),
-    18: ClusterPolicy("Technology, Cybersecurity, Social Media, Privacy, Artificial Intelligence, Cloud Computing", KEEP_WITHOUT_CODE, 4, "Keep technical prose while excluding implementation, logs, and dumps."),
-    19: ClusterPolicy("Social Media, Digital Communication, Internet Culture, Misinformation, Psychology", KEEP, 4, "Modern society and communication knowledge."),
-    20: ClusterPolicy("Public Safety, Law Enforcement, Political History, Social Justice, Government", KEEP, 4, "Civic and historical prose; this is not the programming cluster."),
-}
-
-ACCEPTED_DECISIONS = frozenset({KEEP, KEEP_WITHOUT_CODE})
-
-
-# ---------------------------------------------------------------------------
-# Corpus size, planning and deterministic sampling
-# ---------------------------------------------------------------------------
-
-# 90B GPT-2 tokens is deliberately in the requested 80--100B range.  Text
-# bytes are measured after UTF-8 decoding, i.e. before JSON framing.
-TARGET_TOKENS = 90_000_000_000
-MINIMUM_TOKENS = 80_000_000_000
-MAXIMUM_TOKENS = 100_000_000_000
-TARGET_TEXT_BYTES = 400_000_000_000
-MAXIMUM_TEXT_BYTES = 425_000_000_000
-
-# A first stream creates the eligible-token inventory.  Planning then turns the
-# configured quotas into stable hash acceptance rates.  The 5% headroom lets
-# token-sized documents fill their quotas without materially changing balance.
-PLANNING_OVERSUBSCRIPTION = 1.05
-REQUIRE_SELECTION_PLAN = True
-MINIMUM_CLUSTER_AVAILABILITY_RATIO = 1.00
-# Source documents are indivisible, so allow a negligible final-document
-# overshoot instead of requiring each token quota to be an exact integer sum.
-MAX_CLUSTER_QUOTA_OVERSHOOT_TOKENS = 500_000
-
-# Selection output is ordinary UTF-8 JSONL, intentionally uncompressed so its
-# size is transparent and every document is easy to inspect.
-OUTPUT_SHARD_MAX_BYTES = 2_000_000_000
-CHECKPOINT_EVERY_DOCUMENTS = 1_000
-PROGRESS_EVERY_DOCUMENTS = 100_000
-
-
-# ---------------------------------------------------------------------------
-# Sampling, LLM review, and human spot-check artifacts
-# ---------------------------------------------------------------------------
-
-SAMPLE_DOCUMENTS_PER_CLUSTER = 50
-SAMPLE_TEXT_CHARACTERS = 6_000
-MANUAL_EXCERPT_CHARACTERS = 1_500
-MANUAL_EXCERPTS_PER_CLUSTER = 3
-
-LLM_REVIEW_BATCH_SIZE = 10
-LLM_REVIEW_TEXT_CHARACTERS = 2_000
-# Some routed models spend output tokens before emitting their JSON. Keep enough
-# room for the fixed review object instead of treating a truncated response as a
-# valid review.
-LLM_REVIEW_MAX_TOKENS = 2_000
-LLM_REVIEW_TEMPERATURE = 0.0
-LLM_RETRY_ATTEMPTS = 3
-LLM_RETRY_DELAY_SECONDS = 3.0
-LLM_REVIEW_SCHEMA_VERSION = 1
-
-# The pipeline uses the same local GemRouter configuration as Pi.  A supplied
-# environment variable wins; otherwise the existing Pi auth file is read
-# locally.  No credential is written to artifacts, logs, or this repository.
-GEMROUTER_BASE_URL = "https://gemr.84-8-255-231.nip.io/v1"
-GEMROUTER_MODEL = "gemini-3.6-flash"
-GEMROUTER_API_KEY_ENV = "GEMROUTER_API_KEY"
-GEMROUTER_PI_AUTH_PATH = Path.home() / ".pi" / "agent" / "auth.json"
-GEMROUTER_AUTH_HEADER = "Authorization"
-GEMROUTER_TIMEOUT_SECONDS = 120
-
-
-# ---------------------------------------------------------------------------
-# Deterministic quality filters.  They are intentionally conservative: cluster
-# IDs carry most of the curation signal, while these rules remove documents
-# which are plainly source/code/API dumps or non-English fragments.
-# ---------------------------------------------------------------------------
-
-MIN_DOCUMENT_CHARACTERS = 200
-REQUIRE_LIKELY_ENGLISH = True
-MIN_ASCII_LETTER_RATIO = 0.55
-MIN_ENGLISH_MARKER_RATIO = 0.008
-MIN_ENGLISH_MARKER_HITS = 2
-
-MAX_CODE_LINE_FRACTION = 0.35
-MAX_FENCED_CODE_FRACTION = 0.25
-MAX_CODE_SYMBOL_FRACTION = 0.13
-MIN_CODE_LINES_FOR_REJECTION = 4
-MIN_LINES_FOR_CODE_FRACTION = 6
-MIN_API_MARKERS_FOR_REJECTION = 5
-MIN_REPOSITORY_PATHS_FOR_REJECTION = 5
-
-CODE_FILE_EXTENSIONS = (
-    "py", "pyi", "ipynb", "js", "jsx", "ts", "tsx", "java", "c", "h", "cc",
-    "cpp", "cxx", "cs", "go", "rs", "rb", "php", "swift", "kt", "kts", "scala",
-    "sh", "bash", "zsh", "ps1", "sql", "r", "lua", "pl", "dart", "vue", "html",
-    "css", "scss", "xml", "yaml", "yml", "toml", "ini", "gradle",
-)
-
-
-# ---------------------------------------------------------------------------
-# Final audit.  This is a fresh deterministic sample of selected output, not a
-# reuse of the pre-selection sample.
-# ---------------------------------------------------------------------------
-
-AUDIT_DOCUMENTS_PER_CLUSTER = 100
-AUDIT_TEXT_CHARACTERS = 2_000
-AUDIT_LLM_BATCH_SIZE = 20
-AUDIT_LLM_MAX_TOKENS = 2_000
-AUDIT_USE_LLM = True
-MAX_AUDIT_CODE_DOMINATED_FRACTION = 0.002
-MIN_AUDIT_ENGLISH_FRACTION = 0.985
-
-
-def validate_config() -> None:
-    """Fail early when a policy or corpus-size setting is internally invalid."""
-
-    expected_ids = set(range(1, 21))
-    if set(CLUSTER_POLICIES) != expected_ids:
-        raise ValueError("CLUSTER_POLICIES must define exactly clusters 1 through 20")
-    allowed = {KEEP, KEEP_WITHOUT_CODE, EXCLUDE}
-    if any(policy.decision not in allowed for policy in CLUSTER_POLICIES.values()):
-        raise ValueError("Cluster policy has an unknown decision")
-    quota_total = sum(
-        policy.quota_percent
-        for policy in CLUSTER_POLICIES.values()
-        if policy.decision in ACCEPTED_DECISIONS
-    )
-    if quota_total != 100:
-        raise ValueError(f"Accepted cluster quotas must total 100, got {quota_total}")
-    if any(
-        policy.quota_percent != 0
-        for policy in CLUSTER_POLICIES.values()
-        if policy.decision == EXCLUDE
-    ):
-        raise ValueError("Excluded clusters must have zero quota")
-    if not (MINIMUM_TOKENS <= TARGET_TOKENS <= MAXIMUM_TOKENS):
-        raise ValueError("TARGET_TOKENS must lie within the requested token range")
-    if TARGET_TEXT_BYTES > MAXIMUM_TEXT_BYTES:
-        raise ValueError("TARGET_TEXT_BYTES cannot exceed MAXIMUM_TEXT_BYTES")
+    output_dir: Path
+    target_accepted_source_tokens: int
+    minimum_accepted_source_tokens: int
+    maximum_accepted_source_tokens: int
+    region_bytes: int
+    writer_buffer_bytes: int
+    checkpoint_bytes_threshold: int
+    max_work_items: int | None
+    resume: bool
+    strict: bool
+    allow_unsafe_low_disk: bool
+    reset: bool
+    full_scan: bool
+    crash_after_written_bytes: int | None

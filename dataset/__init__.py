@@ -1,1 +1,1 @@
-"""Dataset curation pipeline for the Nemotron-ClimbMix subset."""
+"""Token-only Nemotron-ClimbMix production corpus builder."""

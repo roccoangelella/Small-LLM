@@ -1,45 +1,26 @@
-# Small-LLM dataset pipeline
+# Small-LLM
 
-`dataset/` contains a resumable curation pipeline for an approximately 400 GB,
-90B-token natural-language subset of NVIDIA Nemotron-ClimbMix.  It uses the
-official GPT-2-tokenized source, the source cluster IDs as the primary signal,
-and deterministic code/API-dump exclusion as a guardrail.
+This repository is working toward a small English language model. The part that
+is ready now is the pretraining-corpus builder in `dataset/`.
 
-All tunable values, including the 20 cluster policies and per-cluster quota
-percentages, live in [dataset/config.py](dataset/config.py).  The default policy
-uses NVIDIA's published numeric cluster map, which we checked on bounded live
-samples in [cluster_map_validation.json](cluster_map_validation.json). No numeric
-cluster is thrown away wholesale: code-heavy clusters 1, 6, 11, 12, and 18 keep
-useful prose but lose source code, repositories, and generated API material.
-Cluster 20 is civic/political material, not the Python cluster.
+The builder takes NVIDIA Nemotron-ClimbMix at the immutable revision
+`5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`, samples deterministic byte regions,
+keeps clusters 1–10 and 12–20, and writes the existing GPT-2 token IDs directly
+to `train.bin` and `validation.bin`. Cluster 11 is the software/programming
+cluster, so it is excluded. There is no decoded-text curation pass, code filter,
+quality classifier, quota balancing, or LLM review in production.
 
-Install dependencies once:
+The production commands are deliberately boring:
 
 ```bash
-uv sync
+uv run python -m dataset.main build
+uv run python -m dataset.main build --resume
+uv run python -m dataset.main verify
 ```
 
-Run the stages explicitly:
-
-```bash
-# Streams the official source once. Writes 50 deterministic samples per cluster,
-# eligibility inventory, and a compact manual spot-check worksheet.
-uv run python -m dataset.main sample
-
-# Sends review batches to the local GemRouter model gemini-3.6-flash.
-uv run python -m dataset.main review
-
-# Inspect artifacts/manual worksheet, edit config.py only if warranted, then:
-uv run python -m dataset.main plan
-
-# Streams again and writes JSONL shards; checkpoints make interruption safe.
-uv run python -m dataset.main select
-uv run python -m dataset.main select --resume
-
-# Fresh deterministic + Gemini audit of the final output.
-uv run python -m dataset.main audit
-```
-
-The official source contains GPT-2 token IDs rather than raw text, so text is
-decoded before sampling, code detection, review, writing, and auditing.  The
-pipeline deliberately does not begin the long production streams automatically.
+Do not run the first command casually: the default target is 90B accepted source
+tokens and the preflight expects roughly 239 GB of free space. See
+[dataset/README.md](dataset/README.md) for the format, checkpoint contract,
+bounded-test commands, and license details. The successful live source test is
+recorded in
+[dataset/PRODUCTION_SMOKE_TEST.md](dataset/PRODUCTION_SMOKE_TEST.md).

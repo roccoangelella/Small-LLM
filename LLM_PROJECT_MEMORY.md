@@ -89,34 +89,38 @@ Tokenizer training is outside the current project scope unless a concrete limita
 
 Use a manageable, publicly available English corpus that fits the project's storage and compute limits. Process it locally as a fixed, training-ready token corpus rather than attempting to manage a multi-terabyte mixture during training.
 
-The current source is a roughly 25% cluster-stratified subset of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. NVIDIA's numeric `cluster_id` is the sole semantic/content-selection heuristic for the first production corpus.
+The current source is a deterministic byte-region sample of **Nemotron-ClimbMix**, selected for broad English and general-knowledge coverage. NVIDIA's numeric `cluster_id` is the sole semantic/content-selection heuristic for the first production corpus.
 
-Programming-oriented clusters are excluded or assigned no quota because coding capability is deferred. No document-level code-density, quality, topic, or LLM classifier is applied during this first production extraction. Incidental code, low-quality text, or broad-topic mismatches may therefore remain inside accepted clusters and are recorded as a known limitation.
+Cluster 11, NVIDIA's explicit software/programming cluster, is excluded because coding capability is deferred. Clusters 1–10 and 12–20 are accepted without equal or manually balanced quotas. No document-level code-density, quality, topic, or LLM classifier is applied during this first production extraction. Incidental code, low-quality text, or broad-topic mismatches may therefore remain inside accepted clusters and are recorded as a known limitation.
 
-The selected corpus is expected to be roughly 400 GB / 80–100B unique source tokens. The working training target is 2T token presentations, implying roughly 20–25 passes over that corpus. This is an experimental assumption to validate with held-out loss and downstream evaluations, not a claim that repeated epochs fully substitute for more unique data.
+The selected corpus targets 90B accepted source tokens. Raw `uint16` output should be roughly 180 GB plus EOD overhead, while the builder reserves about 239 GB free for safety. The working training target is 2T token presentations, implying roughly 22 passes over that corpus. This is an experimental assumption to validate with held-out loss and downstream evaluations, not a claim that repeated epochs fully substitute for more unique data.
 
 The production extraction should:
 
-1. Stream Nemotron-ClimbMix source records.
-2. Read each record's `cluster_id` and existing GPT-2 token IDs.
-3. Accept records only while the configured cluster quota is unfilled.
-4. Perform structural validation only, such as checking required fields, valid token-ID ranges, and non-empty token arrays.
-5. Assign accepted documents reproducibly to train or validation data.
-6. Append the existing token IDs and an end-of-document token to one growing `train.bin` or `validation.bin` file.
-7. Buffer writes in memory rather than issuing a filesystem write for every document.
-8. Maintain resumable checkpoints containing confirmed output byte offsets, source positions, and per-cluster token/document counters.
-9. Save final file hashes and a manifest describing the tokenizer, integer type, endianness, token counts, split method, and selection configuration.
-10. Check the final corpus for overlap with private evaluation sets where feasible.
+1. Resolve the 100 root `part_*.tokenized.jsonl` files at immutable revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`.
+2. Divide those files into fixed logical byte regions, deterministically shuffle the complete plan, and persist it.
+3. Read only the planned byte ranges needed to reach the target, with exact-once JSONL ownership based on absolute record-start offsets.
+4. Read each record's `cluster_id` and existing GPT-2 token IDs.
+5. Accept clusters 1–10 and 12–20; reject cluster 11 using only its numeric ID.
+6. Perform structural validation only, such as checking required fields, valid token-ID ranges, and non-empty token arrays.
+7. Assign approximately 0.1% of accepted documents reproducibly to validation.
+8. Append the existing token IDs to one growing `train.bin` or `validation.bin`, adding GPT-2 EOD token 50256 only when it is not already present at the end.
+9. Buffer writes in memory rather than issuing a filesystem write for every document.
+10. Maintain resumable checkpoints containing confirmed output byte offsets, work-item/record positions, and per-cluster token/document counters.
+11. Stop at 90B accepted source tokens, with an 80B minimum and 100B hard maximum. Inserted EODs count as written tokens, not accepted source tokens.
+12. Save final file hashes and a manifest describing the tokenizer, integer type, endianness, token counts, split method, and selection configuration.
+13. Check the final corpus for overlap with private evaluation sets where feasible.
 
 The binary files store raw token integers rather than textual JSON numbers. With a vocabulary below 65,536 entries, tokens can be stored as little-endian `uint16`, requiring two bytes per token. A roughly 90B-token corpus would therefore require about 180 GB for token data, before metadata and working space.
 
 The final local corpus layout is intentionally simple:
 
 ```text
-dataset/
+dataset/output/
 ├── train.bin
 ├── validation.bin
 ├── progress.json
+├── work_plan.json
 └── manifest.json
 ```
 
@@ -132,7 +136,7 @@ The numeric `cluster_id` values must use NVIDIA's published CLIMB topic table. T
 
 A bounded live check sampled five documents from every ID (100 documents total) and sent 20 fixed-schema Gemini reviews against the published map. It found 11 matches, 6 partial matches, and 3 broad-topic mismatches. This supports using NVIDIA's map as a broad selection heuristic while confirming that clusters are not perfectly pure. The evidence is stored in `cluster_map_validation.json` at the repository root.
 
-The production decision is now to trust these cluster IDs without a second mandatory 50-document-per-cluster review, manual worksheet, document-level code filter, or LLM approval gate. Production selection may begin once the desired cluster quotas and binary-output settings are configured. The resulting corpus should be described as **programming-cluster-excluded**, not guaranteed code-free.
+The production decision is now to trust these cluster IDs without a second mandatory 50-document-per-cluster review, manual worksheet, document-level code filter, or LLM approval gate. Cluster 11 is excluded; every other cluster is accepted in approximately its source proportion through uniformly sampled byte regions. The resulting corpus should be described as **programming-cluster-excluded**, not guaranteed code-free.
 
 ### 7. Pretrain the Base Model
 
@@ -258,11 +262,11 @@ Record:
 
 ## Current Dataset Decision
 
-The initial pretraining corpus is a cluster-stratified subset of **Nemotron-ClimbMix**, targeting approximately 80–100B unique GPT-2 tokens and roughly 400 GB of local storage.
+The initial pretraining corpus is a cluster-filtered, byte-region-sampled subset of **Nemotron-ClimbMix**, targeting 90B accepted source GPT-2 tokens, with an 80B minimum and 100B hard maximum. Raw `uint16` token data is expected to occupy roughly 180 GB plus EOD overhead; the production preflight conservatively requires about 239 GB free.
 
-NVIDIA's published `cluster_id` map is the only content-selection heuristic for the first production extraction. Programming-oriented clusters receive no quota; accepted clusters are sampled according to the final configured mixture. There is no document-level code, quality, topic, or LLM filter. The corpus may contain incidental code and other cluster impurities, so it is programming-cluster-excluded rather than guaranteed code-free.
+NVIDIA's published `cluster_id` map is the only content-selection heuristic for the first production extraction. Cluster 11 is excluded; clusters 1–10 and 12–20 are accepted without per-cluster quotas. Deterministically shuffled fixed-size source byte regions preserve the source mixture approximately. There is no document-level code, quality, topic, or LLM filter. The corpus may contain incidental code and other cluster impurities, so it is programming-cluster-excluded rather than guaranteed code-free.
 
-The source GPT-2 token IDs are retained directly and appended incrementally to one `train.bin` and one `validation.bin` file. Each document is followed by an end-of-document token. The files use raw binary token integers instead of JSON or Parquet, are protected by periodic resumable checkpoints, and are memory-mapped during training.
+The source GPT-2 token IDs are retained directly and appended incrementally to one `train.bin` and one `validation.bin` file. Token 50256 is appended only when a source document does not already end with it. The files use explicit little-endian `uint16` integers instead of JSON or Parquet, are protected by periodic resumable checkpoints, and are memory-mapped during training.
 
 The working training target remains 2T token presentations, while monitoring held-out loss and downstream evaluations for signs that repeated epochs are no longer beneficial.
 
@@ -275,7 +279,7 @@ Define goals and evaluation
 → Set the compute budget
 → Build and validate a small model
 → Adopt and freeze the GPT-2 tokenizer plus project special tokens
-→ Configure Nemotron-ClimbMix cluster quotas
+→ Freeze the Nemotron-ClimbMix cluster policy and deterministic byte-range plan
 → Stream selected records and append their token IDs to train.bin or validation.bin
 → Pretrain the English base model
 → Continue training for reasoning
@@ -294,10 +298,9 @@ Define goals and evaluation
 
 - Final parameter count.
 - Whether the 2T-token presentation target and repeated-epoch schedule are justified by evaluation results.
-- Exact selected cluster list, per-cluster quotas, and final corpus size within Nemotron-ClimbMix.
-- Exact project special-token set and end-of-document token.
+- Any project special tokens beyond the fixed GPT-2 EOD token 50256.
 - Whether to keep a document-offset index in addition to the continuous binary token streams.
-- Exact checkpoint interval, write-buffer size, validation split, and sequence-packing policy.
+- Sequence-packing policy.
 - Reasoning datasets and generation process.
 - Teacher model used for distillation.
 - Evaluation benchmark suite.

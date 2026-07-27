@@ -1,4 +1,8 @@
-# Download test
+# Legacy download test
+
+This is the old decoded-text/filter experiment. Its conclusions about running a
+filter and balancing cluster quotas are superseded by the production policy in
+`../README.md`. It stays here only as a record of the early investigation.
 
 The point of this test was simple: can we stream the official Nemotron-ClimbMix shards and run the real decode and filter path without downloading the whole dataset?
 
