@@ -6,6 +6,14 @@ We found out that the Nvidia's paper and Hugginface dataset page are conflictual
 
 Running some tests (that kimi invented and I didn't fully understood), i got this conclusion. We can approximately trust cluster IDs and use them for a full production download of the dataset. Not fully though, since we saw that not all cluster IDs perfectly match the topic, but they match enough for us to trust them for at least this first step. We'll be free to retry with deper testing if this doesn't work.
 
-Some open questions:
+An open question:
 - How should i divide the % of each cluster? Simply 5% for each of the 20 IDs?
-- Which format will the dataset be? Parquet? Json? 
+
+Answer to the question came easily: just match the original dataset distribution, since it's already optimized. Agree.
+
+I probably though about this project with too much pride: making a new tokenizer from scratch is so boring we'll just use the pre tokenized dataset using GPT-2 tokenizer. Plain and Simple. Along with the decsion of "trusting" cluster IDs for this first step, this translates into a much simpler pipeline for this first step:
+For each document:
+1. Read cluster ID
+2. Check wether that cluster's token quota is full
+3. If not full, append an end of document token
+3. Fit tokens into our real dataset file, which will be a big .bin file containing the entire dataset. We'll use a buffer of 256 mb or something. Binary files are much much more efficient and machine readable.
