@@ -102,11 +102,27 @@ The production extraction should:
 3. Accept records only while the configured cluster quota is unfilled.
 4. Perform structural validation only, such as checking required fields, valid token-ID ranges, and non-empty token arrays.
 5. Assign accepted documents reproducibly to train or validation data.
-6. Write the existing token IDs directly into sharded binary training files with document or sequence-boundary indexes.
-7. Maintain resumable checkpoints, per-cluster token/document counters, output hashes, and a manifest.
-8. Check the final corpus for overlap with private evaluation sets where feasible.
+6. Append the existing token IDs and an end-of-document token to one growing `train.bin` or `validation.bin` file.
+7. Buffer writes in memory rather than issuing a filesystem write for every document.
+8. Maintain resumable checkpoints containing confirmed output byte offsets, source positions, and per-cluster token/document counters.
+9. Save final file hashes and a manifest describing the tokenizer, integer type, endianness, token counts, split method, and selection configuration.
+10. Check the final corpus for overlap with private evaluation sets where feasible.
 
-The full corpus is not detokenized into plain-text JSON and is not passed through an LLM. Decoding a tiny number of records remains optional for debugging, but it is not a production filter or approval gate.
+The binary files store raw token integers rather than textual JSON numbers. With a vocabulary below 65,536 entries, tokens can be stored as little-endian `uint16`, requiring two bytes per token. A roughly 90B-token corpus would therefore require about 180 GB for token data, before metadata and working space.
+
+The final local corpus layout is intentionally simple:
+
+```text
+dataset/
+├── train.bin
+├── validation.bin
+├── progress.json
+└── manifest.json
+```
+
+The files are built incrementally and can be memory-mapped during training, so the entire corpus is never loaded into RAM. A separate document-offset index is optional; packed next-token training can operate directly on the continuous token stream because documents are separated by an end-of-document token.
+
+The full corpus is not detokenized into plain-text JSON or Parquet and is not passed through an LLM. Decoding a tiny number of records remains optional for debugging, but it is not a production filter or approval gate.
 
 FineWeb-Edu, DCLM-Baseline, and selected Dolma 3 sources remain candidate alternatives for a later corpus comparison, not the current pretraining plan.
 
@@ -116,7 +132,7 @@ The numeric `cluster_id` values must use NVIDIA's published CLIMB topic table. T
 
 A bounded live check sampled five documents from every ID (100 documents total) and sent 20 fixed-schema Gemini reviews against the published map. It found 11 matches, 6 partial matches, and 3 broad-topic mismatches. This supports using NVIDIA's map as a broad selection heuristic while confirming that clusters are not perfectly pure. The evidence is stored in `cluster_map_validation.json` at the repository root.
 
-The production decision is now to trust these cluster IDs without a second mandatory 50-document-per-cluster review, manual worksheet, document-level code filter, or LLM approval gate. Production selection may begin once the desired cluster quotas and output-shard settings are configured. The resulting corpus should be described as **programming-cluster-excluded**, not guaranteed code-free.
+The production decision is now to trust these cluster IDs without a second mandatory 50-document-per-cluster review, manual worksheet, document-level code filter, or LLM approval gate. Production selection may begin once the desired cluster quotas and binary-output settings are configured. The resulting corpus should be described as **programming-cluster-excluded**, not guaranteed code-free.
 
 ### 7. Pretrain the Base Model
 
@@ -246,7 +262,7 @@ The initial pretraining corpus is a cluster-stratified subset of **Nemotron-Clim
 
 NVIDIA's published `cluster_id` map is the only content-selection heuristic for the first production extraction. Programming-oriented clusters receive no quota; accepted clusters are sampled according to the final configured mixture. There is no document-level code, quality, topic, or LLM filter. The corpus may contain incidental code and other cluster impurities, so it is programming-cluster-excluded rather than guaranteed code-free.
 
-The source GPT-2 token IDs are retained directly and written into binary train/validation shards. The full corpus is not converted to plain-text JSON, Parquet, or another tokenizer during production.
+The source GPT-2 token IDs are retained directly and appended incrementally to one `train.bin` and one `validation.bin` file. Each document is followed by an end-of-document token. The files use raw binary token integers instead of JSON or Parquet, are protected by periodic resumable checkpoints, and are memory-mapped during training.
 
 The working training target remains 2T token presentations, while monitoring held-out loss and downstream evaluations for signs that repeated epochs are no longer beneficial.
 
@@ -260,7 +276,7 @@ Define goals and evaluation
 → Build and validate a small model
 → Adopt and freeze the GPT-2 tokenizer plus project special tokens
 → Configure Nemotron-ClimbMix cluster quotas
-→ Stream selected records directly into binary train/validation token shards
+→ Stream selected records and append their token IDs to train.bin or validation.bin
 → Pretrain the English base model
 → Continue training for reasoning
 → Evaluate the base model
@@ -279,8 +295,9 @@ Define goals and evaluation
 - Final parameter count.
 - Whether the 2T-token presentation target and repeated-epoch schedule are justified by evaluation results.
 - Exact selected cluster list, per-cluster quotas, and final corpus size within Nemotron-ClimbMix.
-- Exact project special-token set.
-- Binary shard size, indexing scheme, and sequence-packing policy.
+- Exact project special-token set and end-of-document token.
+- Whether to keep a document-offset index in addition to the continuous binary token streams.
+- Exact checkpoint interval, write-buffer size, validation split, and sequence-packing policy.
 - Reasoning datasets and generation process.
 - Teacher model used for distillation.
 - Evaluation benchmark suite.
