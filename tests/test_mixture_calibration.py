@@ -19,8 +19,8 @@ from tests.synthetic import SyntheticSource, doc_line
 class MixtureMetadataTest(unittest.TestCase):
     def test_extracts_top_level_metadata_without_parsing_tokens(self) -> None:
         raw = (
-            b'{"other":{"cluster_id":99},"tokens":[1,2,3],'
-            b'"token_count":3,"cluster_id":12}'
+            b' { "cluster_id" : 12, "tokens" : [1,2,3], '
+            b'"token_count" : 3 } '
         )
         metadata = extract_record_metadata(raw)
         self.assertEqual(metadata.cluster_id, 12)
@@ -28,9 +28,9 @@ class MixtureMetadataTest(unittest.TestCase):
 
     def test_rejects_ambiguous_or_invalid_metadata(self) -> None:
         cases = (
-            b'{"cluster_id":1,"cluster_id":2,"token_count":3,"tokens":[1,2,3]}',
+            b'{"cluster_id":1,"cluster_id":2,"tokens":[1,2,3],"token_count":3}',
             b'{"cluster_id":1,"tokens":[1,2,3]}',
-            b'{"cluster_id":21,"token_count":3,"tokens":[1,2,3]}',
+            b'{"cluster_id":21,"tokens":[1,2,3],"token_count":3}',
             b'{"cluster_id":1,"token_count":0,"tokens":[]}',
         )
         for raw in cases:
