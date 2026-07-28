@@ -294,17 +294,16 @@ class GoogleDriveShardStore:
         raise AssertionError("unreachable")
 
     @classmethod
-    def from_credentials(cls, credentials_path: str | None = None, *, folder_id: str) -> "GoogleDriveShardStore":
+    def from_credentials(cls, credentials_path: str | Path | None = None, *, folder_id: str) -> "GoogleDriveShardStore":
         try:
-            from google.oauth2.service_account import Credentials
             from googleapiclient.discovery import build
         except ImportError as error:
             raise RuntimeError("Google Drive backend requires google-api-python-client") from error
-        path = credentials_path or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if not path:
-            raise RuntimeError("set GOOGLE_APPLICATION_CREDENTIALS or pass a credentials path")
-        credentials = Credentials.from_service_account_file(path, scopes=["https://www.googleapis.com/auth/drive.file"])
+        from dataset.drive_auth import load_authorized_user_credentials
+
+        credentials = load_authorized_user_credentials(credentials_path)
         return cls(build("drive", "v3", credentials=credentials, cache_discovery=False), folder_id)
+
 
     def upload_finalized_shard(self, *, run_id: str, logical_name: str, local_path: Path,
                                resume_state: Mapping[str, object] | None = None) -> dict[str, object]:

@@ -8,34 +8,86 @@ cursor.
 The trainer/model checkpoint path remains in `dataset.src.joint_checkpoint` and
 is intentionally not started by this command.
 
+> [!WARNING]
+> **Authentication Requirement**: Personal Google Drive storage uses installed-app OAuth credentials (`.secrets/google-drive-authorized-user.json`). Service accounts and API keys are **not** supported and will be rejected automatically.
+
 ## Production gates
 
 Do not start the 90B-token run until all of the following are true:
 
 1. The cluster-weight JSON has been reviewed and approved. The repository does
    not provide a production default.
-2. The service account can create and read objects in the configured Drive
-   folder.
+2. Personal Google Drive OAuth setup has completed cleanly via `dataset.drive_auth setup`.
 3. The bounded authenticated pilot below passes, including interruption and
    resume.
 4. `python -m unittest discover -v` and the GitHub Actions workflow are green.
 5. The output volume has at least the preflight-required free space. The command
    sizes this requirement against the 100B hard maximum by default.
 
-## Environment
+## Environment & OAuth Setup
 
 Use Python 3.13 and install the optional remote dependencies:
 
 ```bash
 uv sync --locked
 uv pip install -r dataset/requirements-remote.txt
-
-export GOOGLE_APPLICATION_CREDENTIALS=/secure/service-account.json
-export SMALL_LLM_DRIVE_FOLDER_ID=your-drive-folder-id
 ```
 
-Credentials must be mounted outside the repository. Never commit service-account
-JSON or Hugging Face tokens.
+### 1. Google Cloud Console Setup
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/).
+2. Create or select a Google Cloud project.
+3. Configure the **OAuth consent screen**:
+   - User Type: External (or Internal if using Google Workspace).
+   - App name: `Small LLM Storage`.
+   - Scope: `https://www.googleapis.com/auth/drive.file`.
+   - Add your personal Google email as a test user if the app is in testing mode.
+4. Create Credentials:
+   - Click **Create Credentials** -> **OAuth client ID**.
+   - Application type: **Desktop app**.
+   - Download the JSON credentials file and place it at `.secrets/google-drive-oauth-client.json`.
+
+### 2. Run the Interactive OAuth Setup
+
+Run the setup command:
+
+```bash
+uv run python -m dataset.drive_auth setup \
+  --client-secrets .secrets/google-drive-oauth-client.json \
+  --token-file .secrets/google-drive-authorized-user.json
+```
+
+What this setup command does:
+
+1. **Validates** that `.secrets/google-drive-oauth-client.json` is a Desktop App client secrets JSON (rejecting service-account files and web client secrets).
+2. **Requests scope** `https://www.googleapis.com/auth/drive.file` and opens your browser for one-time Google account consent with offline refresh access.
+3. **Atomically writes** `.secrets/google-drive-authorized-user.json`. Subsequent runs automatically load and refresh this token without opening the browser.
+4. **Creates or reuses** the application folder tree in your personal My Drive:
+   ```text
+   Small LLM Storage/
+   └── dataset-shards/
+   ```
+   Folder lookups check existing directories first to avoid duplicate folders.
+5. **Saves environment variables** to `.env` (gitignored):
+   ```env
+   SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
+   SMALL_LLM_DRIVE_FOLDER_ID=<folder-id>
+   ```
+6. **Performs an automated smoke test**: uploads a temporary test payload to `dataset-shards`, reads object metadata, downloads and checks SHA-256 and MD5 checksums, and cleans up the test object.
+7. **Reports** the authenticated Google account email and folder ID without printing secrets or access tokens.
+
+### 3. Credentials & Security Rules
+
+- Never commit `.env` or `.secrets/` files. Both are covered in `.gitignore`.
+- Production and acceptance CLIs automatically read `SMALL_LLM_GOOGLE_OAUTH_TOKEN` and `SMALL_LLM_DRIVE_FOLDER_ID` from the environment or `.env`.
+- CLI overrides `--google-oauth-token` (or `--google-credentials`) and `--drive-folder-id` take precedence.
+
+### 4. Revoking Authorization
+
+If you ever need to revoke access:
+- Go to [Google Account Permissions](https://myaccount.google.com/permissions).
+- Select `Small LLM Storage` and click **Remove Access**.
+- Delete `.secrets/google-drive-authorized-user.json` locally and re-run `dataset.drive_auth setup`.
 
 ## Validate the approved weights
 
