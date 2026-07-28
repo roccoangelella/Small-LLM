@@ -14,7 +14,7 @@ from dataset.src.records import ParsedRecord
 from dataset.src.streaming import (
     ImmutableShardWriter, QueueConsumer, SequencePacker, SourceDocument,
     StreamCacheConfig, StreamCacheProducer, TokenDeficitScheduler,
-    build_stream_cache, normalize_cluster_weights, parallel_read_documents,
+    build_stream_cache, normalize_cluster_weights, parallel_read_document_batches, parallel_read_documents,
     synthetic_test_weights,
 )
 from dataset.src.workplan import WorkItem, WorkPlan, build_work_plan
@@ -54,7 +54,7 @@ class PackerTest(unittest.TestCase):
         sequences = SequencePacker.from_state(state).push(_doc(2, [3, 4, 5, 6]))
         self.assertEqual(
             [list(item.tokens) for item in sequences],
-            [[1, 2, 50256, 3], [4, 5, 6, 50256]],
+            [[1, 2, 50256, 3], [3, 4, 5, 6]],
         )
         tail = SequencePacker(3)
         tail.push(_doc(1, [9, 50256]))
@@ -71,6 +71,27 @@ class PackerTest(unittest.TestCase):
         # The document has 10 source tokens; should be attributed once across sequences
         self.assertEqual(total_cluster_tokens, 10)
 
+    def test_every_next_token_transition_is_trained_once(self) -> None:
+        packer = SequencePacker(4)
+        sequences = packer.push(_doc(1, [10, 11, 12]))
+        sequences += packer.push(_doc(2, [20, 21, 22, 23, 24]))
+        sequences += packer.finish()
+        trained = [(sequence.tokens[index], sequence.tokens[index + 1])
+                   for sequence in sequences for index in range(4)
+                   if sequence.token_kinds[index + 1] != "padding"]
+        original = [10, 11, 12, config.EOD_TOKEN_ID, 20, 21, 22, 23, 24, config.EOD_TOKEN_ID]
+        self.assertEqual(trained, list(zip(original, original[1:])))
+        self.assertEqual(sequences[0].tokens[-1], sequences[1].tokens[0])
+        self.assertEqual(sum(sum(s.cluster_source_tokens.values()) for s in sequences), 8)
+
+    def test_overlap_state_round_trip_is_exact(self) -> None:
+        packer = SequencePacker(2)
+        self.assertEqual([list(s.tokens) for s in packer.push(_doc(1, [1, 2, 3]))], [[1, 2, 3]])
+        restored = SequencePacker.from_state(packer.state_dict())
+        second = restored.push(_doc(2, [4]))
+        self.assertEqual([list(s.tokens) for s in second], [[3, 50256, 4]])
+        self.assertEqual(second[0].token_kinds[0], "overlap_source")
+
 
 class StreamCacheEndToEndTest(unittest.TestCase):
     def _stream_config(self) -> StreamCacheConfig:
@@ -78,6 +99,7 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             context_length=3, sequences_per_block=1, target_shard_bytes=8,
             reader_workers=2, max_in_flight_work_items=2, per_cluster_queue_limit=10,
             prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
             weights=synthetic_test_weights(), scheduler_tie_break_seed="offline-test",
         )
 
@@ -205,6 +227,25 @@ class StreamCacheEndToEndTest(unittest.TestCase):
         self.assertEqual(doc_1.work_item_index, 1)
         self.assertEqual(doc_0.cluster_id, 1)
         self.assertEqual(doc_1.cluster_id, 2)
+
+    def test_reader_batches_are_bounded_and_preserve_order(self) -> None:
+        body = b"".join(
+            (f'{{"cluster_id":1,"tokens":[{index},{index + 1}],"token_count":2}}\n').encode()
+            for index in range(0, 100, 2)
+        )
+        plan = WorkPlan(schema_version=2, dataset="x", revision="r", source_glob="*", selection_seed="s",
+                        region_bytes=len(body), source_files=(SourceFile("part", len(body)),),
+                        work_items=(WorkItem(0, "part", 0, len(body)),), hash="0" * 64)
+        class Reader:
+            def file_size(self): return len(body)
+            def read_range(self, offset, length): return body[offset:offset + length]
+        batches = list(parallel_read_document_batches(
+            plan, reader_factory=lambda _: Reader(), workers=1, max_in_flight=1,
+            maximum_source_tokens_per_batch=6, maximum_documents_per_batch=3, maximum_bytes_per_batch=1000,
+        ))
+        self.assertGreater(len(batches), 1)
+        self.assertTrue(all(batch.accepted_source_tokens <= 6 for batch in batches))
+        self.assertEqual([doc.tokens[0] for batch in batches for _, doc in batch.records], list(range(0, 100, 2)))
 
 
 class StreamCacheCLITest(unittest.TestCase):
@@ -397,5 +438,3 @@ class BuildStreamCacheAdapterTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-

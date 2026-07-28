@@ -62,6 +62,11 @@ def verify(output_dir: Path, *, full_scan: bool = False) -> VerifyReport:
     """Validate manifest, checkpoint, work plan, hashes, sizes, and token ranges."""
 
     output_dir = output_dir.resolve()
+    streaming_manifest = output_dir / config.MANIFEST_FILENAME
+    if streaming_manifest.is_file():
+        candidate = read_json(streaming_manifest)
+        if isinstance(candidate, dict) and candidate.get("sequence_format") == "context_plus_one":
+            return _verify_stream_cache(output_dir, candidate)
     paths = {
         "train": output_dir / config.TRAIN_FILENAME,
         "validation": output_dir / config.VALIDATION_FILENAME,
@@ -166,6 +171,68 @@ def verify(output_dir: Path, *, full_scan: bool = False) -> VerifyReport:
         per_cluster=counts.get("per_cluster", {}),
         problems=problems,
     )
+
+
+def _verify_stream_cache(output_dir: Path, manifest: dict[str, Any]) -> VerifyReport:
+    """Validate schema-v1 cache shards without assuming legacy train.bin files."""
+    problems: list[str] = []
+    if manifest.get("schema_version") != 1:
+        problems.append("unsupported streaming-cache schema")
+    if manifest.get("stored_tokens_per_sequence") != int(manifest.get("context_length", -1)) + 1:
+        problems.append("context-plus-one geometry is inconsistent")
+    shards = manifest.get("shards")
+    if not isinstance(shards, list):
+        problems.append("streaming manifest shards must be a list")
+        shards = []
+    blocks: list[int] = []
+    source_total = train_source_total = 0
+    train_tokens = validation_tokens = 0
+    for entry in shards:
+        if not isinstance(entry, dict):
+            problems.append("invalid shard entry")
+            continue
+        path = output_dir / str(entry.get("filename", ""))
+        if not path.is_file():
+            problems.append(f"missing local shard {path}")
+            continue
+        if path.stat().st_size != entry.get("byte_size"):
+            problems.append(f"size mismatch for {path.name}")
+        if sha256_file(path) != entry.get("checksum"):
+            problems.append(f"checksum mismatch for {path.name}")
+        if path.stat().st_size % 2:
+            problems.append(f"odd byte size for {path.name}")
+        first, last = entry.get("first_block_id"), entry.get("last_block_id")
+        if not isinstance(first, int) or not isinstance(last, int) or last < first:
+            problems.append(f"invalid block range for {path.name}")
+        else:
+            blocks.extend(range(first, last + 1))
+        per_cluster = entry.get("shard_cluster_source_tokens", {})
+        if not isinstance(per_cluster, dict):
+            problems.append(f"invalid source-token attribution for {path.name}")
+        else:
+            shard_source_total = sum(int(value) for value in per_cluster.values())
+            source_total += shard_source_total
+        if entry.get("split") == "train":
+            train_tokens += path.stat().st_size // 2
+            train_source_total += shard_source_total
+        elif entry.get("split") == "validation": validation_tokens += path.stat().st_size // 2
+        else: problems.append(f"invalid split for {path.name}")
+    if blocks and (len(blocks) != len(set(blocks)) or sorted(blocks) != list(range(min(blocks), max(blocks) + 1))):
+        problems.append("duplicate or gapped block ranges")
+    if any(output_dir.rglob("*.tmp")) or any(output_dir.rglob("*.part")):
+        problems.append("incomplete .tmp or .part file is present")
+    scheduler = manifest.get("scheduler", {})
+    if source_total != int(manifest.get("accepted_source_tokens", -1)):
+        problems.append("per-shard source-token total disagrees with accepted source tokens")
+    if isinstance(scheduler, dict) and train_source_total != int(scheduler.get("total_emitted_source_tokens", -1)):
+        problems.append("train-shard source-token total disagrees with scheduler")
+    drive_manifest_path = output_dir / "drive_manifest.json"
+    if drive_manifest_path.exists():
+        drive = read_json(drive_manifest_path)
+        if not isinstance(drive, dict) or any(not entry.get("remote_durable") for entry in drive.get("shards", []) if isinstance(entry, dict)):
+            problems.append("Drive manifest contains unverified shard")
+    return VerifyReport(not problems, True, str(output_dir), train_tokens, validation_tokens,
+                        train_tokens + validation_tokens, source_total, 0, 0, problems=problems)
 
 
 def _validate_manifest_policy(manifest: dict[str, Any], problems: list[str]) -> None:

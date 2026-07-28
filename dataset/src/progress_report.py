@@ -188,6 +188,22 @@ def read_latest_snapshot(path: Path) -> dict[str, str] | None:
 def status_report(output_dir: Path) -> dict[str, Any]:
     """Return durable state plus the most recent live CSV observation."""
 
+    manifest_path = output_dir / config.MANIFEST_FILENAME
+    if manifest_path.exists():
+        from .storage import read_json
+        manifest = read_json(manifest_path)
+        if isinstance(manifest, dict) and manifest.get("sequence_format") == "context_plus_one":
+            shards = manifest.get("shards", [])
+            return {
+                "streaming_cache": True,
+                "complete": not any(output_dir.rglob("*.tmp")),
+                "last_durable_block_id": manifest.get("last_durable_block_id", -1),
+                "shard_count": len(shards) if isinstance(shards, list) else 0,
+                "mixture": manifest.get("mixture", {}),
+                "checkpoint_publication": "see run/<id>/latest.json in configured private Hugging Face repository",
+                "local_prefetch": {"incomplete_files": [str(p) for p in output_dir.rglob("*.part")]},
+            }
+
     progress = Progress.load(output_dir / config.PROGRESS_FILENAME)
     plan_path = output_dir / config.WORK_PLAN_FILENAME
     total_work_items: int | None = None
@@ -228,6 +244,15 @@ def status_report(output_dir: Path) -> dict[str, Any]:
 
 def format_status(report: dict[str, Any]) -> str:
     """Format a small terminal readout; detailed history stays in the CSV."""
+
+    if report.get("streaming_cache"):
+        return "\n".join((
+            "state: streaming cache finalized" if report["complete"] else "state: streaming cache has active temporary files",
+            f"last durable block: {report['last_durable_block_id']}",
+            f"immutable local shards: {report['shard_count']}",
+            f"checkpoint publication: {report['checkpoint_publication']}",
+            f"prefetch partial files: {len(report['local_prefetch']['incomplete_files'])}",
+        ))
 
     target = report["target_source_tokens"]
     total_items = report["work_items_total"]

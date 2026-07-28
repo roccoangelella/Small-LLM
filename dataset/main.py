@@ -206,6 +206,20 @@ def main(argv: list[str] | None = None) -> int:
         default=10,
         help="Prefetch head start (default: 10).",
     )
+    stream_cache_parser.add_argument("--minimum-prefetched-source-tokens", type=int, default=1_000_000,
+                                     help="Source-token head start before normal scheduling.")
+    stream_cache_parser.add_argument("--minimum-populated-cluster-queues", type=int, default=2,
+                                     help="Preferred populated queues before scheduling; never a hard all-cluster gate.")
+    stream_cache_parser.add_argument("--maximum-rolling-mixture-error", type=float, default=1.0,
+                                     help="Documented maximum normalized rolling mixture error before waiting briefly.")
+    stream_cache_parser.add_argument("--maximum-waiting-documents", type=int, default=32,
+                                     help="Bounded wait before scheduling from currently available queues.")
+    stream_cache_parser.add_argument("--reader-batch-source-tokens", type=int, default=1_000_000,
+                                     help="Maximum accepted source tokens retained per source-reader batch.")
+    stream_cache_parser.add_argument("--reader-batch-documents", type=int, default=1000,
+                                     help="Maximum documents retained per source-reader batch.")
+    stream_cache_parser.add_argument("--reader-batch-max-bytes", type=int, default=16 * 1024 * 1024,
+                                     help="Estimated maximum parsed bytes retained per source-reader batch.")
     stream_cache_parser.add_argument(
         "--scheduler-tie-break-seed",
         type=str,
@@ -288,6 +302,13 @@ def _handle_stream_cache(args: argparse.Namespace) -> int:
             prefetch_head_start=args.prefetch_head_start,
             weights=raw_weights,
             scheduler_tie_break_seed=args.scheduler_tie_break_seed,
+            minimum_prefetched_source_tokens=args.minimum_prefetched_source_tokens,
+            minimum_populated_cluster_queues=args.minimum_populated_cluster_queues,
+            maximum_rolling_mixture_error=args.maximum_rolling_mixture_error,
+            maximum_waiting_documents=args.maximum_waiting_documents,
+            reader_batch_source_tokens=args.reader_batch_source_tokens,
+            reader_batch_documents=args.reader_batch_documents,
+            reader_batch_max_bytes=args.reader_batch_max_bytes,
         )
     except Exception as error:
         sys.stderr.write(f"StreamCacheConfig validation error: {error}\n")
@@ -314,6 +335,17 @@ def _handle_stream_cache(args: argparse.Namespace) -> int:
             },
             "final_partial_sequence_policy": stream_cfg.final_partial_sequence_policy,
             "scheduler_tie_break_seed": stream_cfg.scheduler_tie_break_seed,
+            "mixture_policy": {
+                "minimum_prefetched_source_tokens": stream_cfg.minimum_prefetched_source_tokens,
+                "minimum_populated_cluster_queues": stream_cfg.minimum_populated_cluster_queues,
+                "maximum_rolling_mixture_error": stream_cfg.maximum_rolling_mixture_error,
+                "maximum_waiting_documents": stream_cfg.maximum_waiting_documents,
+            },
+            "reader_batch_bounds": {
+                "source_tokens": stream_cfg.reader_batch_source_tokens,
+                "documents": stream_cfg.reader_batch_documents,
+                "estimated_bytes": stream_cfg.reader_batch_max_bytes,
+            },
         },
     }
     print(json.dumps(out_data, indent=2, sort_keys=True))

@@ -65,6 +65,7 @@ uv run python -m dataset.main verify \
 ### 1. Sequence Geometry: Context + 1 Format
 
 Each record in the stream cache contains `context_length` input tokens plus 1 next-token target label (`stored_sequence_tokens = context_length + 1`).
+- The record stride is exactly `context_length`: `[A,B,C,D,E]` is followed by `[E,F,G,H,I]` for context 4. The overlap is physically present in both records, but only its first physical appearance contributes to source-token and cluster accounting.
 - Tokens are raw little-endian unsigned 16-bit integers (`uint16`).
 - Document boundaries receive an appended `<|endoftext|>` token (ID 50256) if not already present.
 - Sequence blocks contain `sequences_per_block` stored sequences, yielding a fixed block size:
@@ -73,6 +74,7 @@ Each record in the stream cache contains `context_length` input tokens plus 1 ne
 ### 2. Deterministic Concurrency & Integer Deficit Scheduling
 
 - **Parallel Reader (`parallel_read_documents`)**: Worker threads fetch source byte-ranges concurrently up to `--max-in-flight-work-items`. Results are reordered using the deterministic work-plan index before being yielded to the scheduler.
+- **Bounded batches**: `parallel_read_document_batches` has independently configurable source-token, document, and estimated-byte limits. Each worker has a one-batch channel, so downstream backpressure stops parsing instead of materializing a 256 MiB work item as Python objects.
 - **Token Deficit Scheduler (`TokenDeficitScheduler`)**: Computes cluster selection strictly using integer arithmetic (`Fraction`) based on:
   $$\text{deficit}(c) = \text{units}[c] \times \text{total\_emitted} - \text{emitted}[c] \times \sum\text{units}$$
   Ties are broken deterministically using SHA-256 hashes of `(seed, counter, cluster_id)`.
@@ -99,11 +101,13 @@ dataset/output/
 
 `manifest.json` tracks shard metadata including checksums, block ID ranges, context lengths, and per-cluster token counts.
 
-### 5. Resume and Replay Limits
+### 5. Checkpoint, Drive, and migration contract
 
-- Resuming uses saved state in `progress.json` and `manifest.json`, tracking `last_durable_block_id`.
-- Replay begins strictly after `last_durable_block_id`.
-- **No GPU Checkpoint Atomicity**: The stream cache guarantees CPU storage durability before trainer visibility. Joint GPU model state and optimizer checkpoint atomicity remains the responsibility of the trainer implementation.
+- `CheckpointCoordinator` accepts a framework adapter and atomically commits opaque trainer state (model/optimizer/LR/scaler/RNG/metrics) together with source cursor, queues, scheduler, packer, pending-block, shard, and remote-durability state. It refuses partial optimizer or gradient-accumulation windows.
+- `RemoteShardStore` accepts only finalized immutable `.bin` files. The Drive backend is optional; credentials come from `GOOGLE_APPLICATION_CREDENTIALS` or an explicit mounted path, never the repository. Unit tests use `InMemoryDriveStore`.
+- A Drive manifest records run ID, logical path, split/index, block range, bytes, sequence/source counts, cluster counts, SHA-256, Drive ID/checksums, verification state/time, schema hash, and configuration hash.
+- `TwoPhaseCheckpointPublisher` uploads a versioned checkpoint, verifies its file manifest, then moves `run/<run-id>/latest.json`. It publishes `best.json` only after the configured metric improves. Old history is never removed automatically.
+- Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, downloads only the requested immutable prefetch window to `.part`, verifies SHA-256, atomically installs shards, then restores the trainer and pipeline state. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
 
 ### 6. Synthetic / Offline Testing Example
 

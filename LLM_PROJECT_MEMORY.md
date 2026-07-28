@@ -595,33 +595,47 @@ Commit `ea4107c4d438cf4460ab15a4732d2ff935ced78e` added a schema-v1 prototype wi
 - streaming configuration and weight-file validation;
 - substantial offline tests.
 
-This prototype is a useful foundation but is **not production-safe yet**.
+This prototype is a useful foundation. The hardening pass below fixes the
+sequence stride, bounded source batches, provenance accounting, checkpoint
+interfaces, offline remote mirrors, and schema-v1 verification/status support.
 
-### Known defects and missing guarantees
+### Defects fixed in the streaming hardening pass
 
-Before production, the streaming path must fix or complete:
+1. Context+1 records now stride by `context_length`, not `context_length + 1`.
+   The one-token overlap is physically stored in both records but source-counted
+   once, and a deterministic invariant reconstructs every source transition.
+2. Deficit counters remain continuous. The adapter uses configurable source-token
+   head start, queue coverage, bounded waiting, incremental emission, rolling and
+   cumulative mixture measurements, and never requires every cluster to be live.
+3. Source reading emits bounded batches with one-batch worker channels, so parsing
+   pauses under downstream backpressure rather than materializing a whole region.
+4. Packed-token provenance distinguishes original source, inserted EOD, overlap,
+   and padding; shard counters use only original source contributions.
+5. Queue contents, scheduler tie breaks, rolling state, and packer overlap state
+   are serializable. A framework-independent joint checkpoint coordinator commits
+   only completed optimizer windows through temp-directory fsync and atomic rename.
+6. Schema v1 now has shard/checksum/block-range/source-total verification and a
+   streaming-aware `status` readout.
+7. Offline `RemoteShardStore`/Drive and Hugging Face fakes prove immutable shard
+   verification, resumable `.part` downloads, two-phase latest-pointer safety, and
+   initial prefetch restore onto an empty VPS.
 
-1. The context+1 packer currently advances by `L + 1`; it must advance by `L` so
-   one next-token transition is not lost at every sequence boundary.
-2. The adapter can still drain long runs from one locally available cluster. It
-   needs real multi-region prefetch, incremental scheduling, bounded waiting, and
-   rolling mixture-error checks.
-3. A reader currently materializes a complete work item as parsed Python objects.
-   It must emit memory-bounded record/token batches with backpressure.
-4. Per-block and per-shard source-token attribution is currently too coarse for
-   long documents and sequence/shard boundaries. Provenance must be exact and the
-   overlap counted only once.
-5. Streaming resume does not yet reconstruct queued documents, pending prepared
-   sequences, active-shard state, and source cursors completely.
-6. Interrupted and uninterrupted streaming runs do not yet have a complete
-   byte-equivalence and logical-state-equivalence proof.
-7. Streaming schema v1 is not yet fully integrated with `verify` and `status`.
-8. Google Drive mirroring, Hugging Face `last`/`best` publication, joint
-   checkpointing, and empty-VPS migration are not implemented.
-9. There is no actual model or pretraining loop yet.
+### Remaining production blockers
+
+1. The optional Google Drive backend still needs deployment wiring for the official
+   resumable API session and authenticated real-world smoke validation; no secret
+   or real account is used by tests.
+2. A real trainer adapter must serialize framework CPU/CUDA/data-loader RNG and
+   model/optimizer/scheduler/scaler state; only a small opaque mock is included.
+3. Need a full interrupted-versus-uninterrupted integration proof with the future
+   trainer and a concrete remote source cursor/work-plan restore path.
+4. Final production cluster weights, concrete mixture thresholds, Drive layout,
+   Hugging Face private repository, checkpoint cadence, and best metric require
+   owner approval.
+5. There is no production Transformer or 90B run authorization.
 
 No final cluster-weight table is approved. The 90B production run remains blocked
-until the correctness, checkpoint, remote-storage, and migration tests pass.
+until the remaining real-provider and trainer-integrated correctness/migration tests pass.
 
 ---
 

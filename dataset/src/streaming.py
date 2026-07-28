@@ -18,6 +18,8 @@ import hashlib
 import math
 import os
 import queue
+import threading
+import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -108,6 +110,16 @@ class StreamCacheConfig:
     scheduler_tie_break_seed: str
     rolling_mixture_windows: tuple[int, ...] = (1_000_000, 10_000_000, 100_000_000)
     final_partial_sequence_policy: str = "pad_eod"
+    # These are deliberately source-token/document bounds, rather than "all
+    # clusters must be ready" gates.  A source can temporarily be sparse or
+    # exhausted without stalling the producer forever.
+    minimum_prefetched_source_tokens: int = 1
+    minimum_populated_cluster_queues: int = 1
+    maximum_rolling_mixture_error: float = 1.0
+    maximum_waiting_documents: int = 32
+    reader_batch_source_tokens: int = 1_000_000
+    reader_batch_documents: int = 1_000
+    reader_batch_max_bytes: int = 16 * 1024 * 1024
 
     def __post_init__(self) -> None:
         for name in (
@@ -125,6 +137,16 @@ class StreamCacheConfig:
             raise ValueError("final_partial_sequence_policy must be 'pad_eod' or 'error'")
         if any(window <= 0 for window in self.rolling_mixture_windows):
             raise ValueError("rolling mixture windows must be positive")
+        if self.minimum_prefetched_source_tokens < 0:
+            raise ValueError("minimum_prefetched_source_tokens cannot be negative")
+        if self.minimum_populated_cluster_queues <= 0:
+            raise ValueError("minimum_populated_cluster_queues must be positive")
+        if self.maximum_rolling_mixture_error < 0:
+            raise ValueError("maximum_rolling_mixture_error cannot be negative")
+        if self.maximum_waiting_documents < 0:
+            raise ValueError("maximum_waiting_documents cannot be negative")
+        if min(self.reader_batch_source_tokens, self.reader_batch_documents, self.reader_batch_max_bytes) <= 0:
+            raise ValueError("reader batch limits must be positive")
         normalize_cluster_weights(self.weights)
 
     @property
@@ -233,6 +255,19 @@ class PackedSequence:
     first_source_id: str
     last_source_id: str
     cluster_source_tokens: dict[int, int]
+    # One entry per physical stored token.  Values are source, inserted_eod,
+    # overlap_source, overlap_eod, or padding.  This is intentionally retained
+    # in prepared state (not in .bin) so attribution is auditable and resumable.
+    token_kinds: tuple[str, ...] = ()
+    token_clusters: tuple[int | None, ...] = ()
+
+
+@dataclass(frozen=True)
+class _PackedToken:
+    value: int
+    kind: str
+    cluster_id: int | None
+    source_id: str
 
 
 class SequencePacker:
@@ -246,16 +281,21 @@ class SequencePacker:
         self.context_length = context_length
         self.sequence_tokens = context_length + 1
         self.final_partial_sequence_policy = final_partial_sequence_policy
-        self._tokens: list[int] = []
+        self._tokens: list[_PackedToken] = []
         self._first_source_id: str | None = None
         self._last_source_id: str | None = None
         self._cluster_counts: dict[int, int] = {}
+        self._has_overlap = False
 
     def push(self, document: SourceDocument) -> list[PackedSequence]:
-        tokens = list(document.tokens)
-        if not tokens or tokens[-1] != config.EOD_TOKEN_ID:
-            tokens.append(config.EOD_TOKEN_ID)
-        self._tokens.extend(tokens)
+        self._tokens.extend(
+            _PackedToken(token, "source", document.cluster_id, document.source_id)
+            for token in document.tokens
+        )
+        # Existing EOD is an original source token.  Only an EOD we insert is
+        # non-source provenance; both cases remain exactly one document boundary.
+        if not document.tokens or document.tokens[-1] != config.EOD_TOKEN_ID:
+            self._tokens.append(_PackedToken(config.EOD_TOKEN_ID, "inserted_eod", None, document.source_id))
         self._first_source_id = self._first_source_id or document.source_id
         self._last_source_id = document.source_id
         self._cluster_counts[document.cluster_id] = self._cluster_counts.get(document.cluster_id, 0) + document.source_token_count
@@ -265,15 +305,29 @@ class SequencePacker:
         result: list[PackedSequence] = []
         while len(self._tokens) >= self.sequence_tokens:
             chunk = tuple(self._tokens[:self.sequence_tokens])
-            del self._tokens[:self.sequence_tokens]
+            counts: dict[int, int] = {}
+            # The first token of every later record is the prior target.  It is
+            # physically duplicated but is not a new source-token contribution.
+            first_new = 1 if self._has_overlap else 0
+            kinds: list[str] = []
+            for index, entry in enumerate(chunk):
+                kind = entry.kind
+                if index == 0 and self._has_overlap:
+                    kind = "overlap_source" if entry.kind == "source" else "overlap_eod"
+                kinds.append(kind)
+                if index >= first_new and entry.kind == "source" and entry.cluster_id is not None:
+                    counts[entry.cluster_id] = counts.get(entry.cluster_id, 0) + 1
+            # Advance by context length, retaining the target as the next input.
+            del self._tokens[:self.context_length]
             assert self._first_source_id is not None and self._last_source_id is not None
-            result.append(PackedSequence(chunk, self._first_source_id, self._last_source_id, dict(self._cluster_counts)))
+            result.append(PackedSequence(
+                tuple(entry.value for entry in chunk), self._first_source_id, self._last_source_id,
+                counts, tuple(kinds), tuple(entry.cluster_id for entry in chunk),
+            ))
+            self._has_overlap = bool(self._tokens)
             self._cluster_counts = {}
-            # Provenance is intentionally coarse for a carry that spans a sequence:
-            # first/last identities remain conservative and never lose coverage.
-            self._first_source_id = self._last_source_id if self._tokens else None
-            if not self._tokens:
-                self._last_source_id = None
+            self._first_source_id = self._tokens[0].source_id if self._tokens else None
+            self._last_source_id = self._tokens[-1].source_id if self._tokens else None
         return result
 
     def finish(self) -> list[PackedSequence]:
@@ -282,16 +336,28 @@ class SequencePacker:
         if self.final_partial_sequence_policy == "error":
             raise RuntimeError("final partial sequence exists; choose pad_eod to preserve it")
         assert self._first_source_id is not None and self._last_source_id is not None
-        self._tokens.extend([config.EOD_TOKEN_ID] * (self.sequence_tokens - len(self._tokens)))
+        self._tokens.extend(
+            _PackedToken(config.EOD_TOKEN_ID, "padding", None, "<padding>")
+            for _ in range(self.sequence_tokens - len(self._tokens))
+        )
         result = self._drain()
-        assert not self._tokens
+        # The final emitted record retains its target by the normal stride rule,
+        # but there is no following record in a completed cache.  Dropping only
+        # this synthetic carry cannot remove a trainable source transition.
+        self._tokens = []
+        self._has_overlap = False
+        self._first_source_id = self._last_source_id = None
         return result
 
     def state_dict(self) -> dict[str, object]:
         return {
             "context_length": self.context_length,
             "final_partial_sequence_policy": self.final_partial_sequence_policy,
-            "carry_tokens": list(self._tokens),
+            "carry": [entry.__dict__ for entry in self._tokens],
+            # Kept for readers of pre-overlap checkpoint state; it is no longer
+            # sufficient on its own because provenance is exact now.
+            "carry_tokens": [entry.value for entry in self._tokens],
+            "has_overlap": self._has_overlap,
             "first_source_id": self._first_source_id,
             "last_source_id": self._last_source_id,
             "cluster_source_tokens": {str(k): v for k, v in self._cluster_counts.items()},
@@ -300,13 +366,23 @@ class SequencePacker:
     @classmethod
     def from_state(cls, state: Mapping[str, object]) -> "SequencePacker":
         instance = cls(int(state["context_length"]), final_partial_sequence_policy=str(state["final_partial_sequence_policy"]))
-        instance._tokens = [int(token) for token in state.get("carry_tokens", [])]
+        raw_carry = state.get("carry")
+        if isinstance(raw_carry, list):
+            instance._tokens = [
+                _PackedToken(int(item["value"]), str(item["kind"]),
+                             int(item["cluster_id"]) if item.get("cluster_id") is not None else None,
+                             str(item["source_id"]))
+                for item in raw_carry if isinstance(item, Mapping)
+            ]
+        else:
+            instance._tokens = [_PackedToken(int(token), "source", None, "<legacy>") for token in state.get("carry_tokens", [])]
         if len(instance._tokens) >= instance.sequence_tokens:
             raise ValueError("invalid packer carry: it already contains a full sequence")
         instance._first_source_id = state.get("first_source_id") if isinstance(state.get("first_source_id"), str) else None
         instance._last_source_id = state.get("last_source_id") if isinstance(state.get("last_source_id"), str) else None
         raw = state.get("cluster_source_tokens", {})
         instance._cluster_counts = {int(k): int(v) for k, v in dict(raw).items()}
+        instance._has_overlap = bool(state.get("has_overlap", False))
         return instance
 
 
@@ -503,6 +579,16 @@ class QueueConsumer:
         self.last_acknowledged_block_id = block_id
 
 
+@dataclass(frozen=True)
+class DocumentBatch:
+    """A bounded, deterministic unit emitted by the parallel source reader."""
+
+    work_item_index: int
+    records: tuple[tuple[bool, SourceDocument], ...]
+    accepted_source_tokens: int
+    estimated_bytes: int
+
+
 class StreamCacheProducer:
     """Schedule documents, pack them, durably shard, then hand blocks to a consumer."""
 
@@ -526,6 +612,9 @@ class StreamCacheProducer:
         self.validation_writer = ImmutableShardWriter(output_dir, split="validation", target_bytes=stream_config.target_shard_bytes, context_length=stream_config.context_length)
         self.last_durable_block_id = -1
         self._queues = {cluster: deque() for cluster in config.ACCEPTED_CLUSTER_IDS}
+        self._documents_since_last_schedule = 0
+        self._rolling_documents: deque[SourceDocument] = deque()
+        self.validation_source_tokens = 0
 
     def add_training_document(self, document: SourceDocument) -> None:
         if document.cluster_id not in self._queues:
@@ -534,20 +623,79 @@ class StreamCacheProducer:
         if len(bucket) >= self.config.per_cluster_queue_limit:
             raise RuntimeError(f"cluster {document.cluster_id} queue is full")
         bucket.append(document)
+        self._documents_since_last_schedule += 1
 
-    def drain_training(self) -> None:
-        while True:
+    def _queue_source_tokens(self) -> int:
+        return sum(document.source_token_count for documents in self._queues.values() for document in documents)
+
+    def _mixture_error(self, documents: Iterable[SourceDocument]) -> float:
+        counts = {cluster: 0 for cluster in self.scheduler.weight_units}
+        total = 0
+        for document in documents:
+            counts[document.cluster_id] += document.source_token_count
+            total += document.source_token_count
+        if not total:
+            return 0.0
+        return max(abs(counts[c] / total - self.scheduler.weight_units[c] / self.scheduler.weight_total) for c in counts)
+
+    def mixture_measurements(self) -> dict[str, object]:
+        recent = list(self._rolling_documents)
+        return {
+            "cumulative_error": self._mixture_error(
+                [SourceDocument("<count>", c, tuple([0]) * n)
+                 for c, n in self.scheduler.emitted_source_tokens.items() if n]
+            ),
+            "rolling_error": self._mixture_error(recent),
+            "rolling_windows": {
+                str(window): self._mixture_error(_tail_documents_by_tokens(recent, window))
+                for window in self.config.rolling_mixture_windows
+            },
+        }
+
+    def _ready_to_schedule(self, *, force: bool) -> bool:
+        populated = sum(bool(documents) for documents in self._queues.values())
+        if not populated:
+            return False
+        if force:
+            return True
+        enough_coverage = populated >= self.config.minimum_populated_cluster_queues
+        enough_tokens = self._queue_source_tokens() >= self.config.minimum_prefetched_source_tokens
+        waited_long_enough = self._documents_since_last_schedule >= self.config.maximum_waiting_documents
+        return (enough_coverage and enough_tokens) or waited_long_enough
+
+    def drain_training(self, *, force: bool = True, maximum_documents: int | None = None) -> int:
+        """Incrementally drain ready queues without requiring every cluster.
+
+        A normal producer call emits at most one document once the prefetch head
+        start is satisfied.  A full drain is reserved for finalization or an
+        explicit queue-pressure escape hatch.  This prevents an early, lone
+        queue from being emptied into a long one-cluster run.
+        """
+        emitted = 0
+        while self._ready_to_schedule(force=force):
             cluster = self.scheduler.choose(cluster for cluster, docs in self._queues.items() if docs)
             if cluster is None:
-                return
+                return emitted
             document = self._queues[cluster].popleft()
             self.scheduler.emit(document)
+            self._rolling_documents.append(document)
+            # Keep sufficient history for the largest configured measurement.
+            while sum(d.source_token_count for d in self._rolling_documents) > max(self.config.rolling_mixture_windows):
+                self._rolling_documents.popleft()
+            self._documents_since_last_schedule = 0
+            emitted += 1
             for sequence in self.train_packer.push(document):
                 block = self.train_blocks.push(sequence, split="train", cumulative_source_tokens=self.scheduler.total_emitted_source_tokens)
                 if block is not None:
                     self._publish(block)
+            if maximum_documents is not None and emitted >= maximum_documents:
+                break
+            if not force:
+                break
+        return emitted
 
     def add_validation_document(self, document: SourceDocument) -> None:
+        self.validation_source_tokens += document.source_token_count
         for sequence in self.validation_packer.push(document):
             block = self.validation_blocks.push(sequence, split="validation", cumulative_source_tokens=self.scheduler.total_emitted_source_tokens)
             if block is not None:
@@ -561,8 +709,17 @@ class StreamCacheProducer:
         self.consumer.submit(block)
         self.last_durable_block_id = block.block_id
 
+    def finalize_active_shards_for_checkpoint(self) -> list[ShardMetadata]:
+        """Turn both active tails into immutable, remotely publishable shards.
+
+        This is intentionally legal at a trainer optimizer boundary only; the
+        joint coordinator calls it before constructing a checkpoint manifest so
+        that a remote checkpoint never references a mutable `.tmp` tail.
+        """
+        return self.train_writer.finish() + self.validation_writer.finish()
+
     def finish(self) -> dict[str, object]:
-        self.drain_training()
+        self.drain_training(force=True)
         for sequence in self.train_packer.finish():
             block = self.train_blocks.push(sequence, split="train", cumulative_source_tokens=self.scheduler.total_emitted_source_tokens)
             if block is not None:
@@ -575,8 +732,7 @@ class StreamCacheProducer:
             block = builder.finish(split=split, cumulative_source_tokens=self.scheduler.total_emitted_source_tokens)
             if block is not None:
                 self._publish(block)
-        self.train_writer.finish()
-        self.validation_writer.finish()
+        self.finalize_active_shards_for_checkpoint()
         manifest = {
             "schema_version": STREAM_CACHE_SCHEMA_VERSION,
             "sequence_format": SEQUENCE_FORMAT,
@@ -586,9 +742,12 @@ class StreamCacheProducer:
             "weights": {"supplied": {str(k): v for k, v in self.scheduler.supplied_weights.items()}, "normalized_integer_units": {str(k): v for k, v in self.scheduler.weight_units.items()}},
             "shards": [item.as_dict() for item in self.train_writer.shards + self.validation_writer.shards],
             "scheduler": self.scheduler.state_dict(),
+            "accepted_source_tokens": self.scheduler.total_emitted_source_tokens + self.validation_source_tokens,
+            "validation_source_tokens": self.validation_source_tokens,
+            "mixture": self.mixture_measurements(),
             "last_durable_block_id": self.last_durable_block_id,
             "consumer_visibility": "after the complete active-shard block is flush+fsync durable; finalization is fsync+atomic rename",
-            "resume_replay": "A future joint checkpoint may replay only blocks after last_durable_block_id; no GPU atomicity is claimed.",
+            "resume_replay": "Joint checkpoints replay only work after last_consumed_block_id; pipeline state is serialized separately.",
         }
         self.output_dir.mkdir(parents=True, exist_ok=True)
         write_json_atomic(self.output_dir / config.MANIFEST_FILENAME, manifest)
@@ -602,6 +761,12 @@ class StreamCacheProducer:
             "train_packer": self.train_packer.state_dict(),
             "validation_packer": self.validation_packer.state_dict(),
             "per_cluster_queue_source_ids": {str(k): [d.source_id for d in v] for k, v in self._queues.items()},
+            "per_cluster_queues": {
+                str(k): [_document_to_dict(d) for d in v] for k, v in self._queues.items()
+            },
+            "rolling_documents": [_document_to_dict(d) for d in self._rolling_documents],
+            "documents_since_last_schedule": self._documents_since_last_schedule,
+            "validation_source_tokens": self.validation_source_tokens,
             "last_durable_block_id": self.last_durable_block_id,
             "last_consumer_acknowledged_block_id": getattr(self.consumer, "last_acknowledged_block_id", -1),
             "finalized_shards": [item.as_dict() for item in self.train_writer.shards + self.validation_writer.shards],
@@ -634,10 +799,135 @@ class StreamCacheProducer:
         if "validation_packer" in state and isinstance(state["validation_packer"], Mapping):
             instance.validation_packer = SequencePacker.from_state(state["validation_packer"])
         instance.last_durable_block_id = last_durable
+        raw_queues = state.get("per_cluster_queues", {})
+        if isinstance(raw_queues, Mapping):
+            for raw_cluster, raw_documents in raw_queues.items():
+                cluster = int(raw_cluster)
+                if cluster in instance._queues and isinstance(raw_documents, list):
+                    instance._queues[cluster].extend(_document_from_dict(item) for item in raw_documents if isinstance(item, Mapping))
+        raw_rolling = state.get("rolling_documents", [])
+        if isinstance(raw_rolling, list):
+            instance._rolling_documents.extend(_document_from_dict(item) for item in raw_rolling if isinstance(item, Mapping))
+        instance._documents_since_last_schedule = int(state.get("documents_since_last_schedule", 0))
+        instance.validation_source_tokens = int(state.get("validation_source_tokens", 0))
         last_ack = state.get("last_consumer_acknowledged_block_id")
         if last_ack is not None and hasattr(instance.consumer, "acknowledge") and int(last_ack) >= 0:
             instance.consumer.acknowledge(int(last_ack))
         return instance
+
+
+def _document_to_dict(document: SourceDocument) -> dict[str, object]:
+    return {"source_id": document.source_id, "cluster_id": document.cluster_id,
+            "tokens": list(document.tokens), "work_item_index": document.work_item_index,
+            "record_start": document.record_start}
+
+
+def _document_from_dict(data: Mapping[str, object]) -> SourceDocument:
+    return SourceDocument(str(data["source_id"]), int(data["cluster_id"]),
+                          tuple(int(token) for token in data["tokens"]),
+                          int(data.get("work_item_index", 0)), int(data.get("record_start", 0)))
+
+
+def _tail_documents_by_tokens(documents: Sequence[SourceDocument], window: int) -> list[SourceDocument]:
+    total = 0
+    selected: list[SourceDocument] = []
+    for document in reversed(documents):
+        selected.append(document)
+        total += document.source_token_count
+        if total >= window:
+            break
+    return list(reversed(selected))
+
+
+def parallel_read_document_batches(
+    plan: WorkPlan,
+    *,
+    reader_factory: Callable[[SourceFile], RangeReader],
+    workers: int,
+    max_in_flight: int,
+    validation_probability: float = config.VALIDATION_PROBABILITY,
+    maximum_source_tokens_per_batch: int = 1_000_000,
+    maximum_documents_per_batch: int = 1_000,
+    maximum_bytes_per_batch: int = 16 * 1024 * 1024,
+) -> Iterator[DocumentBatch]:
+    """Yield bounded batches in work-plan order with bounded worker channels."""
+
+    if workers <= 0 or max_in_flight <= 0:
+        raise ValueError("workers and max_in_flight must be positive")
+    files = {source.path: source for source in plan.source_files}
+
+    if min(maximum_source_tokens_per_batch, maximum_documents_per_batch, maximum_bytes_per_batch) <= 0:
+        raise ValueError("batch limits must be positive")
+    stop = threading.Event()
+    finished = object()
+
+    def put(channel: queue.Queue[object], item: object) -> bool:
+        while not stop.is_set():
+            try:
+                channel.put(item, timeout=0.05)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def read_item(item: WorkItem, channel: queue.Queue[object]) -> None:
+        reader = reader_factory(files[item.filename])
+        records: list[tuple[bool, SourceDocument]] = []
+        source_tokens = estimated_bytes = 0
+        try:
+            for record in iter_owned_records(item, reader):
+                validated = validate_record(record)
+                if not validated.valid or validated.cluster_id not in config.ACCEPTED_CLUSTER_IDS:
+                    continue
+                assert validated.tokens is not None
+                document = SourceDocument(
+                    f"{plan.revision}:{item.filename}:{record.record_start}", validated.cluster_id,
+                    tuple(validated.tokens), item.index, record.record_start,
+                )
+                projected_tokens = source_tokens + document.source_token_count
+                projected_bytes = estimated_bytes + len(record.raw) + document.source_token_count * 2
+                if records and (len(records) >= maximum_documents_per_batch or
+                                projected_tokens > maximum_source_tokens_per_batch or
+                                projected_bytes > maximum_bytes_per_batch):
+                    if not put(channel, DocumentBatch(item.index, tuple(records), source_tokens, estimated_bytes)):
+                        return
+                    records, source_tokens, estimated_bytes = [], 0, 0
+                records.append((is_validation(seed=config.SELECTION_SEED, revision=plan.revision,
+                                              filename=item.filename, record_start=record.record_start,
+                                              probability=validation_probability), document))
+                source_tokens += document.source_token_count
+                estimated_bytes += len(record.raw) + document.source_token_count * 2
+            if records:
+                put(channel, DocumentBatch(item.index, tuple(records), source_tokens, estimated_bytes))
+            put(channel, finished)
+        except BaseException as error:  # future consumer must see reader failures
+            put(channel, error)
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-reader") as pool:
+        futures: dict[int, tuple[Future[None], queue.Queue[object]]] = {}
+        next_submit = 0
+        next_yield = 0
+        while next_yield < len(plan.work_items):
+            while next_submit < len(plan.work_items) and len(futures) < max_in_flight:
+                item = plan.work_items[next_submit]
+                channel: queue.Queue[object] = queue.Queue(maxsize=1)
+                futures[next_submit] = (pool.submit(read_item, item, channel), channel)
+                next_submit += 1
+            future, channel = futures.pop(next_yield)
+            while True:
+                item = channel.get()
+                if item is finished:
+                    future.result()
+                    break
+                if isinstance(item, BaseException):
+                    stop.set()
+                    for pending, _ in futures.values():
+                        pending.cancel()
+                    raise item
+                assert isinstance(item, DocumentBatch)
+                yield item
+            next_yield += 1
+        stop.set()
 
 
 def parallel_read_documents(
@@ -647,45 +937,19 @@ def parallel_read_documents(
     workers: int,
     max_in_flight: int,
     validation_probability: float = config.VALIDATION_PROBABILITY,
+    maximum_source_tokens_per_batch: int = 1_000_000,
+    maximum_documents_per_batch: int = 1_000,
+    maximum_bytes_per_batch: int = 16 * 1024 * 1024,
 ) -> Iterator[tuple[bool, SourceDocument]]:
-    """Fetch bounded work items concurrently but yield deterministic plan order.
-
-    Results are held only for the configured in-flight window.  Future
-    completion order cannot leak into document order because every future is
-    consumed by increasing work-plan index.
-    """
-
-    if workers <= 0 or max_in_flight <= 0:
-        raise ValueError("workers and max_in_flight must be positive")
-    files = {source.path: source for source in plan.source_files}
-
-    def read_item(item: WorkItem) -> list[tuple[bool, SourceDocument]]:
-        reader = reader_factory(files[item.filename])
-        output: list[tuple[bool, SourceDocument]] = []
-        for record in iter_owned_records(item, reader):
-            validated = validate_record(record)
-            if not validated.valid or validated.cluster_id not in config.ACCEPTED_CLUSTER_IDS:
-                continue
-            assert validated.tokens is not None
-            source_id = f"{plan.revision}:{item.filename}:{record.record_start}"
-            document = SourceDocument(source_id, validated.cluster_id, tuple(validated.tokens), item.index, record.record_start)
-            output.append((is_validation(seed=config.SELECTION_SEED, revision=plan.revision, filename=item.filename, record_start=record.record_start, probability=validation_probability), document))
-        return output
-
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-reader") as pool:
-        futures: dict[int, Future[list[tuple[bool, SourceDocument]]]] = {}
-        next_submit = 0
-        next_yield = 0
-        while next_yield < len(plan.work_items):
-            while next_submit < len(plan.work_items) and len(futures) < max_in_flight:
-                item = plan.work_items[next_submit]
-                futures[next_submit] = pool.submit(read_item, item)
-                next_submit += 1
-            future = futures.pop(next_yield)
-            # result() deliberately propagates the original reader exception and
-            # executor shutdown cancels not-yet-started work.
-            yield from future.result()
-            next_yield += 1
+    """Compatibility flattening wrapper over the memory-bounded batch API."""
+    for batch in parallel_read_document_batches(
+        plan, reader_factory=reader_factory, workers=workers, max_in_flight=max_in_flight,
+        validation_probability=validation_probability,
+        maximum_source_tokens_per_batch=maximum_source_tokens_per_batch,
+        maximum_documents_per_batch=maximum_documents_per_batch,
+        maximum_bytes_per_batch=maximum_bytes_per_batch,
+    ):
+        yield from batch.records
 
 
 def build_stream_cache(
@@ -715,15 +979,18 @@ def build_stream_cache(
             reader_factory=reader_factory,
             workers=stream_config.reader_workers,
             max_in_flight=stream_config.max_in_flight_work_items,
+            maximum_source_tokens_per_batch=stream_config.reader_batch_source_tokens,
+            maximum_documents_per_batch=stream_config.reader_batch_documents,
+            maximum_bytes_per_batch=stream_config.reader_batch_max_bytes,
         ):
             if is_validation_doc:
                 producer.add_validation_document(document)
             else:
                 if len(producer._queues[document.cluster_id]) >= stream_config.per_cluster_queue_limit:
-                    producer.drain_training()
+                    producer.drain_training(force=True, maximum_documents=1)
                 producer.add_training_document(document)
+                producer.drain_training(force=False, maximum_documents=1)
 
         return producer.finish()
     finally:
         producer.close()
-

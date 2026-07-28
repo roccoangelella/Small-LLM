@@ -44,10 +44,12 @@ uv run python -m dataset.main verify
 ## Streaming Cache Architecture & Contracts
 
 - **Context+1 Sequence Geometry**: Every sequence in the cache stores `context_length` input tokens plus 1 target token (`stored_sequence_tokens = context_length + 1`, e.g. 2049 tokens for context length 2048), encoded as raw little-endian uint16 integers.
+- **Stride Is Context Length**: The target at the end of one record is physically reused as the first input token of the next record. It is stored twice but counted once as an original source token; no next-token transition is dropped at a record edge.
 - **Deterministic Concurrency**: `parallel_read_documents` reads HTTP source ranges concurrently while reordering futures to yield records in exact work-plan order. `TokenDeficitScheduler` uses exact integer arithmetic (`Fraction`) and deterministic SHA-256 tie-breaking.
 - **Durability-Before-Trainer Contract**: Sequence blocks are written, flushed, and fsynced in active shard files (`.tmp`) before becoming visible to the trainer queue. Completed shards are separately finalized with `fsync` and atomic rename.
 - **Shard Layout**: Output files are written to `train/` and `validation/` subdirectories (`train-XXXXXX.bin`), with full metadata written to `manifest.json`.
-- **Resume & Replay Limits**: Checkpoints record `last_durable_block_id`. Replay restores state strictly from the last durable block. **No GPU checkpoint atomicity is claimed**; joint state synchronization remains the responsibility of the trainer loop.
+- **Joint Checkpoints**: `dataset.src.joint_checkpoint.CheckpointCoordinator` writes model/trainer opaque state plus data-pipeline state only at a completed optimizer boundary, fsyncs a temporary directory, then atomically renames it. It is framework-independent so the eventual trainer supplies model/optimizer/scheduler/scaler/RNG artifacts.
+- **Remote Durability**: immutable finalized `.bin` shards are mirrored through `RemoteShardStore` and verified by ID, size, and SHA-256 before they can be referenced by a checkpoint. Google Drive is the durable mirror; local SSD remains the live cache. A two-phase publisher sends versioned `last` data to a private Hugging Face model repository and moves `latest.json` only after verification.
 
 ---
 
