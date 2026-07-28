@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Callable, Mapping
@@ -56,9 +57,35 @@ def _load_entries(
     if not isinstance(shards, list) or any(not isinstance(item, Mapping) for item in shards):
         raise RuntimeError("existing Drive manifest has an invalid shards list")
     entries = [dict(item) for item in shards]
-    names = [entry.get("filename") for entry in entries]
-    if any(not isinstance(name, str) for name in names) or len(names) != len(set(names)):
-        raise RuntimeError("existing Drive manifest has invalid or duplicate filenames")
+    names: list[str] = []
+    file_ids: set[str] = set()
+    for index, entry in enumerate(entries):
+        filename = entry.get("filename")
+        file_id = entry.get("drive_file_id")
+        byte_size = entry.get("byte_size")
+        digest = entry.get("local_sha256")
+        if not isinstance(filename, str) or not filename:
+            raise RuntimeError(f"existing Drive manifest shard {index} has an invalid filename")
+        if not isinstance(file_id, str) or not file_id or file_id in file_ids:
+            raise RuntimeError(f"existing Drive manifest shard {index} has an invalid or duplicate file ID")
+        if isinstance(byte_size, bool) or not isinstance(byte_size, int) or byte_size < 0:
+            raise RuntimeError(f"existing Drive manifest shard {index} has an invalid byte size")
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise RuntimeError(f"existing Drive manifest shard {index} has an invalid SHA-256")
+        if entry.get("checksum") not in (None, digest):
+            raise RuntimeError(f"existing Drive manifest shard {index} checksum disagrees with local SHA-256")
+        if entry.get("remote_durable") is not True:
+            raise RuntimeError(f"existing Drive manifest shard {index} is not remotely durable")
+        if entry.get("run_id") not in (None, run_id):
+            raise RuntimeError(f"existing Drive manifest shard {index} belongs to a different run")
+        if entry.get("configuration_hash") != configuration_hash:
+            raise RuntimeError(f"existing Drive manifest shard {index} has a configuration mismatch")
+        if entry.get("schema_hash") != schema_hash:
+            raise RuntimeError(f"existing Drive manifest shard {index} has a schema mismatch")
+        names.append(filename)
+        file_ids.add(file_id)
+    if len(names) != len(set(names)):
+        raise RuntimeError("existing Drive manifest has duplicate filenames")
     return entries
 
 
