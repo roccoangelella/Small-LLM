@@ -12,8 +12,9 @@ from dataset.src.bitio import decode_uint16_le
 from dataset.src.bytesource import RangeReader, SourceFile
 from dataset.src.records import ParsedRecord
 from dataset.src.streaming import (
-    ImmutableShardWriter, QueueConsumer, SequencePacker, SourceDocument,
-    StreamCacheConfig, StreamCacheProducer, TokenDeficitScheduler,
+    ImmutableShardWriter, PackedSequence, PreparedBlockBuilder, QueueConsumer,
+    SequencePacker, SourceDocument, StreamCacheConfig, StreamCacheProducer,
+    TokenDeficitScheduler,
     build_stream_cache, normalize_cluster_weights, parallel_read_document_batches, parallel_read_documents,
     synthetic_test_weights,
 )
@@ -23,6 +24,12 @@ from tests.synthetic import build_default_synthetic_source
 
 def _doc(cluster: int, tokens: list[int], identity: str | None = None) -> SourceDocument:
     return SourceDocument(identity or f"doc-{cluster}-{tokens[0]}", cluster, tuple(tokens))
+
+
+class _AcknowledgingQueueConsumer(QueueConsumer):
+    def submit(self, block) -> None:
+        super().submit(block)
+        self.acknowledge(block.block_id)
 
 
 class SchedulerTest(unittest.TestCase):
@@ -92,6 +99,29 @@ class PackerTest(unittest.TestCase):
         self.assertEqual([list(s.tokens) for s in second], [[3, 50256, 4]])
         self.assertEqual(second[0].token_kinds[0], "overlap_source")
 
+    def test_prepared_block_builder_pending_sequence_resume(self) -> None:
+        sequence_one = PackedSequence(
+            (1, 2, 3, 4), "first", "first", {1: 3},
+            ("source", "source", "source", "inserted_eod"),
+            (1, 1, 1, None),
+        )
+        sequence_two = PackedSequence(
+            (5, 6, 7, 8), "second", "second", {2: 3},
+            ("source", "source", "source", "inserted_eod"),
+            (2, 2, 2, None),
+        )
+        original = PreparedBlockBuilder(2)
+        self.assertIsNone(original.push(sequence_one, split="train", cumulative_source_tokens=3))
+        restored = PreparedBlockBuilder.from_state(original.state_dict())
+        resumed = restored.push(sequence_two, split="train", cumulative_source_tokens=6)
+
+        fresh = PreparedBlockBuilder(2)
+        fresh.push(sequence_one, split="train", cumulative_source_tokens=3)
+        expected = fresh.push(sequence_two, split="train", cumulative_source_tokens=6)
+        self.assertIsNotNone(resumed)
+        self.assertEqual(resumed, expected)
+        self.assertEqual(restored.state_dict()["next_block_id"], 1)
+
 
 class StreamCacheEndToEndTest(unittest.TestCase):
     def _stream_config(self) -> StreamCacheConfig:
@@ -105,8 +135,12 @@ class StreamCacheEndToEndTest(unittest.TestCase):
 
     def test_dual_sink_shards_and_manifest_are_offline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            consumer = QueueConsumer(20)
-            producer = StreamCacheProducer(Path(tmp), self._stream_config(), consumer)
+            consumer = _AcknowledgingQueueConsumer(20)
+            validation_consumer = _AcknowledgingQueueConsumer(20)
+            producer = StreamCacheProducer(
+                Path(tmp), self._stream_config(), consumer,
+                validation_consumer=validation_consumer,
+            )
             producer.add_training_document(_doc(1, [1, 2]))
             producer.add_training_document(_doc(2, [3, 4, 5, 6]))
             producer.add_validation_document(_doc(3, [7, 8]))
@@ -114,7 +148,13 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             received = []
             while not consumer.queue.empty():
                 received.append(consumer.queue.get_nowait())
+            validation_received = []
+            while not validation_consumer.queue.empty():
+                validation_received.append(validation_consumer.queue.get_nowait())
             self.assertTrue(received)
+            self.assertTrue(validation_received)
+            self.assertTrue(all(block.split == "train" for block in received))
+            self.assertTrue(all(block.split == "validation" for block in validation_received))
             self.assertEqual(manifest["sequence_format"], "context_plus_one")
             files = list((Path(tmp) / "train").glob("*.bin")) + list((Path(tmp) / "validation").glob("*.bin"))
             self.assertGreaterEqual(len(files), 2)
@@ -122,10 +162,14 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             self.assertTrue(all(0 <= token <= config.TOKEN_MAX for token in decode_uint16_le(payload)))
             self.assertFalse(list(Path(tmp).rglob("*.tmp")))
 
-    def test_monotonic_block_ids_across_splits(self) -> None:
+    def test_train_and_validation_block_ids_have_separate_namespaces(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             consumer = QueueConsumer(20)
-            producer = StreamCacheProducer(Path(tmp), self._stream_config(), consumer)
+            validation_consumer = QueueConsumer(20)
+            producer = StreamCacheProducer(
+                Path(tmp), self._stream_config(), consumer,
+                validation_consumer=validation_consumer,
+            )
             producer.add_training_document(_doc(1, [1, 2, 3]))
             producer.add_validation_document(_doc(2, [4, 5, 6]))
             producer.add_training_document(_doc(3, [7, 8, 9]))
@@ -136,10 +180,16 @@ class StreamCacheEndToEndTest(unittest.TestCase):
                 block = consumer.queue.get_nowait()
                 consumer.acknowledge(block.block_id)
                 received.append(block)
+            validation_received = []
+            while not validation_consumer.queue.empty():
+                validation_received.append(validation_consumer.queue.get_nowait())
 
-            block_ids = [b.block_id for b in received]
-            self.assertEqual(block_ids, sorted(block_ids))
-            self.assertEqual(len(block_ids), len(set(block_ids)))
+            train_ids = [b.block_id for b in received]
+            validation_ids = [b.block_id for b in validation_received]
+            self.assertEqual(train_ids, [0, 1])
+            self.assertEqual(validation_ids, [0])
+            self.assertEqual(producer.last_durable_block_id, 1)
+            self.assertEqual(producer.last_durable_validation_block_id, 0)
 
     def test_producer_checkpoint_and_from_state_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,6 +197,8 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             producer = StreamCacheProducer(Path(tmp), self._stream_config(), consumer)
             producer.add_training_document(_doc(1, [1, 2, 3]))
             producer.drain_training()
+            while not consumer.queue.empty():
+                consumer.acknowledge(consumer.queue.get_nowait().block_id)
 
             state = producer.checkpoint_state()
             self.assertGreaterEqual(producer.last_durable_block_id, 0)
@@ -170,7 +222,235 @@ class StreamCacheEndToEndTest(unittest.TestCase):
                     new_block.block_id, producer.last_durable_block_id + 1
                 )
 
-    def test_shard_writer_index_discovery_and_stale_tmp_cleanup(self) -> None:
+    def test_mixture_bound_blocks_normal_candidate_but_force_overrides(self) -> None:
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=1, target_shard_bytes=8,
+            reader_workers=1, max_in_flight_work_items=1, per_cluster_queue_limit=10,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            maximum_rolling_mixture_error=0.1, maximum_waiting_documents=0,
+            rolling_mixture_windows=(100,), weights=synthetic_test_weights(),
+            scheduler_tie_break_seed="mixture-test",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = StreamCacheProducer(Path(tmp), cfg, QueueConsumer(20))
+            producer.add_training_document(_doc(1, [1, 2, 3]))
+            self.assertEqual(producer.drain_training(force=False), 1)
+            producer.add_training_document(_doc(1, [4, 5, 6]))
+            self.assertEqual(producer.drain_training(force=False), 0)
+            self.assertEqual(producer.queued_source_tokens, 3)
+            self.assertEqual(producer.drain_training(force=True), 1)
+            self.assertGreater(producer.mixture_measurements()["rolling_error"], 0.1)
+
+    def test_mixture_bootstrap_and_corrective_alternative_selection(self) -> None:
+        weights = synthetic_test_weights()
+        weights[1] = weights[2] = 1000
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=1, target_shard_bytes=100_000,
+            reader_workers=1, max_in_flight_work_items=1, per_cluster_queue_limit=20,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            maximum_rolling_mixture_error=0.1, rolling_mixture_windows=(10,),
+            weights=weights, scheduler_tie_break_seed="corrective-test",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = StreamCacheProducer(Path(tmp), cfg)
+            # The first document is explicitly allowed to bootstrap the window.
+            producer.add_training_document(_doc(2, [2] * 100))
+            self.assertEqual(producer.drain_training(force=False), 1)
+            # Build a rolling window dominated by cluster 1 while cumulative
+            # deficits still make cluster 1 the scheduler's global preference.
+            producer.add_training_document(_doc(1, [1] * 10))
+            self.assertEqual(producer.drain_training(force=True), 1)
+            producer.add_training_document(_doc(1, [3]))
+            producer.add_training_document(_doc(2, [4]))
+            self.assertEqual(producer.scheduler.choose([1, 2]), 1)
+            self.assertEqual(producer.drain_training(force=False), 1)
+            self.assertEqual(producer.scheduler.emitted_source_tokens[2], 101)
+
+    def test_rolling_history_is_compact_exact_and_restorable(self) -> None:
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=1, target_shard_bytes=100_000,
+            reader_workers=1, max_in_flight_work_items=1, per_cluster_queue_limit=20,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            rolling_mixture_windows=(5,), weights=synthetic_test_weights(),
+            scheduler_tie_break_seed="compact-rolling",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            producer = StreamCacheProducer(output, cfg)
+            producer.add_training_document(_doc(1, [1] * 3))
+            producer.drain_training(force=False)
+            producer.add_training_document(_doc(2, [2] * 4))
+            producer.drain_training(force=True)
+            self.assertEqual(producer.rolling_source_tokens, 5)
+            self.assertEqual(
+                [(item.cluster_id, item.token_count) for item in producer._rolling_contributions],
+                [(1, 1), (2, 4)],
+            )
+            producer.add_training_document(_doc(3, [3] * 10))
+            producer.drain_training(force=True)
+            self.assertEqual(
+                [(item.cluster_id, item.token_count) for item in producer._rolling_contributions],
+                [(3, 5)],
+            )
+            state = producer.checkpoint_state()
+            self.assertEqual(state["schema_version"], 2)
+            self.assertIn("rolling_contributions", state)
+            self.assertNotIn("rolling_documents", state)
+            self.assertNotIn("tokens", state["rolling_contributions"][0])
+            restored = StreamCacheProducer.from_state(output, cfg, state)
+            self.assertEqual(
+                list(restored._rolling_contributions), list(producer._rolling_contributions)
+            )
+            self.assertEqual(restored.rolling_source_tokens, 5)
+
+    def test_queue_pressure_drains_the_specific_full_cluster(self) -> None:
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=1, target_shard_bytes=100_000,
+            reader_workers=1, max_in_flight_work_items=1, per_cluster_queue_limit=1,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            weights=synthetic_test_weights(), scheduler_tie_break_seed="queue-pressure",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = StreamCacheProducer(Path(tmp), cfg)
+            producer.add_training_document(_doc(1, [1, 2, 3]))
+            producer.add_training_document(_doc(2, [4, 5, 6]))
+            self.assertEqual(
+                producer.drain_training(force=True, maximum_documents=1, cluster_id=1), 1
+            )
+            self.assertEqual(len(producer._queues[1]), 0)
+            self.assertEqual(len(producer._queues[2]), 1)
+
+    def test_checkpoint_refuses_unacknowledged_durable_consumer_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            consumer = QueueConsumer(20)
+            producer = StreamCacheProducer(Path(tmp), self._stream_config(), consumer)
+            producer.add_training_document(_doc(1, [1, 2, 3]))
+            producer.drain_training()
+            with self.assertRaises(RuntimeError):
+                producer.checkpoint_state()
+            block = consumer.queue.get_nowait()
+            consumer.acknowledge(block.block_id)
+            state = producer.checkpoint_state()
+            self.assertEqual(state["last_consumer_acknowledged_block_id"], block.block_id)
+
+    def test_checkpoint_applies_ack_invariant_to_validation_consumer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            validation_consumer = QueueConsumer(20)
+            producer = StreamCacheProducer(
+                Path(tmp), self._stream_config(),
+                validation_consumer=validation_consumer,
+            )
+            producer.add_validation_document(_doc(1, [1, 2, 3]))
+            with self.assertRaises(RuntimeError):
+                producer.checkpoint_state()
+            validation_block = validation_consumer.queue.get_nowait()
+            validation_consumer.acknowledge(validation_block.block_id)
+            state = producer.checkpoint_state()
+            self.assertEqual(
+                state["last_validation_consumer_acknowledged_block_id"],
+                validation_block.block_id,
+            )
+
+    def test_mixture_measurement_uses_integer_counters_not_cumulative_token_tuples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            producer = StreamCacheProducer(Path(tmp), self._stream_config(), QueueConsumer(20))
+            producer.scheduler.emitted_source_tokens[1] = 10**9
+            producer.scheduler.total_emitted_source_tokens = 10**9
+            measurements = producer.mixture_measurements()
+            self.assertIsInstance(measurements["cumulative_error"], float)
+            self.assertEqual(producer.scheduler.total_emitted_source_tokens, 10**9)
+            self.assertEqual(producer.queued_source_tokens, 0)
+            self.assertEqual(producer.rolling_source_tokens, 0)
+
+    def test_checkpoint_finalizes_and_resume_manifest_keeps_previous_shards(self) -> None:
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=1, target_shard_bytes=8,
+            reader_workers=1, max_in_flight_work_items=1, per_cluster_queue_limit=10,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            weights=synthetic_test_weights(), scheduler_tie_break_seed="resume-shards",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            first_consumer = QueueConsumer(20)
+            first = StreamCacheProducer(output, cfg, first_consumer)
+            first.add_training_document(_doc(1, [1, 2, 3]))
+            first.drain_training()
+            while not first_consumer.queue.empty():
+                first_consumer.acknowledge(first_consumer.queue.get_nowait().block_id)
+            state = first.checkpoint_state()
+            previous = [item["filename"] for item in state["train_writer"]["shards"]]
+            self.assertEqual(previous, ["train/train-000000.bin"])
+            self.assertEqual(list(output.rglob("*.tmp")), [])
+
+            resumed = StreamCacheProducer.from_state(output, cfg, state)
+            resumed.add_training_document(_doc(2, [10, 11, 12]))
+            manifest = resumed.finish()
+            filenames = [item["filename"] for item in manifest["shards"]]
+            self.assertIn("train/train-000000.bin", filenames)
+            self.assertGreater(len(filenames), len(previous))
+
+    def test_checkpoint_resume_matches_continuous_reference_at_same_boundary(self) -> None:
+        cfg = StreamCacheConfig(
+            context_length=3, sequences_per_block=2, target_shard_bytes=64,
+            reader_workers=2, max_in_flight_work_items=3, per_cluster_queue_limit=10,
+            prepared_block_queue_limit=20, prefetch_head_start=0,
+            minimum_prefetched_source_tokens=0, minimum_populated_cluster_queues=1,
+            weights=synthetic_test_weights(), scheduler_tie_break_seed="resume-equivalence",
+        )
+        before = [
+            (False, _doc(1, [1, 2, 3])),
+            (True, _doc(2, [4, 5])),
+            (False, _doc(2, [6, 7, 8, 9])),
+            (False, _doc(3, [10, 11])),
+        ]
+        after = [
+            (True, _doc(4, [12, 13, 14])),
+            (False, _doc(4, [15, 16, 17])),
+            (False, _doc(1, [18, 19, 20, 21])),
+            (True, _doc(5, [22, 23])),
+        ]
+
+        def feed(producer: StreamCacheProducer, documents) -> None:
+            for validation, document in documents:
+                if validation:
+                    producer.add_validation_document(document)
+                else:
+                    producer.add_training_document(document)
+                    producer.drain_training(force=False, maximum_documents=1)
+
+        with tempfile.TemporaryDirectory() as reference_tmp, tempfile.TemporaryDirectory() as resumed_tmp:
+            reference_root = Path(reference_tmp)
+            reference = StreamCacheProducer(reference_root, cfg)
+            feed(reference, before)
+            reference.checkpoint_state()
+            feed(reference, after)
+            reference_manifest = reference.finish()
+
+            resumed_root = Path(resumed_tmp)
+            interrupted = StreamCacheProducer(resumed_root, cfg)
+            feed(interrupted, before)
+            state = interrupted.checkpoint_state()
+            interrupted.close()
+            resumed = StreamCacheProducer.from_state(resumed_root, cfg, state)
+            feed(resumed, after)
+            resumed_manifest = resumed.finish()
+
+            self.assertEqual(resumed_manifest, reference_manifest)
+            reference_files = sorted(path.relative_to(reference_root) for path in reference_root.rglob("*.bin"))
+            resumed_files = sorted(path.relative_to(resumed_root) for path in resumed_root.rglob("*.bin"))
+            self.assertEqual(resumed_files, reference_files)
+            for relative in reference_files:
+                self.assertEqual(
+                    (resumed_root / relative).read_bytes(),
+                    (reference_root / relative).read_bytes(),
+                )
+
+    def test_shard_writer_index_discovery_does_not_reuse_stale_tmp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             train_dir = Path(tmp) / "train"
             train_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +463,12 @@ class StreamCacheEndToEndTest(unittest.TestCase):
                 Path(tmp), split="train", target_bytes=100, context_length=3
             )
             self.assertEqual(writer._index, 1)
+            stale_block = PackedSequence((1, 2, 3, 4), "a", "a", {1: 3})
+            block = PreparedBlockBuilder(1)
+            prepared = block.push(stale_block, split="train", cumulative_source_tokens=3)
+            assert prepared is not None
+            with self.assertRaises(RuntimeError):
+                writer.write_block(prepared)
 
     def test_parallel_read_documents_deterministic_order(self) -> None:
         # Mock range reader returning synthetic valid JSONL records
@@ -246,6 +532,96 @@ class StreamCacheEndToEndTest(unittest.TestCase):
         self.assertGreater(len(batches), 1)
         self.assertTrue(all(batch.accepted_source_tokens <= 6 for batch in batches))
         self.assertEqual([doc.tokens[0] for batch in batches for _, doc in batch.records], list(range(0, 100, 2)))
+
+    def test_reader_batches_round_robin_active_work_items(self) -> None:
+        bodies = {
+            "part_0": b"".join(
+                b'{"cluster_id":1,"tokens":[1,2]}\n' for _ in range(5)
+            ),
+            "part_1": b"".join(
+                b'{"cluster_id":2,"tokens":[3,4]}\n' for _ in range(5)
+            ),
+        }
+        plan = WorkPlan(
+            schema_version=2, dataset="x", revision="r", source_glob="*", selection_seed="s",
+            region_bytes=max(map(len, bodies.values())),
+            source_files=tuple(SourceFile(name, len(body)) for name, body in bodies.items()),
+            work_items=tuple(
+                WorkItem(index=index, filename=name, range_start=0, range_end=len(bodies[name]))
+                for index, name in enumerate(bodies)
+            ),
+            hash="0" * 64,
+        )
+
+        class Reader:
+            def __init__(self, body: bytes) -> None:
+                self.body = body
+
+            def file_size(self) -> int:
+                return len(self.body)
+
+            def read_range(self, offset: int, length: int) -> bytes:
+                return self.body[offset:offset + length]
+
+        batches = list(parallel_read_document_batches(
+            plan,
+            reader_factory=lambda source: Reader(bodies[source.path]),
+            workers=2,
+            max_in_flight=2,
+            maximum_source_tokens_per_batch=4,
+            maximum_documents_per_batch=2,
+            maximum_bytes_per_batch=1000,
+        ))
+        self.assertEqual(
+            [batch.work_item_index for batch in batches],
+            [0, 1, 0, 1, 0, 1],
+        )
+
+    def test_parallel_documents_interleave_default_sized_dominated_batches(self) -> None:
+        bodies = {
+            "part_0": b"".join(
+                b'{"cluster_id":1,"tokens":[1,2]}\n' for _ in range(4)
+            ),
+            "part_1": b"".join(
+                b'{"cluster_id":1,"tokens":[3,4]}\n' for _ in range(4)
+            ),
+        }
+        plan = WorkPlan(
+            schema_version=2, dataset="x", revision="r", source_glob="*", selection_seed="s",
+            region_bytes=max(map(len, bodies.values())),
+            source_files=tuple(SourceFile(name, len(body)) for name, body in bodies.items()),
+            work_items=tuple(
+                WorkItem(index=index, filename=name, range_start=0, range_end=len(bodies[name]))
+                for index, name in enumerate(bodies)
+            ),
+            hash="0" * 64,
+        )
+
+        class Reader:
+            def __init__(self, body: bytes) -> None:
+                self.body = body
+
+            def file_size(self) -> int:
+                return len(self.body)
+
+            def read_range(self, offset: int, length: int) -> bytes:
+                return self.body[offset:offset + length]
+
+        def read(workers: int):
+            return list(parallel_read_documents(
+                plan,
+                reader_factory=lambda source: Reader(bodies[source.path]),
+                workers=workers,
+                max_in_flight=2,
+            ))
+
+        one_worker = read(1)
+        many_workers = read(4)
+        self.assertEqual(
+            [document.work_item_index for _, document in one_worker],
+            [0, 1, 0, 1, 0, 1, 0, 1],
+        )
+        self.assertEqual(one_worker, many_workers)
 
 
 class StreamCacheCLITest(unittest.TestCase):

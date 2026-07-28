@@ -10,7 +10,7 @@
 
 This directory contains the Nemotron-ClimbMix corpus pipeline with two supported formats:
 
-1. **Schema-v1 Streaming Cache (`dataset/src/streaming.py`)**: Framework-independent, deterministic first-pass streaming cache that packs validated documents into fixed-geometry sequence blocks, fsyncs each active-shard block before trainer queue visibility, and maintains exact cluster mixture ratios via integer deficit scheduling.
+1. **Schema-v2 Streaming Cache (`dataset/src/streaming.py`)**: Framework-independent, deterministic first-pass streaming cache that packs validated documents into fixed-geometry sequence blocks, fsyncs each active-shard block before trainer queue visibility, and schedules clusters with exact integer deficit accounting plus rolling-mixture backpressure.
 2. **Legacy Monolithic Binary Build (`dataset.main build`)**: Appends GPT-2 token IDs directly to continuous `train.bin` and `validation.bin` files. Retained as legacy/prebuild format.
 
 ---
@@ -60,7 +60,7 @@ uv run python -m dataset.main verify \
 
 ---
 
-## Schema-v1 Streaming Cache Specification (`dataset/src/streaming.py`)
+## Schema-v2 Streaming Cache Specification (`dataset/src/streaming.py`)
 
 ### 1. Sequence Geometry: Context + 1 Format
 
@@ -73,8 +73,8 @@ Each record in the stream cache contains `context_length` input tokens plus 1 ne
 
 ### 2. Deterministic Concurrency & Integer Deficit Scheduling
 
-- **Parallel Reader (`parallel_read_documents`)**: Worker threads fetch source byte-ranges concurrently up to `--max-in-flight-work-items`. Results are reordered using the deterministic work-plan index before being yielded to the scheduler.
-- **Bounded batches**: `parallel_read_document_batches` has independently configurable source-token, document, and estimated-byte limits. Each worker has a one-batch channel, so downstream backpressure stops parsing instead of materializing a 256 MiB work item as Python objects.
+- **Parallel Reader (`parallel_read_documents`)**: Active work items advance by one bounded batch per deterministic cycle. Documents are then interleaved across that cycle, and changing the worker count does not change output order.
+- **Bounded batches**: `parallel_read_document_batches` has independently configurable source-token, document, and estimated-byte limits. At most one result batch per in-flight work item is retained, so a 256 MiB work item is never materialized as Python objects all at once.
 - **Token Deficit Scheduler (`TokenDeficitScheduler`)**: Computes cluster selection strictly using integer arithmetic (`Fraction`) based on:
   $$\text{deficit}(c) = \text{units}[c] \times \text{total\_emitted} - \text{emitted}[c] \times \sum\text{units}$$
   Ties are broken deterministically using SHA-256 hashes of `(seed, counter, cluster_id)`.
@@ -83,7 +83,7 @@ Each record in the stream cache contains `context_length` input tokens plus 1 ne
 
 - Prepared blocks are written, flushed, and `fsync`ed in temporary active shard files (`.tmp`) before being enqueued to the trainer queue (`QueueConsumer`).
 - Active shards are finalized via `fsync` and atomic rename (`os.replace`) to `train/train-XXXXXX.bin` or `validation/validation-XXXXXX.bin`.
-- Backpressure: If the trainer queue reaches `--prepared-block-queue-limit`, the producer blocks until blocks are acknowledged.
+- Backpressure: If the trainer queue reaches `--prepared-block-queue-limit`, the producer blocks until queue space is available. A checkpoint is refused until every durable trainer-visible block has also been acknowledged.
 
 ### 4. Shard Layout & Metadata
 
@@ -103,11 +103,13 @@ dataset/output/
 
 ### 5. Checkpoint, Drive, and migration contract
 
-- `CheckpointCoordinator` accepts a framework adapter and atomically commits opaque trainer state (model/optimizer/LR/scaler/RNG/metrics) together with source cursor, queues, scheduler, packer, pending-block, shard, and remote-durability state. It refuses partial optimizer or gradient-accumulation windows.
+- `CheckpointCoordinator` accepts a framework adapter and atomically commits opaque trainer state (model/optimizer/LR/scaler/RNG/metrics) together with caller-supplied pipeline state. `StreamCacheProducer` serializes queues, scheduler, rolling counters, packers, pending prepared sequences, block counters, and finalized shard metadata. It refuses partial optimizer or gradient-accumulation windows.
 - `RemoteShardStore` accepts only finalized immutable `.bin` files. The Drive backend is optional; credentials come from `GOOGLE_APPLICATION_CREDENTIALS` or an explicit mounted path, never the repository. Unit tests use `InMemoryDriveStore`.
 - A Drive manifest records run ID, logical path, split/index, block range, bytes, sequence/source counts, cluster counts, SHA-256, Drive ID/checksums, verification state/time, schema hash, and configuration hash.
 - `TwoPhaseCheckpointPublisher` uploads a versioned checkpoint, verifies its file manifest, then moves `run/<run-id>/latest.json`. It publishes `best.json` only after the configured metric improves. Old history is never removed automatically.
-- Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, downloads only the requested immutable prefetch window to `.part`, verifies SHA-256, atomically installs shards, then restores the trainer and pipeline state. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
+- Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, stages the requested immutable prefetch window, verifies SHA-256, and only then installs the cache and checkpoint directories. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
+
+The streaming library still has no durable remote source-reader cursor or executable `stream-cache build/resume` command. The CLI command above is an offline preflight, not production orchestration.
 
 ### 6. Synthetic / Offline Testing Example
 
