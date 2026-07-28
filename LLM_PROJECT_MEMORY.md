@@ -12,36 +12,37 @@ Build a decoder-only language model with fewer than 1B parameters from random in
 - uses modern small-model architecture and training techniques;
 - serves primarily as a learning and research project for an AI MSc student.
 
-The initial scope does **not** target deliberate coding capability. Coding can be added later as a separate extension. Because semantic clusters are imperfect, incidental code may remain in the initial corpus.
+The initial scope does **not** deliberately target coding capability. Coding may be added later as a separate extension. Because semantic clusters are imperfect, incidental code can remain even after excluding the explicit programming cluster.
 
 ---
 
 ## Current Resource Assumptions
 
-- Initial development hardware: one NVIDIA T4, probably with microbatch size 1 and gradient accumulation.
-- Local VPS storage budget: approximately 400 GB for the live cache, checkpoints, temporary files, and working space.
-- Durable bulk storage: a 5 TB Google Drive account.
-- Unique pretraining corpus: target 90B accepted source tokens, minimum 80B, hard maximum 100B.
-- Working presentation target: up to 2T token presentations through repeated passes, subject to validation and downstream evaluation.
-- The first pass should overlap source streaming, preparation, local caching, Google Drive mirroring, and training.
+- Initial accelerator: one NVIDIA T4.
+- Likely initial microbatch size: 1, with gradient accumulation.
+- Local VPS storage budget: approximately 400 GB for live cache, checkpoints, temporary files, and working space.
+- Durable dataset storage: 5 TB Google Drive.
+- Unique first-pass corpus target: 90B accepted source tokens.
+- Minimum acceptable completed corpus: 80B accepted source tokens.
+- Hard maximum: 100B accepted source tokens.
+- Potential repeated-presentation target: up to 2T tokens, subject to later validation.
 
-With correct buffering, the expected steady-state bottleneck on a single T4 is GPU compute. Source reading, parsing, cloud transfer, or cache writes must not be allowed to starve the GPU.
+The first pass is intended to overlap source streaming, preparation, local caching, Drive mirroring, and model training. With sufficient buffering, the T4 should be the steady-state bottleneck; network and preprocessing must not starve it.
 
 ---
 
 ## Frozen Tokenizer Decision
 
-Use the GPT-2 byte-level BPE vocabulary already embedded in Nemotron-ClimbMix.
+Use the GPT-2 byte-level BPE IDs already embedded in Nemotron-ClimbMix.
 
-- Nemotron-ClimbMix records already contain GPT-2 token IDs.
-- Production code reuses those IDs directly; it does not detokenize and retokenize accepted documents.
-- Base vocabulary size: 50,257 IDs.
-- EOD token: GPT-2 `<|endoftext|>`, ID 50256.
-- Cache token storage: explicit little-endian `uint16`.
-- Tokenizer files, configuration, and hashes must be frozen before model creation.
-- Additional special tokens, if any, must be decided before the embedding matrix is finalized.
+- Tokenizer ID: `gpt2`.
+- Vocabulary size: 50,257.
+- EOD token: `<|endoftext|>`, ID 50256.
+- Cache encoding: explicit little-endian `uint16`.
+- Accepted records are not detokenized and retokenized.
+- Additional special tokens, if any, must be decided before finalizing the embedding matrix.
 
-Tokenizer training is outside the present project scope unless a concrete limitation is demonstrated.
+Tokenizer training is outside the current project scope unless a concrete limitation is demonstrated.
 
 ---
 
@@ -57,7 +58,7 @@ Initial pretraining source:
 - Excluded cluster: 11, NVIDIA's explicit software/programming cluster
 - Validation split: deterministic document-level hash, approximately 0.1%
 
-There is no production detokenization, language filter, code-density filter, quality classifier, document-level semantic classifier, or LLM approval pass. The resulting corpus must be described as **programming-cluster-excluded**, not guaranteed code-free.
+There is no production detokenization, language filter, code-density filter, quality classifier, document-level semantic classifier, or LLM approval pass. Describe the result as **programming-cluster-excluded**, not guaranteed code-free.
 
 Verified broad topic map:
 
@@ -84,26 +85,74 @@ Verified broad topic map:
 | 19 | Digital Communication, Internet Culture, Psychology |
 | 20 | Public Safety, Law Enforcement, Political History, Government |
 
-A bounded live sample confirmed that these IDs are useful broad heuristics but are not perfectly pure. Evidence is stored in `cluster_map_validation.json`.
+The clusters are broad heuristics rather than perfectly pure categories. Bounded sample evidence is stored in `cluster_map_validation.json`.
 
 ---
 
-## Why Source Order Cannot Be Used Directly
+## Exact Cluster Mixture Decision
 
-Nemotron-ClimbMix is locally chunky by cluster. Sequentially consuming its byte regions could expose the optimizer to long topical runs and create an arbitrary curriculum tied to file order and learning-rate phase.
+The desired training mixture is the empirical source-token distribution of the released Nemotron-ClimbMix corpus, conditioned on cluster 11 being excluded.
 
-The remote source may remain cluster-ordered, but the optimizer stream must be locally interleaved through deterministic multi-region prefetch and token-based scheduling.
+For every cluster `c`, calculate:
+
+```text
+source_tokens[c] = sum(record.token_count for records where cluster_id == c)
+```
+
+The production scheduler weights for retained clusters are the exact integer `source_tokens[c]` totals for clusters 1-10 and 12-20. Integer totals are used as relative weights; no rounded percentages or hand-designed curriculum are used.
+
+Cluster 11 is removed by conditioning:
+
+```text
+weight[c] / sum(weight[j] for j != 11)
+```
+
+The ratio does not need to be written as floating point. The existing scheduler normalizes integer weights with exact rational arithmetic.
+
+### Calibration implementation
+
+PR #3, merged at `a851242ff121a706ac5041319c27bba6c7e1dbf1`, added:
+
+```bash
+uv run python -m dataset.mixture \
+  --output-dir /data/climbmix-mixture-calibration \
+  --workers 8 \
+  --max-in-flight-work-items 16
+```
+
+The calibration pass:
+
+- scans the complete pinned release once;
+- reads `cluster_id` and `token_count` without constructing Python token arrays;
+- uses bounded deterministic byte-range concurrency;
+- checkpoints a deterministic completed-work-item prefix;
+- resumes without double counting;
+- fails closed on malformed metadata, source changes, work-plan drift, missing clusters, or output hash mismatches;
+- produces all-cluster totals plus the accepted-cluster weight file.
+
+Outputs:
+
+```text
+work_plan.json
+mixture_progress.json
+mixture_report.json
+climbmix_code_free_weights.json
+```
+
+The exact full calibration has **not yet been run**. It requires transferring the complete approximately 2.04 TB pinned release on the fast-network host. The generated weight file is not approved until the report and file hashes are reviewed.
+
+Mixture accounting is continuous across documents, microbatches, gradient-accumulation windows, prepared blocks, shards, checkpoints, interruptions, and resumes. It is not reset per GPU batch. Small microbatches therefore do not need to contain every cluster.
 
 ---
 
 ## Decided Dataset Architecture
 
-Do not wait for the complete 90B-token corpus before training, and do not build one enormous final `train.bin`.
+Do not wait for the complete 90B-token corpus before training, and do not create one enormous final binary.
 
 ```text
 pinned Nemotron byte ranges
         ↓
-deterministic multi-region, memory-bounded readers
+deterministic bounded multi-region readers
         ↓
 structural validation and cluster-11 exclusion
         ↓
@@ -111,7 +160,7 @@ deterministic train/validation split
         ↓
 per-cluster training queues
         ↓
-continuous token-deficit scheduler with rolling-mixture backpressure
+continuous exact token-deficit scheduler
         ↓
 whole documents plus EOD
         ↓
@@ -119,53 +168,41 @@ provenance-aware context+1 packer
         ↓
 prepared sequence blocks
        ↙                         ↘
-local immutable uint16 shards    bounded training-block consumer
+local immutable uint16 shards    bounded trainer consumer
        ↓
 verified Google Drive mirror
 ```
 
-The same prepared training block is durably written locally before being exposed to the trainer. Validation blocks use a separate consumer and a separate block-ID namespace.
+The same prepared block is made locally durable before trainer visibility. Validation has a separate consumer and block-ID namespace.
 
-Later epochs read deterministically shuffled local shards. Missing shards may be restored from Google Drive into a bounded local prefetch window.
-
----
-
-## Cluster Mixture Policy
-
-The target distribution is defined in **original source tokens**, not documents, physical cache tokens, EOD tokens, padding, overlap copies, or repeated presentations.
-
-The current intent is to preserve the accepted source distribution approximately rather than equalizing clusters or hand-designing a topical curriculum. The final fixed per-cluster token-weight table remains unapproved. It must be derived reproducibly and frozen in configuration and manifests before production.
-
-Mixture counters are continuous across the first-pass stream and do not reset at microbatch, accumulation window, prepared block, shard, checkpoint, interruption, or resume boundaries.
-
-Mixture is monitored cumulatively and over rolling source-token windows such as 1M, 10M, and 100M tokens. Rolling-mixture backpressure may briefly delay a candidate that would worsen excessive local error, but waits must be bounded and must not deadlock when clusters are temporarily unavailable or exhausted.
-
-Validation documents never enter the training scheduler.
+Later presentations read deterministically shuffled local shards. Missing shards may be restored from Google Drive into a bounded local prefetch window.
 
 ---
 
-## Token-Deficit Scheduler Decision
+## Token-Deficit Scheduler Contract
 
-For each accepted training cluster `c`, maintain cumulative original source-token counts:
+For each accepted training cluster `c`, track cumulative original source-token counts:
 
 ```text
 weight[c]
 emitted[c]
 total_emitted
-deficit[c] = weight[c] * total_emitted - emitted[c]
+deficit[c] = weight[c] * total_emitted - emitted[c] * sum(weight)
 ```
 
 Choose the available cluster with the largest deficit using exact integer/rational arithmetic and a deterministic seeded tie-breaker.
 
-The scheduler emits the entire next document. Overshoot is allowed and carried forward as negative deficit. Never skip or indefinitely defer a long document merely because it exceeds a local quota.
+The scheduler emits whole documents. Overshoot is carried forward as negative deficit. A long document is not split or indefinitely deferred merely to satisfy a local quota.
 
-The current schema-v2 implementation also applies rolling-mixture candidate checks and interleaves bounded batches across active work items deterministically.
+Mixture is monitored cumulatively and over rolling source-token windows such as 1M, 10M, and 100M tokens. Bounded rolling-mixture backpressure may delay a candidate briefly but must not deadlock when clusters are temporarily unavailable.
+
+Validation documents do not enter the training scheduler.
 
 ---
 
 ## Frozen Sequence-Packing Contract
 
-For model context length `L`, each stored record contains `L + 1` tokens:
+For context length `L`, each stored sequence contains `L + 1` tokens:
 
 ```text
 stored: [t0, t1, ..., tL]
@@ -173,14 +210,7 @@ input:  [t0, t1, ..., t(L-1)]
 target: [t1, t2, ..., tL]
 ```
 
-The stride is exactly `L`, so consecutive records overlap by one token:
-
-```text
-sequence 1: [t0, ..., tL]
-sequence 2: [tL, ..., t(2L)]
-```
-
-The overlap is physically duplicated but source-counted once. It is the previous sequence's final target and the next sequence's first input, preserving every intended next-token transition.
+Stride is `L`, so consecutive sequences overlap by one token. The overlap is physically duplicated but source-counted once, preserving every intended next-token transition.
 
 The packer:
 
@@ -188,14 +218,14 @@ The packer:
 - concatenates short documents;
 - splits long documents;
 - distinguishes source, inserted EOD, overlap, and padding provenance;
-- carries incomplete state through checkpoints;
-- attributes original source tokens exactly across sequence, block, and shard boundaries.
+- checkpoints incomplete carry state;
+- attributes original source tokens across sequence, block, and shard boundaries.
 
-The final context length is still open. The likely development value is 2,048, giving 2,049 stored token IDs and stride 2,048.
+Final context length remains open. The likely development value is 2,048, producing 2,049 stored IDs per sequence.
 
 ---
 
-## Cache Shards
+## Cache and Durability Contract
 
 The cache remains permanently sharded. No final merge is required.
 
@@ -208,197 +238,163 @@ dataset/output/
 │   ├── validation-000000.bin
 │   └── ...
 ├── manifest.json
-└── progress.json
+├── progress.json
+├── drive_manifest.json
+└── work_plan.json
 ```
 
 Requirements:
 
 - little-endian `uint16`;
-- fixed context+1 geometry recorded in metadata;
-- bounded source batches and bounded writes;
+- fixed context+1 geometry in metadata;
+- bounded source batches, queues, and writes;
 - active shards use temporary names;
-- complete blocks are flush+fsync durable before trainer visibility;
+- blocks are flush+fsync durable before trainer visibility;
 - finalized shards are atomically renamed and immutable;
-- each shard records checksum, byte/token/sequence counts, split-local block range, and exact per-cluster source-token attribution;
+- checksums, counts, split-local block ranges, and per-cluster source-token attribution are recorded;
 - `.tmp` and `.part` files are never exposed to the trainer;
 - finalized shards are independently verifiable and reusable.
 
-The physical cache includes small intentional overlap duplication plus EOD, possible padding, metadata, temporary space, checkpoints, and safety margin. Rough 160/180/200 GB estimates for 80B/90B/100B source tokens remain planning approximations.
+Local SSD is the live training cache. Google Drive is the durable mirror, not a random-access training filesystem.
+
+A production cursor advances only after every referenced immutable shard is verified remotely. Failed publication leaves the prior cursor recoverable and permits deterministic replay.
 
 ---
 
-## Durable Storage Roles
+## Dataset Production Implementation Status
 
-### Local VPS SSD
+PR #2, merged at `4f7822d128b6b4e563efffd4a197642403a743c3`, added the production dataset orchestrator.
 
-The local filesystem is the live training cache. The trainer reads only complete local shards or first-pass in-memory prepared blocks. Google Drive is not used as a random-access training filesystem.
+Implemented and covered by repository tests:
 
-### Google Drive
+- deterministic pinned-source work plans and bounded range readers;
+- structural record validation and cluster-11 exclusion;
+- exact source-token scheduling and rolling mixture accounting;
+- context+1 packing and exact provenance;
+- immutable local shards with durability-before-consumer semantics;
+- schema-v2 verification;
+- durable source-reader and producer resume state;
+- deterministic interruption/resume equivalence;
+- 80B minimum, 90B target, and 100B hard maximum enforcement;
+- whole-document stopping;
+- 1B accepted-source-token production checkpoint cadence;
+- verified Google Drive mirroring before cursor advancement;
+- configuration, schema, policy, and work-plan drift rejection;
+- single-writer locking, disk preflight, retry policy, orphan cleanup, and interrupted-finalization recovery;
+- correct shard-window restore primitives;
+- CI on Python 3.13.
 
-Google Drive is the durable mirror for finalized immutable train and validation shards.
-
-- Upload only locally finalized, checksummed shards.
-- Use resumable transfers and bounded range downloads.
-- Record stable Drive file IDs.
-- Verify local SHA-256 and provider metadata before marking a shard remotely durable.
-- Never overwrite an immutable logical shard with different bytes.
-- Download into `.part`, verify, and atomically install.
-- Keep a bounded local prefetch window.
-
-### Private Hugging Face Model Repository
-
-Use one private model repository with logical `last`, `best`, and `run` areas.
-
-- `last`: complete resumable trainer plus pipeline checkpoint.
-- `best`: best evaluated model snapshot and metrics; optimizer state is optional and not required by default.
-- `run`: stable configurations, hashes, manifests, code revision, tokenizer identity, and approved weights.
-
-Large dataset shards remain on Google Drive. Every `last` checkpoint embeds the exact Drive-manifest snapshot it references.
+The dataset software implementation is considered **code-complete**. It should now be frozen except for defects revealed by operational acceptance testing.
 
 ---
 
-## Fixed-Window Joint Checkpoint Guarantee
+## Remaining Dataset Operational Gates
 
-Training must be pausable and safely resumable, including migration between VPS providers. Checkpoints occur at a configurable interval and only at a completed optimizer-step boundary with no ambiguous partial update.
+The dataset component is not fully operationally qualified until all of the following pass:
 
-Trainer state will eventually include model weights, optimizer, LR scheduler, FP16 scaler, optimizer step, token counters, accumulation position, Python/framework/CUDA RNG states, dataloader/shuffle RNG, and evaluation state.
+1. Run the complete exact mixture calibration on the pinned release.
+2. Review `mixture_report.json` and approve the SHA-256 of `climbmix_code_free_weights.json`.
+3. Configure the real Google Drive service account and production folder.
+4. Run the authenticated bounded 10M-token dataset pilot.
+5. Interrupt the pilot after a durable checkpoint and resume with identical arguments.
+6. Run full verification on the bounded pilot.
+7. Confirm a second completed `--resume` does not upload duplicate Drive objects.
+8. Confirm no `.tmp`, `.part`, or finalization-backup artifacts remain.
+9. Record throughput, retry counts, Drive upload behavior, disk use, and recovery behavior.
 
-Dataset/pipeline state includes:
+The pilot commands and acceptance criteria are documented in `dataset/PRODUCTION_RUNBOOK.md`.
 
-- last consumed and last durable train block IDs;
-- separate validation block state;
-- durable source-reader/work-plan cursor;
-- reconstructable per-cluster queues;
-- deficit and rolling-mixture state;
-- packer carry and provenance;
+A separate private Hugging Face checkpoint test belongs to trainer/joint-checkpoint integration. The dataset-only production command mirrors dataset shards to Google Drive and does not start a trainer.
+
+---
+
+## 90B Build Timing Decision
+
+Do **not** start the complete 90B build now.
+
+Correct production launch sequence:
+
+1. Approve exact cluster weights.
+2. Pass the authenticated bounded dataset pilot.
+3. Implement the model and trainer consumer.
+4. Pass a small end-to-end trainer-plus-dataset pilot.
+5. Start the production dataset process.
+6. Establish a bounded cache head start.
+7. Start model training while dataset preparation and Drive mirroring continue concurrently.
+
+A full prebuild is justified only if measurements show that source reading/preparation cannot keep the GPU fed. Even then, build only the headroom needed to avoid starvation unless evidence supports a complete prebuild.
+
+---
+
+## Fixed-Window Joint Checkpoint Goal
+
+Training must be pausable and safely resumable, including migration between VPS providers. Checkpoints occur only at completed optimizer-step boundaries.
+
+Trainer state must eventually include:
+
+- model weights;
+- optimizer and LR scheduler;
+- FP16 scaler;
+- optimizer step and token counters;
+- accumulation position;
+- Python, framework, CUDA, and data-order RNG states;
+- evaluation state.
+
+Pipeline state must include:
+
+- last consumed and last durable block IDs;
+- validation state;
+- durable source/work-plan cursor;
+- queue, scheduler, rolling-mixture, and packer state;
 - pending prepared sequences;
-- finalized writer/shard state;
-- Drive durability state and exact manifest snapshot;
-- configuration, source, code, tokenizer, and schema hashes.
+- finalized shard state;
+- exact Drive manifest snapshot;
+- configuration, source, code, tokenizer, schema, and approved-weight hashes.
 
 Publication order:
 
 ```text
 finish optimizer step and pause consumption
-→ finalize all referenced shard tails
-→ upload and verify new Drive shards
-→ build, fsync, checksum, and atomically finalize local joint checkpoint
-→ upload and read-back verify versioned Hugging Face checkpoint
+→ finalize referenced shard tails
+→ upload and verify Drive shards
+→ atomically finalize local joint checkpoint
+→ upload and read-back verify versioned private-Hub checkpoint
 → publish latest pointer
-→ update best only under the frozen metric and direction
+→ conditionally update best
 → resume training
 ```
 
-The previous valid remote checkpoint remains recoverable until the replacement is complete and verified. Unsaved work after the latest checkpoint may be discarded and deterministically replayed.
-
-Required guarantee: no silent skip, no unknown duplicate training range, no model/optimizer state inconsistent with the data cursor, exact restoration of serialized logical state, and portable rollback/resume.
-
-Bitwise-identical future arithmetic is only best effort when hardware, CUDA, dependencies, kernels, and deterministic settings also match.
-
----
-
-## Dataset Readiness Versus Full-System Readiness
-
-These are separate milestones.
-
-### Dataset-component readiness
-
-The dataset component is ready when it can independently:
-
-- build and resume schema-v2 shards from the pinned source;
-- preserve deterministic source ownership and interleaving;
-- checkpoint its complete source cursor and producer state;
-- pass schema-v2 verification;
-- mirror and restore the correct required shard window;
-- survive an authenticated bounded Drive/Hugging Face migration test;
-- run with approved production cluster weights and frozen operational thresholds.
-
-This milestone does **not** require the final model architecture or real optimizer implementation.
-
-### Full training-system readiness
-
-The complete system additionally requires:
-
-- the model architecture and context length;
-- a real framework trainer and block consumer;
-- gradient accumulation and optimizer logic;
-- framework/CUDA RNG checkpoint integration;
-- evaluation and the frozen `best` metric/direction;
-- an end-to-end trainer-plus-dataset migration test;
-- a bounded live T4 pilot.
-
-Undefined trainer/model behavior must not be mislabeled as a defect in the dataset algorithms. The dataset exposes framework-independent consumer and checkpoint interfaces specifically so model/trainer work can be completed later.
-
----
-
-## Current Repository Status
-
-Latest reviewed implementation: commit `4ae2f2ebf4592d5772d3c9f9a33db594263f4357`, schema-v2 streaming cache.
-
-### Core dataset algorithms implemented and substantially tested
-
-- exact source filtering, token reuse, and deterministic validation split;
-- deterministic multi-region bounded-batch interleaving;
-- exact-integer whole-document deficit scheduling;
-- rolling-mixture backpressure and compact constant-memory accounting;
-- correct context+1 packing with stride `L`;
-- exact token provenance across blocks and shards;
-- separate train and validation consumers and block namespaces;
-- immutable local shards with durability-before-consumer semantics;
-- serialization/restoration of queues, scheduler, rolling state, packers, pending prepared sequences, block counters, and previous shard metadata;
-- interrupted-versus-continuous producer equivalence tests;
-- Google Drive and Hugging Face storage backends plus extensive offline fakes;
-- manifest/path/checksum validation and staged empty-VPS restore primitives.
-
-### Remaining dataset-only runtime work
-
-The following remain before declaring the dataset component production-ready:
-
-1. Update `verify` and `status` fully for schema v2 and separate train/validation block namespaces. The current verifier still expects schema v1.
-2. Persist and restore a durable remote source-reader/work-plan cursor, including active work-item and record positions.
-3. Add executable production orchestration such as `stream-cache build` and `stream-cache resume`; the current CLI is only a weights/configuration preflight.
-4. On empty-VPS restore, select the train shard containing `last_consumed_block_id + 1` and the following prefetch window, not simply the first manifest shards.
-5. Run a bounded authenticated smoke test against the real Google Drive folder and private Hugging Face repository using dummy or synthetic checkpoint data.
-6. Freeze final per-cluster weights, queue/prefetch/mixture thresholds, shard size, and prepared-block size.
-7. Implement explicit, verification-gated Hugging Face history cleanup if the project retains the policy of removing superseded checkpoint history.
-
-### Trainer/model-dependent work, not dataset blockers
-
-- Final decoder architecture and parameter count.
-- Final context length.
-- Real PyTorch trainer adapter and CUDA/framework RNG serialization.
-- Optimizer, LR schedule, gradient accumulation, scaler, and checkpoint cadence.
-- `best` metric, `min`/`max` direction, and slim inference-only best snapshot.
-- Full trainer-integrated interrupted/migrated equivalence proof.
-
-No 90B production run is authorized until both the dataset component and the later trainer/model integration pass their respective acceptance tests.
+No silent skip, unknown duplicate range, or model/data-cursor mismatch is acceptable. Bitwise-identical arithmetic after migration is best effort unless hardware and software environments also match exactly.
 
 ---
 
 ## Immediate Next Steps
 
-1. Complete the remaining dataset-only runtime pass listed above.
-2. Freeze the dataset subsystem after schema-v2 verification, source-cursor resume, operational CLI, correct restore window, and authenticated storage smoke tests pass.
-3. In parallel, specify and implement a very small decoder-only smoke model and trainer.
-4. Use the smoke trainer to validate the joint checkpoint adapter and block acknowledgement contract.
-5. Benchmark candidate model sizes and context lengths on the T4.
-6. Freeze the final architecture, training hyperparameters, cluster weights, checkpoint cadence, and evaluation suite.
-7. Run a bounded live end-to-end pilot before authorizing base pretraining.
+1. Merge status: production dataset and exact-mixture scanner are already merged.
+2. Run the exact full mixture calibration on the fast-network host.
+3. Approve the generated weight and report hashes.
+4. Have a coding agent prepare and document the authenticated bounded acceptance-test harness.
+5. Execute the real Drive pilot, interruption, resume, and verification procedure.
+6. Freeze the dataset subsystem after the pilot report passes.
+7. Specify and implement a very small decoder-only smoke model and trainer.
+8. Connect the trainer to the schema-v2 block consumer and joint checkpoint interfaces.
+9. Benchmark candidate architecture/context/global-batch settings on the T4.
+10. Pass a bounded end-to-end training and migration pilot before authorizing base pretraining.
 
 ---
 
 ## Current Open Decisions
 
-### Dataset/runtime
+### Dataset operations
 
-- Final fixed cluster weights and derivation method.
-- Reader/batch/queue/prefetch/wait/rolling-error parameters.
-- Shard and prepared-block sizes.
-- Google Drive run/folder layout and local prefetch/LRU policy.
-- Hugging Face repository identity and verified cleanup cadence.
-- Whether to retain a detailed document-offset provenance index beyond required block/shard accounting.
+- Final approved exact weight-file hash, pending full calibration.
+- Real Google Drive folder identity and service-account deployment.
+- Operational reader/queue/prefetch settings after the live pilot.
+- Final shard and prepared-block sizes after throughput measurements.
+- Local cache prefetch/LRU policy during later presentations.
+- Retention/cleanup policy for remote checkpoint history.
 
-### Model/training
+### Model and training
 
 - Final architecture and parameter count.
 - Exact context length; 2,048 remains the likely development value.
@@ -406,30 +402,7 @@ No 90B production run is authorized until both the dataset component and the lat
 - Optimizer, LR schedule, initialization, global token batch, and checkpoint cadence.
 - Evaluation suite and `best` metric/direction.
 - Whether a 2T presentation target remains justified.
-- Reasoning datasets, teacher model, and post-training process.
+- Reasoning datasets, teacher model, and post-training procedure.
 - Final compute availability and release policy.
 
-The core tokenizer/source policy, sequence stride, continuous deficit accounting, Google Drive shard role, Hugging Face `last`/`best` split, and fixed-window logical-resume guarantee are no longer open decisions.
-
----
-
-## Current High-Level Training Flow
-
-```text
-freeze goals, evaluation, compute, tokenizer, source, and cluster policy
-→ approve source-proportion cluster weights
-→ stream pinned byte ranges with deterministic memory-bounded prefetch
-→ validate, exclude cluster 11, and split validation
-→ interleave whole documents with continuous token-deficit scheduling
-→ append EOD and pack context+1 sequences with stride equal to context length
-→ durably write local shards and expose train blocks to the trainer
-→ mirror and verify finalized shards on Google Drive
-→ periodically checkpoint coherent trainer and pipeline state
-→ publish verified Hugging Face last and conditionally update best
-→ migrate by restoring the checkpoint and the shard containing the next block
-→ finish the reusable first-pass cache
-→ train later passes from deterministically shuffled local/Drive-restored shards
-→ evaluate the base model
-→ continue reasoning and instruction training
-→ evaluate, optimize, document, and decide on release
-```
+The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, Google Drive shard role, and overlapping first-pass training strategy are no longer open decisions.
