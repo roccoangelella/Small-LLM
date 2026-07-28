@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -24,6 +23,10 @@ MIXTURE_SCAN_SCHEMA_VERSION = 1
 MIXTURE_PROGRESS_FILENAME = "mixture_progress.json"
 MIXTURE_REPORT_FILENAME = "mixture_report.json"
 MIXTURE_WEIGHTS_FILENAME = "climbmix_code_free_weights.json"
+
+_CLUSTER_KEY = b'"cluster_id"'
+_TOKENS_KEY = b'"tokens"'
+_TOKEN_COUNT_KEY = b'"token_count"'
 
 
 @dataclass(frozen=True)
@@ -47,66 +50,6 @@ def _skip_ws(raw: bytes, index: int) -> int:
     return index
 
 
-def _scan_string_end(raw: bytes, index: int) -> int:
-    if index >= len(raw) or raw[index] != ord('"'):
-        raise ValueError("expected JSON string")
-    index += 1
-    escaped = False
-    while index < len(raw):
-        value = raw[index]
-        if escaped:
-            escaped = False
-        elif value == ord("\\"):
-            escaped = True
-        elif value == ord('"'):
-            return index + 1
-        elif value < 0x20:
-            raise ValueError("unescaped control byte in JSON string")
-        index += 1
-    raise ValueError("unterminated JSON string")
-
-
-def _skip_compound(raw: bytes, index: int) -> int:
-    opening = raw[index]
-    expected = ord("}") if opening == ord("{") else ord("]")
-    stack = [expected]
-    index += 1
-    while index < len(raw) and stack:
-        value = raw[index]
-        if value == ord('"'):
-            index = _scan_string_end(raw, index)
-            continue
-        if value == ord("{"):
-            stack.append(ord("}"))
-        elif value == ord("["):
-            stack.append(ord("]"))
-        elif value in (ord("}"), ord("]")):
-            if value != stack[-1]:
-                raise ValueError("mismatched JSON brackets")
-            stack.pop()
-        index += 1
-    if stack:
-        raise ValueError("unterminated JSON compound value")
-    return index
-
-
-def _skip_value(raw: bytes, index: int) -> int:
-    index = _skip_ws(raw, index)
-    if index >= len(raw):
-        raise ValueError("missing JSON value")
-    value = raw[index]
-    if value == ord('"'):
-        return _scan_string_end(raw, index)
-    if value in (ord("{"), ord("[")):
-        return _skip_compound(raw, index)
-    end = index
-    while end < len(raw) and raw[end] not in b",}":
-        end += 1
-    if not raw[index:end].strip():
-        raise ValueError("empty JSON scalar")
-    return end
-
-
 def _parse_integer(raw: bytes, index: int) -> tuple[int, int]:
     index = _skip_ws(raw, index)
     start = index
@@ -117,63 +60,56 @@ def _parse_integer(raw: bytes, index: int) -> tuple[int, int]:
         index += 1
     if index == digit_start:
         raise ValueError("metadata value is not an integer")
-    if index < len(raw) and raw[index] not in b" \t\r\n,}":
-        raise ValueError("metadata value is not a plain integer")
     return int(raw[start:index]), index
 
 
+def _colon_after(raw: bytes, key_at: int, key: bytes) -> int:
+    index = _skip_ws(raw, key_at + len(key))
+    if index >= len(raw) or raw[index] != ord(":"):
+        raise ValueError(f"missing colon after {key.decode('ascii')}")
+    return index + 1
+
+
 def extract_record_metadata(raw: bytes) -> RecordMetadata:
-    """Extract top-level metadata without constructing the large ``tokens`` list."""
+    """Read the official top-level metadata without constructing ``tokens``."""
 
-    index = _skip_ws(raw, 0)
-    if index >= len(raw) or raw[index] != ord("{"):
+    data = raw.strip()
+    if not data.startswith(b"{") or not data.endswith(b"}"):
         raise ValueError("record is not a JSON object")
-    index += 1
-    found: dict[str, int] = {}
 
-    while True:
-        index = _skip_ws(raw, index)
-        if index >= len(raw):
-            raise ValueError("unterminated JSON object")
-        if raw[index] == ord("}"):
-            index += 1
-            break
-        key_start = index
-        key_end = _scan_string_end(raw, index)
-        try:
-            key = json.loads(raw[key_start:key_end].decode("utf-8"))
-        except (UnicodeDecodeError, ValueError) as error:
-            raise ValueError("invalid JSON object key") from error
-        if not isinstance(key, str):
-            raise ValueError("JSON object key is not a string")
-        index = _skip_ws(raw, key_end)
-        if index >= len(raw) or raw[index] != ord(":"):
-            raise ValueError("missing colon after JSON key")
-        index = _skip_ws(raw, index + 1)
-        if key in {"cluster_id", "token_count"}:
-            if key in found:
-                raise ValueError(f"duplicate {key}")
-            found[key], index = _parse_integer(raw, index)
-        else:
-            index = _skip_value(raw, index)
-        index = _skip_ws(raw, index)
-        if index >= len(raw):
-            raise ValueError("unterminated JSON object")
-        if raw[index] == ord(","):
-            index += 1
-            continue
-        if raw[index] == ord("}"):
-            index += 1
-            break
-        raise ValueError("expected comma or object end")
+    cluster_at = data.find(_CLUSTER_KEY)
+    tokens_at = data.find(_TOKENS_KEY)
+    count_at = data.find(_TOKEN_COUNT_KEY)
+    if not (0 < cluster_at < tokens_at < count_at):
+        raise ValueError("record does not use the pinned cluster/tokens/token_count layout")
+    for key, at in (
+        (_CLUSTER_KEY, cluster_at),
+        (_TOKENS_KEY, tokens_at),
+        (_TOKEN_COUNT_KEY, count_at),
+    ):
+        if data.find(key, at + len(key)) >= 0:
+            raise ValueError(f"duplicate {key.decode('ascii')}")
+    if data[1:cluster_at].strip():
+        raise ValueError("unexpected field before cluster_id")
 
-    if _skip_ws(raw, index) != len(raw):
-        raise ValueError("trailing bytes after JSON object")
-    if set(found) != {"cluster_id", "token_count"}:
-        missing = sorted({"cluster_id", "token_count"} - set(found))
-        raise ValueError(f"record is missing metadata fields: {missing}")
-    cluster_id = found["cluster_id"]
-    token_count = found["token_count"]
+    cluster_id, cluster_end = _parse_integer(
+        data, _colon_after(data, cluster_at, _CLUSTER_KEY)
+    )
+    if data[cluster_end:tokens_at].strip() != b",":
+        raise ValueError("unexpected fields between cluster_id and tokens")
+
+    token_value = _skip_ws(data, _colon_after(data, tokens_at, _TOKENS_KEY))
+    if token_value >= len(data) or data[token_value] != ord("["):
+        raise ValueError("tokens is not an array")
+    close = data.rfind(b"]", token_value + 1, count_at)
+    if close < 0 or data[close + 1:count_at].strip() != b",":
+        raise ValueError("tokens array is malformed or followed by unexpected fields")
+
+    token_count, count_end = _parse_integer(
+        data, _colon_after(data, count_at, _TOKEN_COUNT_KEY)
+    )
+    if data[count_end:-1].strip():
+        raise ValueError("unexpected field after token_count")
     if cluster_id not in config.ALL_CLUSTER_IDS:
         raise ValueError(f"cluster_id {cluster_id} is outside 1..20")
     if token_count <= 0:
@@ -206,11 +142,11 @@ def scan_work_item(
         document_counts[metadata.cluster_id] += 1
         records += 1
     return WorkItemMixture(
-        index=item.index,
-        source_bytes=item.range_end - item.range_start,
-        record_count=records,
-        cluster_source_tokens=token_counts,
-        cluster_document_counts=document_counts,
+        item.index,
+        item.range_end - item.range_start,
+        records,
+        token_counts,
+        document_counts,
     )
 
 
@@ -227,24 +163,23 @@ def _ordered_parallel_results(
     source_by_name = {source.path: source for source in plan.source_files}
     items = plan.work_items[start_index:]
     pending: dict[int, Future[WorkItemMixture]] = {}
-    submit_index = 0
-    yield_index = start_index
+    submitted = 0
+    expected = start_index
 
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="mixture-scan") as pool:
-        while submit_index < len(items) or pending:
-            while submit_index < len(items) and len(pending) < max_in_flight:
-                item = items[submit_index]
+        while submitted < len(items) or pending:
+            while submitted < len(items) and len(pending) < max_in_flight:
+                item = items[submitted]
                 source = source_by_name.get(item.filename)
                 if source is None:
                     raise RuntimeError(f"work item references unknown source {item.filename}")
                 pending[item.index] = pool.submit(scan_work_item, item, source, reader_factory)
-                submit_index += 1
-            future = pending.pop(yield_index)
-            result = future.result()
-            if result.index != yield_index:
+                submitted += 1
+            result = pending.pop(expected).result()
+            if result.index != expected:
                 raise RuntimeError("mixture scan result order changed")
             yield result
-            yield_index += 1
+            expected += 1
 
 
 def _empty_cluster_map() -> dict[str, int]:
@@ -294,9 +229,10 @@ def _validate_state(raw: object, plan: WorkPlan) -> dict[str, object]:
     )
     if state.get("source_bytes_covered") != expected_bytes:
         raise ValueError("mixture progress source byte coverage is inconsistent")
+    expected_keys = set(_empty_cluster_map())
     for field in ("cluster_source_tokens", "cluster_document_counts"):
         value = state.get(field)
-        if not isinstance(value, Mapping) or set(value) != set(_empty_cluster_map()):
+        if not isinstance(value, Mapping) or set(value) != expected_keys:
             raise ValueError(f"mixture progress has an invalid {field}")
         if any(
             isinstance(count, bool) or not isinstance(count, int) or count < 0
@@ -318,8 +254,7 @@ def _load_completed_report(output_dir: Path, state: Mapping[str, object]) -> dic
         raise ValueError("completed mixture report must be a JSON object")
     if report.get("report_sha256") != _report_hash(report):
         raise ValueError("completed mixture report hash mismatch")
-    weights_path = output_dir / MIXTURE_WEIGHTS_FILENAME
-    if sha256_file(weights_path) != report.get("weights_sha256"):
+    if sha256_file(output_dir / MIXTURE_WEIGHTS_FILENAME) != report.get("weights_sha256"):
         raise ValueError("completed mixture weights hash mismatch")
     if report.get("work_plan_hash") != state.get("work_plan_hash"):
         raise ValueError("completed mixture report belongs to a different work plan")
@@ -333,8 +268,10 @@ def _finish(output_dir: Path, plan: WorkPlan, state: dict[str, object]) -> dict[
     if int(state["source_bytes_covered"]) != total_source_bytes:
         raise RuntimeError("mixture scan did not cover the exact pinned source byte size")
 
-    raw_tokens = dict(state["cluster_source_tokens"])
-    token_counts = {int(cluster): int(count) for cluster, count in raw_tokens.items()}
+    token_counts = {
+        int(cluster): int(count)
+        for cluster, count in dict(state["cluster_source_tokens"]).items()
+    }
     missing = [
         cluster for cluster in sorted(config.ALL_CLUSTER_IDS) if token_counts[cluster] <= 0
     ]
@@ -348,9 +285,6 @@ def _finish(output_dir: Path, plan: WorkPlan, state: dict[str, object]) -> dict[
     weights_path = output_dir / MIXTURE_WEIGHTS_FILENAME
     write_json_atomic(weights_path, weights)
     weights_sha256 = sha256_file(weights_path)
-    all_tokens = sum(token_counts.values())
-    accepted_tokens = sum(token_counts[cluster] for cluster in config.ACCEPTED_CLUSTER_IDS)
-
     report: dict[str, object] = {
         "schema_version": MIXTURE_SCAN_SCHEMA_VERSION,
         "complete": True,
@@ -367,10 +301,12 @@ def _finish(output_dir: Path, plan: WorkPlan, state: dict[str, object]) -> dict[
             str(cluster): token_counts[cluster] for cluster in sorted(token_counts)
         },
         "all_cluster_document_counts": dict(state["cluster_document_counts"]),
-        "all_source_tokens": all_tokens,
+        "all_source_tokens": sum(token_counts.values()),
         "accepted_cluster_ids": sorted(config.ACCEPTED_CLUSTER_IDS),
         "excluded_cluster_ids": sorted(config.EXCLUDED_CLUSTER_IDS),
-        "accepted_source_tokens": accepted_tokens,
+        "accepted_source_tokens": sum(
+            token_counts[cluster] for cluster in config.ACCEPTED_CLUSTER_IDS
+        ),
         "conditioning_rule": (
             "Production weights are the exact released-corpus token totals for retained "
             "clusters, conditioned on excluding cluster 11."
@@ -380,9 +316,11 @@ def _finish(output_dir: Path, plan: WorkPlan, state: dict[str, object]) -> dict[
     }
     report["report_sha256"] = _report_hash(report)
     write_json_atomic(output_dir / MIXTURE_REPORT_FILENAME, report)
-    state["complete"] = True
-    state["weights_sha256"] = weights_sha256
-    state["report_sha256"] = report["report_sha256"]
+    state.update(
+        complete=True,
+        weights_sha256=weights_sha256,
+        report_sha256=report["report_sha256"],
+    )
     write_json_atomic(output_dir / MIXTURE_PROGRESS_FILENAME, state)
     return report
 
@@ -426,13 +364,11 @@ def scan_mixture(
         state = _initial_state(plan)
         write_json_atomic(progress_path, state)
 
-    start_index = int(state["next_work_item_index"])
     token_counts = dict(state["cluster_source_tokens"])
     document_counts = dict(state["cluster_document_counts"])
-
     for result in _ordered_parallel_results(
         plan,
-        start_index=start_index,
+        start_index=int(state["next_work_item_index"]),
         reader_factory=reader_factory,
         workers=workers,
         max_in_flight=max_in_flight,
@@ -443,15 +379,14 @@ def scan_mixture(
             document_counts[key] = (
                 int(document_counts[key]) + result.cluster_document_counts[cluster]
             )
-        state["cluster_source_tokens"] = token_counts
-        state["cluster_document_counts"] = document_counts
-        state["record_count"] = int(state["record_count"]) + result.record_count
-        state["source_bytes_covered"] = (
-            int(state["source_bytes_covered"]) + result.source_bytes
+        state.update(
+            cluster_source_tokens=token_counts,
+            cluster_document_counts=document_counts,
+            record_count=int(state["record_count"]) + result.record_count,
+            source_bytes_covered=int(state["source_bytes_covered"]) + result.source_bytes,
+            next_work_item_index=result.index + 1,
+            completed_work_items=result.index + 1,
         )
-        state["next_work_item_index"] = result.index + 1
-        state["completed_work_items"] = result.index + 1
-
         completed = result.index + 1
         if completed % checkpoint_every_work_items == 0:
             write_json_atomic(progress_path, state)
