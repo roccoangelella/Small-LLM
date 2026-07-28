@@ -10,3 +10,40 @@ To do that, we have to attribute a token budget to every cluster within every ba
 In the meanwhile that our beloved agent fixes our dataset download pipeline, we can start thinking about the model's architecture. Today i'll probably go through the "preparation" of the decision process, ensuring to have a clear path of decisions to take, so that tomorrow's work is just a matter of study and decision.
 
 I found out a new interesting concept, ** Tied Embeddings **: with tied embeddings, each entry of the final hidden vector (not the output vector, as i mistakingly initially though) is multiplied by the embedding matrix to produce logits. This product is a measure of similarity between the entry vector and the embedding vector, producing a logit that is a proxy of the "correctness" of the token in i-th position across the 50257 possible ones (50257 is the GPT2 vocabulary's size). With tied embeddings, we reuse that same matrix as the final vocabulary projection instead of learning a second independent matrix.
+
+that said, we can start with our model geometry investigation:
+
+# **Dense vs MOE vs Whatever**
+### 1. The Dense Softmax Attention Transformer
+
+The most classic llm architecture is the "Dense softmax-attention Transformer". that's what i think of when i think about an llm. That says it all on how old my knowledge is. Old, full attention, every token sees every token. That's basically GPT-2.
+
+Compared with GPT-2, modern models commonly use:
+- RMSNorm instead of LayerNorm;
+- pre-normalization;
+- RoPE instead of learned absolute positions;
+- SwiGLU instead of GELU MLPs;
+- GQA instead of ordinary MHA;
+- tied input/output embeddings at small scales;
+- few or no linear biases;
+- zero or very low dropout;
+- sometimes QK-Norm;
+- greater depth relative to width.
+
+We'll see these improvings in next stages.
+
+### 2. Dense Transformer with local and global attention
+INstead of running full attentino between every token, we use a sliding window and un attention only in the window, running full attentino only in some layers, interspersed with a fixed period. I think many modern architectures (i'm pretty sure Modern BERT does this) use this technique. 
+The main benefit is reducing KV cache ***, and getting faster and cheaper inference. Using it with a 2048 context yields very negligible benefits, but it's still an interesting technique that we must takeinto account.
+
+### 3. Layer-shared dense Transformer
+Basically a cheat that has been proved to yield a tiny improvement: we duplicate each transformer layer sequentially: layer 1->layer1->layer2->layer2->... 
+Doesn't reduce params nor training time, just a bit of computation. Interesting workaround, would be interesting to check wether it's just an inference setting or has an influence on training. (asnwer: during training phase the model is doubled as well)
+
+### 4. Mixture-of-Experts Transformer
+The SOTA technique for large models. Surely unattractive for our project: using experts that small would probably mean make them very dumb.
+
+### 5. Pure State Space Models
+This architecture uses a State Space Model, compressing the past into a recurrent state just like RNNs do. s_t=F(s_t-1,x_t) and y_t=g(s_t,x_t). No KV cache is stored, and overall very fast inference is obtained. However, it's still quote an underground technique that for now we'll not take into account. Mamba models are the SOTA architectures.
+
+### 6. Hybrid linear attention plus full attention
