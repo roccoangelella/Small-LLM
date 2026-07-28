@@ -13,6 +13,8 @@ This directory contains the Nemotron-ClimbMix corpus pipeline with two supported
 1. **Schema-v2 Streaming Cache (`dataset/src/streaming.py`)**: Framework-independent, deterministic first-pass streaming cache that packs validated documents into fixed-geometry sequence blocks, fsyncs each active-shard block before trainer queue visibility, and schedules clusters with exact integer deficit accounting plus rolling-mixture backpressure.
 2. **Legacy Monolithic Binary Build (`dataset.main build`)**: Appends GPT-2 token IDs directly to continuous `train.bin` and `validation.bin` files. Retained as legacy/prebuild format.
 
+The production orchestration layer is in `dataset/production/`. It wraps the schema-v2 primitives with corpus-size enforcement, verified Google Drive durability, immutable configuration identities, safe checkpoint cadence, single-writer locking, disk preflight, and interruption recovery.
+
 ---
 
 ## Commands
@@ -21,30 +23,37 @@ This directory contains the Nemotron-ClimbMix corpus pipeline with two supported
 
 ```bash
 uv sync --locked
+uv pip install -r dataset/requirements-remote.txt
 ```
 
-### Stream-Cache Build, Resume, and Weight Validation
+### Weight validation
 
-The `stream-cache` command requires `--weights-file` because there is no production default. Without `--build` it is an offline geometry/weight preflight:
+There is no production weight default. Validate the approved mapping without starting a network run:
 
 ```bash
-# Validate weights file and confirm stream cache sequence geometry
 uv run python -m dataset.main stream-cache \
   --weights-file path/to/approved_weights.json \
   --show-stream-config
 ```
 
-Build the schema-v2 cache from the pinned source, or resume it after an interruption. A build checkpoints the producer and the source-reader cursor together; resume replays the immutable work plan to that cursor and refuses a changed record order.
+### Production build and resume
+
+Run the authenticated pilot in [`PRODUCTION_RUNBOOK.md`](PRODUCTION_RUNBOOK.md) first. The full production entry point is:
 
 ```bash
-uv run python -m dataset.main stream-cache --build \
+uv run python -m dataset.production \
   --weights-file path/to/approved_weights.json \
-  --output-dir /data/climbmix-cache
+  --output-dir /data/climbmix-cache \
+  --run-id climbmix-production-v1
 
-uv run python -m dataset.main stream-cache --build --resume \
+uv run python -m dataset.production \
   --weights-file path/to/approved_weights.json \
-  --output-dir /data/climbmix-cache
+  --output-dir /data/climbmix-cache \
+  --run-id climbmix-production-v1 \
+  --resume
 ```
+
+The lower-level `dataset.main stream-cache --build` command remains available for development and cache-primitive tests. It is not the production orchestration entry point.
 
 ### Legacy Monolithic Build Commands
 
@@ -81,7 +90,7 @@ Each record in the stream cache contains `context_length` input tokens plus 1 ne
 - Tokens are raw little-endian unsigned 16-bit integers (`uint16`).
 - Document boundaries receive an appended `<|endoftext|>` token (ID 50256) if not already present.
 - Sequence blocks contain `sequences_per_block` stored sequences, yielding a fixed block size:
-  $$\text{block\_bytes} = (\text{context\_length} + 1) \times \text{sequences\_per_block} \times 2$$
+  $$\text{block\_bytes} = (\text{context\_length} + 1) \times \text{sequences\_per\_block} \times 2$$
 
 ### 2. Deterministic Concurrency & Integer Deficit Scheduling
 
@@ -116,12 +125,14 @@ dataset/output/
 ### 5. Checkpoint, Drive, and migration contract
 
 - `CheckpointCoordinator` accepts a framework adapter and atomically commits opaque trainer state (model/optimizer/LR/scaler/RNG/metrics) together with caller-supplied pipeline state. `StreamCacheProducer` serializes queues, scheduler, rolling counters, packers, pending prepared sequences, block counters, and finalized shard metadata. It refuses partial optimizer or gradient-accumulation windows.
-- `RemoteShardStore` accepts only finalized immutable `.bin` files. The Drive backend is optional; credentials come from `GOOGLE_APPLICATION_CREDENTIALS` or an explicit mounted path, never the repository. Unit tests use `InMemoryDriveStore`.
+- `RemoteShardStore` accepts only finalized immutable `.bin` files. The Drive backend is optional for lower-level primitives but required by the production dataset command unless `--allow-local-only` is explicitly used for development. Credentials come from `GOOGLE_APPLICATION_CREDENTIALS` or an explicit mounted path, never the repository. Unit tests use `InMemoryDriveStore`.
 - A Drive manifest records run ID, logical path, split/index, block range, bytes, sequence/source counts, cluster counts, SHA-256, Drive ID/checksums, verification state/time, schema hash, and configuration hash.
 - `TwoPhaseCheckpointPublisher` uploads a versioned checkpoint, verifies its file manifest, then moves `run/<run-id>/latest.json`. It publishes `best.json` only after the configured metric improves. Old history is never removed automatically.
 - Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, stages the immutable train shard containing `last_consumed_block_id + 1` (then following shards), verifies SHA-256, and only then installs the cache and checkpoint directories. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
 
 The source-reader cursor records the accepted documents incorporated into the durable producer state, including the latest record offset for every active work item. Resume deliberately replays the immutable source plan to verify that cursor before it produces new blocks; that trades restart bandwidth for a simple, auditable no-duplicate contract.
+
+The production wrapper advances that cursor only after every referenced shard has been mirrored and verified. It checkpoints by accepted source-token volume rather than every document, and restores the preceding remote-safe cursor if final manifest publication is interrupted.
 
 ### 6. Synthetic / Offline Testing Example
 

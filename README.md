@@ -30,7 +30,9 @@ Validate a JSON weight mapping and confirm sequence geometry without starting a 
 uv run python -m dataset.main stream-cache --weights-file path/to/approved_weights.json --show-stream-config
 ```
 
-Build or resume the schema-v2 cache with `stream-cache --build` and `stream-cache --build --resume`. See [dataset/README.md](dataset/README.md) for the cursor and authenticated-storage smoke-test contracts.
+The production dataset command is `python -m dataset.production`. It enforces the 80B/90B/100B corpus envelope, uses source-token checkpoint cadence, requires verified Google Drive durability by default, refuses configuration drift on resume, and recovers uncommitted shard tails. Run the bounded authenticated pilot in [the production runbook](dataset/PRODUCTION_RUNBOOK.md) before authorizing the full corpus.
+
+The lower-level `dataset.main stream-cache --build` command remains useful for development and cache-primitive testing, but it is not the production orchestration entry point.
 
 Legacy monolithic prebuild commands:
 
@@ -63,4 +65,4 @@ Run the local offline unit test suite:
 uv run python -m unittest discover -v
 ```
 
-See [dataset/README.md](dataset/README.md) for full specifications, checkpoint contracts, and bounded smoke-test execution options.
+See [dataset/README.md](dataset/README.md) for full specifications and checkpoint contracts, and [dataset/PRODUCTION_RUNBOOK.md](dataset/PRODUCTION_RUNBOOK.md) for the authenticated pilot and production acceptance gates.
