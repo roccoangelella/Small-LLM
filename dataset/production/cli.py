@@ -41,7 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-local-only", action="store_true")
     parser.add_argument("--allow-unsafe-low-disk", action="store_true")
     parser.add_argument("--drive-folder-id", default=os.environ.get("SMALL_LLM_DRIVE_FOLDER_ID"))
-    parser.add_argument("--google-credentials", default=None)
+    parser.add_argument(
+        "--google-oauth-token",
+        "--google-credentials",
+        dest="google_credentials",
+        default=os.environ.get("SMALL_LLM_GOOGLE_OAUTH_TOKEN") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        help="Path to Google Drive authorized-user OAuth token JSON file.",
+    )
+
     parser.add_argument("--target-tokens", type=int, default=config.TARGET_ACCEPTED_SOURCE_TOKENS)
     parser.add_argument("--minimum-tokens", type=int, default=config.MINIMUM_ACCEPTED_SOURCE_TOKENS)
     parser.add_argument("--maximum-tokens", type=int, default=config.MAXIMUM_ACCEPTED_SOURCE_TOKENS)
