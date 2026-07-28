@@ -17,10 +17,3 @@ For each document:
 2. Check wether that cluster's token quota is full
 3. If not full, append an end of document token
 3. Fit tokens into our real dataset file, which will be a big .bin file containing the entire dataset. We'll use a buffer of 256 mb or something. Binary files are much much more efficient and machine readable.
-
-
----
-In the meanwhile that opencode's 5 hours limit refreshes, it's time to think about the models' architecture. Since this is a quite heavy training for my standards, and we have a shitload of data to train on, we might have to wrestle a bit with model's size to get a good training and avoid spending hundreds of €€€ on gpu.
-
-During this decision process, i found out some new concepts:
-- Gradient Accumulation: My entire life is a lie. I though that, with batch sizing, we were running only one backprop per batch and accumulating loss through the whole batch. Instead, appearently we are accumulating gradients (summing them) across the batch, performing many backprops, just with no weight update. That happens only oce per batch multiplying total accumulated gradient by learning rate.
