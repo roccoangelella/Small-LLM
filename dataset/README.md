@@ -21,6 +21,7 @@ Start the real build, resume it, or verify a finished corpus:
 ```bash
 uv run python -m dataset.main build
 uv run python -m dataset.main build --resume
+uv run python -m dataset.main status
 uv run python -m dataset.main verify
 ```
 
@@ -97,6 +98,7 @@ dataset/output/
 ├── train.bin
 ├── validation.bin
 ├── progress.json
+├── progress.csv
 ├── work_plan.json
 └── manifest.json
 ```
@@ -140,6 +142,25 @@ supposed to disappear; the same records are read again from the saved cursor.
 
 Changing writer-buffer or checkpoint sizes is safe because those settings
 affect throughput, not output identity.
+
+## Watching a running build
+
+Use this from another terminal whenever you want the short version:
+
+```bash
+uv run python -m dataset.main status
+```
+
+It shows the durable checkpoint, accepted-source-token progress, completed work
+items, any on-disk uncheckpointed tail, and the latest live observation. For a
+history that can be opened in a spreadsheet or tailed directly, the builder
+also appends `dataset/output/progress.csv`. It writes a row at startup, each
+completed work item, every durable checkpoint, when the build stops, and at
+most once a minute while records are flowing.
+
+`progress.csv` is only an operational log. Its live counters can be ahead of
+the durable checkpoint while data is buffered; `progress.json` remains the
+state that resume trusts.
 
 ## Disk and network preflight
 

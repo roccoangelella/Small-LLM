@@ -4,6 +4,7 @@ One obvious production command exists:
 
     uv run python -m dataset.main build
     uv run python -m dataset.main build --resume
+    uv run python -m dataset.main status
     uv run python -m dataset.main verify
 
 Bounded smoke/test overrides are allowed but do not change the frozen policy:
@@ -141,6 +142,12 @@ def main(argv: list[str] | None = None) -> int:
     verify_parser.add_argument("--full-scan", action="store_true",
                                help="Scan every token instead of sampling (small corpora only).")
 
+    status_parser = subcommands.add_parser(
+        "status", help="Show durable state and the latest live progress snapshot."
+    )
+    status_parser.add_argument("--output-dir", default=str(config.DEFAULT_OUTPUT_DIR),
+                               help="Output directory (default: dataset/output).")
+
     args = parser.parse_args(argv)
     configure_logging()
     effective = _effective_config(args)
@@ -164,6 +171,12 @@ def main(argv: list[str] | None = None) -> int:
         report = verify(Path(args.output_dir), full_scan=bool(args.full_scan))
         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if report.passed else 1
+
+    if args.command == "status":
+        from dataset.src.progress_report import format_status, status_report
+
+        print(format_status(status_report(Path(args.output_dir))))
+        return 0
 
     return 1
 

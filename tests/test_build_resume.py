@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import mmap
 import tempfile
@@ -13,6 +14,7 @@ from dataset.src import verify as verify_module
 from dataset.src.bitio import decode_uint16_le
 from dataset.src.build import build
 from dataset.src.exceptions import IntentionalCrash
+from dataset.src.progress_report import status_report
 from dataset.src.storage import read_json
 
 from tests.synthetic import (
@@ -218,6 +220,41 @@ class BuildResumeTest(unittest.TestCase):
                 resume=True,
             )
             self.assertTrue(_run(same, source)["complete"])
+
+    def test_progress_csv_records_resume_and_status_reads_it(self) -> None:
+        source = build_default_synthetic_source()
+        with tempfile.TemporaryDirectory(prefix="climbmix-progress-") as tmp:
+            out = Path(tmp) / "out"
+            with self.assertRaises(IntentionalCrash):
+                _run(
+                    make_effective(
+                        out,
+                        target_accepted_source_tokens=FULL_ACCEPTED_SOURCE_TOKENS,
+                        crash_after_written_bytes=550,
+                    ),
+                    source,
+                )
+            self.assertTrue(
+                _run(
+                    make_effective(
+                        out,
+                        target_accepted_source_tokens=FULL_ACCEPTED_SOURCE_TOKENS,
+                        resume=True,
+                    ),
+                    source,
+                )["complete"]
+            )
+
+            with (out / config.PROGRESS_CSV_FILENAME).open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertIn("start", [row["event"] for row in rows])
+            self.assertIn("resume", [row["event"] for row in rows])
+            self.assertEqual(rows[-1]["event"], "complete")
+
+            report = status_report(out)
+            self.assertTrue(report["complete"])
+            self.assertIsNotNone(report["latest_snapshot"])
+            self.assertEqual(report["latest_snapshot"]["event"], "complete")
 
     def test_refuse_overwrite_uncheckpointed_corpus_without_reset(self) -> None:
         source = build_default_synthetic_source()

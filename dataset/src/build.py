@@ -40,6 +40,7 @@ from .checkpoint import (
 )
 from .exceptions import IntentionalCrash
 from .manifest import build_manifest
+from .progress_report import ProgressReporter
 from .records import ParsedRecord, iter_owned_records, record_identity_str, validate_record
 from .split import is_validation
 from .storage import write_json_atomic
@@ -79,6 +80,7 @@ def build(
     train_path = output_dir / config.TRAIN_FILENAME
     validation_path = output_dir / config.VALIDATION_FILENAME
     manifest_path = output_dir / config.MANIFEST_FILENAME
+    progress_csv_path = output_dir / config.PROGRESS_CSV_FILENAME
 
     is_production = reader_factory is None
     factory = reader_factory or _make_default_reader_factory()
@@ -123,10 +125,16 @@ def build(
         buffer_bytes=effective.writer_buffer_bytes,
         resume_sizes=(progress.confirmed_train_byte_size, progress.confirmed_validation_byte_size),
     )
+    reporter = ProgressReporter.create(
+        progress_csv_path, plan, progress, effective.target_accepted_source_tokens
+    )
+    reporter.snapshot("resume" if effective.resume else "start", progress)
 
     reached_target = False
     try:
-        reached_target = _process_plan(effective, plan, progress, writer, factory, progress_path)
+        reached_target = _process_plan(
+            effective, plan, progress, writer, factory, progress_path, reporter
+        )
         _finalize(
             effective=effective,
             reached_target=reached_target,
@@ -136,6 +144,7 @@ def build(
             output_dir=output_dir,
             progress_path=progress_path,
             manifest_path=manifest_path,
+            reporter=reporter,
         )
     finally:
         writer.close()
@@ -164,6 +173,7 @@ def _finalize(
     output_dir: Path,
     progress_path: Path,
     manifest_path: Path,
+    reporter: ProgressReporter,
 ) -> None:
     """Flush, validate, hash, and atomically publish final state.
 
@@ -178,6 +188,7 @@ def _finalize(
     progress.last_checkpoint_written_bytes = confirmed[0] + confirmed[1]
     progress.complete = False
     progress.save(progress_path)
+    reporter.snapshot("final_checkpoint", progress, writer=writer)
 
     _validate_final_state(effective, reached_target, progress, output_dir)
     manifest = build_manifest(
@@ -198,6 +209,9 @@ def _finalize(
         # time.  Publishing the completion bit should not pretend that another
         # data checkpoint occurred.
         write_json_atomic(progress_path, progress.to_dict())
+        reporter.snapshot("complete", progress, writer=writer)
+    else:
+        reporter.snapshot("stopped", progress, writer=writer)
 
 
 def _validate_final_state(
@@ -368,6 +382,7 @@ def _process_plan(
     writer: BinaryCorpusWriter,
     factory: ReaderFactory,
     progress_path: Path,
+    reporter: ProgressReporter,
 ) -> bool:
     """Process plan items from the resume cursor.  Return True iff target met."""
 
@@ -404,12 +419,13 @@ def _process_plan(
 
         outcome = _process_item(
             item=item, reader=reader, effective=effective, progress=progress,
-            writer=writer, progress_path=progress_path, state=state,
+            writer=writer, progress_path=progress_path, state=state, reporter=reporter,
         )
         state.cumulative_written_bytes = outcome.cumulative_written_bytes
 
         state.processed_items += 1
         _log_progress(effective, plan, progress, item, state.processed_items, state)
+        reporter.snapshot("work_item_complete", progress, writer=writer, item=item)
 
         if outcome.target_reached:
             return True
@@ -439,6 +455,7 @@ def _process_item(
     writer: BinaryCorpusWriter,
     progress_path: Path,
     state: _LoopState,
+    reporter: ProgressReporter,
 ) -> _ItemOutcome:
     target = effective.target_accepted_source_tokens
     maximum = effective.maximum_accepted_source_tokens
@@ -471,6 +488,7 @@ def _process_item(
                 identity,
             )
             _advance_cursor(progress, item, nxt)
+            reporter.maybe_snapshot(progress, writer=writer, item=item)
             record = nxt
             continue
 
@@ -479,6 +497,7 @@ def _process_item(
         if cluster_id not in config.ACCEPTED_CLUSTER_IDS:
             progress.exclude_cluster(cluster_id)
             _advance_cursor(progress, item, nxt)
+            reporter.maybe_snapshot(progress, writer=writer, item=item)
             record = nxt
             continue
 
@@ -515,6 +534,9 @@ def _process_item(
         if writer.written_since_checkpoint >= threshold:
             _do_checkpoint(progress, writer, progress_path)
             state.cumulative_written_bytes = cum
+            reporter.snapshot("checkpoint", progress, writer=writer, item=item)
+
+        reporter.maybe_snapshot(progress, writer=writer, item=item)
 
         # Optional bounded crash for smoke/resume tests.  Fires after writing but
         # before any further checkpoint, leaving an uncommitted tail to truncate.

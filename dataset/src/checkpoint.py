@@ -467,6 +467,7 @@ def remove_uncheckpointed_corpus(output_dir: Path) -> None:
         config.PROGRESS_FILENAME,
         config.WORK_PLAN_FILENAME,
         config.MANIFEST_FILENAME,
+        config.PROGRESS_CSV_FILENAME,
     ):
         path = output_dir / name
         if path.exists():
