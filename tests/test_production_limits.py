@@ -86,3 +86,11 @@ class ProductionLimitTest(ReaderPatchMixin, unittest.TestCase):
             self.assertEqual(manifest["accepted_source_tokens"], 7)
             self.assertEqual(manifest["production"]["completion_reason"], "hard_maximum_guard")
             self.assertLessEqual(manifest["accepted_source_tokens"], 12)
+
+
+class ProductionPolicyValidationTest(unittest.TestCase):
+    def test_run_id_uses_remote_safe_path_rules(self) -> None:
+        for invalid in ("", "../escape", "nested/run", "C:", "bad\\name", "bad\x00name"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises((ValueError, RuntimeError)):
+                    production.ProductionPolicy(invalid)
