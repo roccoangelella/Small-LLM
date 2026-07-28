@@ -1,55 +1,59 @@
 # Dataset Production Runbook
 
-This runbook covers the dataset-only production path. It builds the schema-v2
-streaming cache, enforces the frozen corpus-size envelope, and mirrors every
-committed immutable shard to Google Drive before advancing the durable source
-cursor.
+This runbook covers the dataset-only schema-v2 cache path. It streams the pinned Nemotron-ClimbMix release, enforces the corpus-size envelope, and mirrors every committed immutable shard to Google Drive before advancing the durable source cursor.
 
-The trainer/model checkpoint path remains in `dataset.src.joint_checkpoint` and
-is intentionally not started by this command.
+The trainer and model checkpoint path remains separate and is intentionally not started by these commands.
 
 > [!WARNING]
-> **Authentication Requirement**: Personal Google Drive storage uses installed-app OAuth credentials (`.secrets/google-drive-authorized-user.json`). Service accounts and API keys are **not** supported and will be rejected automatically.
+> Personal Google Drive storage uses installed-app OAuth credentials. Service accounts and API keys are not supported for this project configuration.
 
 ## Production gates
 
 Do not start the 90B-token run until all of the following are true:
 
-1. The cluster-weight JSON has been reviewed and approved. The repository does
-   not provide a production default.
-2. Personal Google Drive OAuth setup has completed cleanly via `dataset.drive_auth setup`.
-3. The bounded authenticated pilot below passes, including interruption and
-   resume.
-4. `python -m unittest discover -v` and the GitHub Actions workflow are green.
-5. The output volume has at least the preflight-required free space. The command
-   sizes this requirement against the 100B hard maximum by default.
+1. The exact cluster-weight JSON has been generated, reviewed, and approved.
+2. Personal Google Drive OAuth setup has passed its real upload/download smoke test.
+3. The authenticated bounded 10M-token pilot has passed interruption, resume, verification, idempotence, and cleanup checks.
+4. The repository unit tests and GitHub Actions workflow are green.
+5. The output volume passes disk preflight for the intended run.
+6. The trainer consumer and joint-checkpoint integration are ready for the production launch.
 
-## Environment & OAuth Setup
+## Environment and dependencies
 
-Use Python 3.13 and install the optional remote dependencies:
+Use Python 3.13 and install the remote dependencies:
 
 ```bash
 uv sync --locked
 uv pip install -r dataset/requirements-remote.txt
 ```
 
-### 1. Google Cloud Console Setup
+The following paths are local secrets and must never be committed:
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/).
-2. Create or select a Google Cloud project.
-3. Configure the **OAuth consent screen**:
-   - User Type: External (or Internal if using Google Workspace).
-   - App name: `Small LLM Storage`.
-   - Scope: `https://www.googleapis.com/auth/drive.file`.
-   - Add your personal Google email as a test user if the app is in testing mode.
-4. Create Credentials:
-   - Click **Create Credentials** -> **OAuth client ID**.
-   - Application type: **Desktop app**.
-   - Download the JSON credentials file and place it at `.secrets/google-drive-oauth-client.json`.
+```text
+.secrets/google-drive-oauth-client.json
+.secrets/google-drive-authorized-user.json
+.env
+```
 
-### 2. Run the Interactive OAuth Setup
+`.secrets/` and `.env` are covered by `.gitignore`.
 
-Run the setup command:
+## Personal Google Drive OAuth setup
+
+The Google Cloud project must have:
+
+- Google Drive API enabled;
+- an OAuth consent screen;
+- a Desktop App OAuth client;
+- the account running the setup added as a test user while the app is in testing mode;
+- scope `https://www.googleapis.com/auth/drive.file`.
+
+Place the downloaded Desktop App client JSON at:
+
+```text
+.secrets/google-drive-oauth-client.json
+```
+
+Run:
 
 ```bash
 uv run python -m dataset.drive_auth setup \
@@ -57,66 +61,94 @@ uv run python -m dataset.drive_auth setup \
   --token-file .secrets/google-drive-authorized-user.json
 ```
 
-What this setup command does:
+The command:
 
-1. **Validates** that `.secrets/google-drive-oauth-client.json` is a Desktop App client secrets JSON (rejecting service-account files and web client secrets).
-2. **Requests scope** `https://www.googleapis.com/auth/drive.file` and opens your browser for one-time Google account consent with offline refresh access.
-3. **Atomically writes** `.secrets/google-drive-authorized-user.json`. Subsequent runs automatically load and refresh this token without opening the browser.
-4. **Creates or reuses** the application folder tree in your personal My Drive:
-   ```text
-   Small LLM Storage/
-   └── dataset-shards/
-   ```
-   Folder lookups check existing directories first to avoid duplicate folders.
-5. **Saves environment variables** to `.env` (gitignored):
-   ```env
-   SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
-   SMALL_LLM_DRIVE_FOLDER_ID=<folder-id>
-   ```
-6. **Performs an automated smoke test**: uploads a temporary test payload to `dataset-shards`, reads object metadata, downloads and checks SHA-256 and MD5 checksums, and cleans up the test object.
-7. **Reports** the authenticated Google account email and folder ID without printing secrets or access tokens.
+1. validates the OAuth client type;
+2. opens the browser for one-time authorization;
+3. obtains and atomically stores an authorized-user refresh token;
+4. reuses and refreshes that token on later runs;
+5. creates or reuses:
 
-### 3. Credentials & Security Rules
-
-- Never commit `.env` or `.secrets/` files. Both are covered in `.gitignore`.
-- Production and acceptance CLIs automatically read `SMALL_LLM_GOOGLE_OAUTH_TOKEN` and `SMALL_LLM_DRIVE_FOLDER_ID` from the environment or `.env`.
-- CLI overrides `--google-oauth-token` (or `--google-credentials`) and `--drive-folder-id` take precedence.
-
-### 4. Revoking Authorization
-
-If you ever need to revoke access:
-- Go to [Google Account Permissions](https://myaccount.google.com/permissions).
-- Select `Small LLM Storage` and click **Remove Access**.
-- Delete `.secrets/google-drive-authorized-user.json` locally and re-run `dataset.drive_auth setup`.
-
-## Validate the approved weights
-
-The existing offline preflight remains useful:
-
-```bash
-uv run python -m dataset.main stream-cache \
-  --weights-file /secure/approved-cluster-weights.json \
-  --show-stream-config
+```text
+Small LLM Storage/
+└── dataset-shards/
 ```
 
-Record the exact file checksum in the operational change ticket:
+6. writes these values to `.env`:
 
-```bash
-sha256sum /secure/approved-cluster-weights.json
+```env
+SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
+SMALL_LLM_DRIVE_FOLDER_ID=<dataset-shards-folder-id>
 ```
 
-The production manifest additionally freezes the normalized stream configuration,
-work-plan hash, schema hash, and complete production policy in one configuration
-hash. Resume refuses any mismatch.
+7. performs a real upload, metadata read, download checksum verification, and cleanup smoke test.
+
+Successful completion must end with `Smoke test: PASSED`.
+
+### Loading `.env`
+
+`dataset.production` reads process environment variables or explicit CLI arguments. It does not currently parse `.env` itself.
+
+Therefore run production commands with:
+
+```bash
+uv run --env-file .env python -m dataset.production ...
+```
+
+Alternatively pass both explicitly:
+
+```text
+--google-oauth-token .secrets/google-drive-authorized-user.json
+--drive-folder-id <dataset-shards-folder-id>
+```
+
+Do not use `DRIVE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, or a service-account file for the personal-Drive production path.
+
+## Exact mixture calibration
+
+The production weights must come from a complete scan of the pinned release:
+
+```bash
+uv run python -m dataset.mixture \
+  --output-dir /data/climbmix-mixture-calibration \
+  --workers 8 \
+  --max-in-flight-work-items 16
+```
+
+Resume an interrupted scan with the same output directory:
+
+```bash
+uv run python -m dataset.mixture \
+  --output-dir /data/climbmix-mixture-calibration \
+  --workers 8 \
+  --max-in-flight-work-items 16 \
+  --resume
+```
+
+Expected outputs:
+
+```text
+work_plan.json
+mixture_progress.json
+mixture_report.json
+climbmix_code_free_weights.json
+```
+
+Review the report and record the approved weight-file checksum:
+
+```bash
+sha256sum /data/climbmix-mixture-calibration/climbmix_code_free_weights.json
+```
+
+Do not use rounded paper percentages as production weights.
 
 ## Authenticated bounded pilot
 
-The pilot uses the real pinned source and real Drive folder, but stops after a
-small whole-document source-token target:
+Use the approved exact weight file and the real Drive folder:
 
 ```bash
-uv run python -m dataset.production \
-  --weights-file /secure/approved-cluster-weights.json \
+uv run --env-file .env python -m dataset.production \
+  --weights-file /data/climbmix-mixture-calibration/climbmix_code_free_weights.json \
   --output-dir /data/climbmix-pilot \
   --run-id climbmix-pilot-001 \
   --target-tokens 10000000 \
@@ -126,11 +158,13 @@ uv run python -m dataset.production \
   --allow-unsafe-low-disk
 ```
 
-The local-only escape hatch is restricted to synthetic/development checks:
+`--allow-unsafe-low-disk` is acceptable only for the deliberately bounded pilot when the operator has independently confirmed sufficient space. Never use it casually for the full corpus.
+
+The local-only escape hatch is restricted to synthetic development checks:
 
 ```bash
 uv run python -m dataset.production \
-  --weights-file /secure/approved-cluster-weights.json \
+  --weights-file /path/to/test-weights.json \
   --output-dir /tmp/climbmix-local-smoke \
   --run-id local-smoke \
   --target-tokens 100000 \
@@ -141,16 +175,17 @@ uv run python -m dataset.production \
   --allow-unsafe-low-disk
 ```
 
-Never use `--allow-local-only` for the production corpus.
+Never use `--allow-local-only` for production or the authenticated acceptance pilot.
 
-## Interruption and resume acceptance test
+## Interruption and resume test
 
-During the authenticated pilot, terminate the process after at least one durable
-checkpoint. Resume with byte-for-byte identical arguments plus `--resume`:
+After at least one durable checkpoint has been committed and its referenced shards are remotely durable, terminate the pilot process.
+
+Resume with identical semantic arguments plus `--resume`:
 
 ```bash
-uv run python -m dataset.production \
-  --weights-file /secure/approved-cluster-weights.json \
+uv run --env-file .env python -m dataset.production \
+  --weights-file /data/climbmix-mixture-calibration/climbmix_code_free_weights.json \
   --output-dir /data/climbmix-pilot \
   --run-id climbmix-pilot-001 \
   --target-tokens 10000000 \
@@ -161,14 +196,13 @@ uv run python -m dataset.production \
   --resume
 ```
 
-Resume replays the immutable work plan to the committed source cursor, removes
-uncommitted local shard tails or orphan finalized files, verifies previously
-committed Drive objects once, and uploads any missing deterministic shards.
+Resume must:
 
-A finalization backup protects the last remotely durable cursor from the
-underlying producer's temporary `progress.json` rewrite. If the process or VPS
-fails during final commit, the next `--resume` restores that backup before
-rebuilding deterministic orphan shards.
+- restore the immutable work plan and committed source cursor;
+- reject configuration, schema, policy, weight, or source drift;
+- remove uncommitted local tails and deterministic orphan files;
+- reuse already-uploaded matching Drive objects;
+- continue without silently skipping or double counting source ranges.
 
 ## Verification
 
@@ -180,31 +214,47 @@ uv run python -m dataset.main verify \
   --full-scan
 ```
 
-Inspect these files:
+Inspect:
 
-- `manifest.json`: schema-v2 local shard and production-policy manifest.
-- `progress.json`: final committed producer/source cursor with `complete: true`.
-- `drive_manifest.json`: only shards referenced by the completed local manifest,
-  including Drive IDs, local SHA-256 values, and remote verification state.
-- `work_plan.json`: pinned and self-hashed source-region order.
+- `manifest.json`;
+- `progress.json`;
+- `drive_manifest.json`;
+- `work_plan.json`.
 
 Acceptance requires:
 
-- accepted source tokens are at least the minimum and never above the hard maximum;
-- the completion reason is expected (`target_reached`, `source_exhausted`, or the
-  rare whole-document `hard_maximum_guard`);
-- every final shard has one `remote_durable: true` Drive-manifest entry;
-- a second completed `--resume` performs verification without uploading duplicate
-  objects;
-- no `.tmp` shard or `progress.production.safe.json` remains.
+- accepted source tokens are at least 9M and at most 11M;
+- `progress.json` is complete with a valid completion reason;
+- every finalized local shard matches its recorded size and SHA-256;
+- every finalized shard has exactly one matching remotely durable Drive entry;
+- no referenced Drive object is missing;
+- no `.tmp`, `.part`, smoke-test, or `progress.production.safe.json` artifact remains.
 
-## Full production run
+## Completed-resume idempotence
 
-After the pilot report and weights are approved:
+Record the final local hashes and Drive file IDs, then run the same completed command again with `--resume`.
+
+Acceptance requires:
+
+- successful exit;
+- unchanged accepted-source-token count;
+- unchanged local shard hashes;
+- unchanged Drive file IDs;
+- no duplicate logical shard;
+- no additional immutable shard upload;
+- unchanged final source cursor.
+
+## Full production launch
+
+Do not launch this until the trainer integration and bounded end-to-end training pilot are ready.
+
+At launch time, start the dataset producer first, establish a bounded cache head start, then start training while dataset preparation and Drive mirroring continue concurrently.
+
+The production command is:
 
 ```bash
-uv run python -m dataset.production \
-  --weights-file /secure/approved-cluster-weights.json \
+uv run --env-file .env python -m dataset.production \
+  --weights-file /data/climbmix-mixture-calibration/climbmix_code_free_weights.json \
   --output-dir /data/climbmix-cache \
   --run-id climbmix-production-v1
 ```
@@ -217,22 +267,15 @@ Defaults enforce:
 - durable checkpoint cadence: 1,000,000,000 accepted source tokens;
 - remote durability required;
 - 1 GiB target shards;
-- the pinned Nemotron-ClimbMix revision and cluster-11 exclusion already frozen
-  in `dataset.config`.
-
-The 1B-token checkpoint cadence replaces the unsafe previous per-document
-checkpoint default. It bounds restart loss while avoiding one immutable shard and
-full filesystem synchronization cycle per document.
+- pinned Nemotron-ClimbMix revision;
+- cluster-11 exclusion.
 
 ## Failure handling
 
-- A transient HTTP/provider error is retried with bounded exponential backoff.
-- A deterministic checksum, identity, configuration, or cursor mismatch aborts
-  immediately and must not be bypassed.
-- If Drive publication fails, the durable cursor is not advanced. Resume removes
-  local artifacts newer than the last committed cursor and deterministically
-  rebuilds them. Already-uploaded matching Drive objects are reused.
-- The advisory run lock rejects concurrent writers targeting the same output
-  directory.
-- Remote objects left outside the final manifest are retained for forensic
-  inspection; deletion remains an explicit, verification-gated operation.
+- Transient provider errors use bounded retry behavior.
+- Deterministic checksum, identity, configuration, source, or cursor mismatches abort immediately.
+- If Drive publication fails, the durable cursor is not advanced.
+- Resume removes local artifacts newer than the last committed cursor and deterministically rebuilds them.
+- Already-uploaded matching Drive objects are reused.
+- The advisory run lock rejects concurrent writers targeting the same output directory.
+- Remote objects outside the final manifest are retained for explicit forensic inspection and cleanup.
