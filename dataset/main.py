@@ -148,8 +148,82 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument("--output-dir", default=str(config.DEFAULT_OUTPUT_DIR),
                                help="Output directory (default: dataset/output).")
 
+    stream_cache_parser = subcommands.add_parser(
+        "stream-cache",
+        help="Validate stream-cache cluster weights JSON and print sequence geometry configuration.",
+    )
+    stream_cache_parser.add_argument(
+        "--weights-file",
+        type=str,
+        required=True,
+        help="Path to JSON file containing cluster weights mapping for accepted clusters 1-10 and 12-20.",
+    )
+    stream_cache_parser.add_argument(
+        "--context-length",
+        type=int,
+        default=2048,
+        help="Context length tokens (default: 2048).",
+    )
+    stream_cache_parser.add_argument(
+        "--sequences-per-block",
+        type=int,
+        default=512,
+        help="Sequences per block (default: 512).",
+    )
+    stream_cache_parser.add_argument(
+        "--target-shard-bytes",
+        type=int,
+        default=1073741824,
+        help="Target bytes per shard file (default: 1 GiB).",
+    )
+    stream_cache_parser.add_argument(
+        "--reader-workers",
+        type=int,
+        default=4,
+        help="Parallel reader threads (default: 4).",
+    )
+    stream_cache_parser.add_argument(
+        "--max-in-flight-work-items",
+        type=int,
+        default=16,
+        help="Maximum in-flight work items for parallel reader (default: 16).",
+    )
+    stream_cache_parser.add_argument(
+        "--per-cluster-queue-limit",
+        type=int,
+        default=100,
+        help="Per-cluster queue limit (default: 100).",
+    )
+    stream_cache_parser.add_argument(
+        "--prepared-block-queue-limit",
+        type=int,
+        default=200,
+        help="Prepared block queue limit (default: 200).",
+    )
+    stream_cache_parser.add_argument(
+        "--prefetch-head-start",
+        type=int,
+        default=10,
+        help="Prefetch head start (default: 10).",
+    )
+    stream_cache_parser.add_argument(
+        "--scheduler-tie-break-seed",
+        type=str,
+        default=config.SELECTION_SEED,
+        help="Tie break seed for scheduler (default: dataset.config.SELECTION_SEED).",
+    )
+    stream_cache_parser.add_argument(
+        "--show-stream-config",
+        action="store_true",
+        help="Print normalized weights and sequence geometry JSON.",
+    )
+
     args = parser.parse_args(argv)
     configure_logging()
+
+    if args.command == "stream-cache":
+        return _handle_stream_cache(args)
+
     effective = _effective_config(args)
 
     if args.command == "build":
@@ -179,6 +253,71 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     return 1
+
+
+def _handle_stream_cache(args: argparse.Namespace) -> int:
+    weights_path = Path(args.weights_file)
+    if not weights_path.is_file():
+        sys.stderr.write(f"Error: weights file not found: {weights_path}\n")
+        return 1
+
+    try:
+        with weights_path.open("r", encoding="utf-8") as f:
+            raw_weights = json.load(f)
+    except Exception as error:
+        sys.stderr.write(f"Error reading JSON from weights file {weights_path}: {error}\n")
+        return 1
+
+    if not isinstance(raw_weights, dict):
+        sys.stderr.write(
+            f"Error: weights file JSON must contain a top-level mapping/object, got {type(raw_weights).__name__}\n"
+        )
+        return 1
+
+    from dataset.src.streaming import StreamCacheConfig, normalize_cluster_weights
+
+    try:
+        stream_cfg = StreamCacheConfig(
+            context_length=args.context_length,
+            sequences_per_block=args.sequences_per_block,
+            target_shard_bytes=args.target_shard_bytes,
+            reader_workers=args.reader_workers,
+            max_in_flight_work_items=args.max_in_flight_work_items,
+            per_cluster_queue_limit=args.per_cluster_queue_limit,
+            prepared_block_queue_limit=args.prepared_block_queue_limit,
+            prefetch_head_start=args.prefetch_head_start,
+            weights=raw_weights,
+            scheduler_tie_break_seed=args.scheduler_tie_break_seed,
+        )
+    except Exception as error:
+        sys.stderr.write(f"StreamCacheConfig validation error: {error}\n")
+        return 1
+
+    supplied_weights, weight_units = normalize_cluster_weights(raw_weights)
+
+    out_data = {
+        "command": "stream-cache",
+        "status": "validated",
+        "notice": (
+            "Legacy 'build' command is retained for prebuild monolithic binary format. "
+            "No network calls or production streaming runs were started by this validation command."
+        ),
+        "stream_cache_config": {
+            "context_length": stream_cfg.context_length,
+            "stored_sequence_tokens": stream_cfg.stored_sequence_tokens,
+            "sequences_per_block": stream_cfg.sequences_per_block,
+            "block_bytes": stream_cfg.block_bytes,
+            "target_shard_bytes": stream_cfg.target_shard_bytes,
+            "weights": {
+                "supplied": supplied_weights,
+                "normalized_integer_units": {str(k): v for k, v in weight_units.items()},
+            },
+            "final_partial_sequence_policy": stream_cfg.final_partial_sequence_policy,
+            "scheduler_tie_break_seed": stream_cfg.scheduler_tie_break_seed,
+        },
+    }
+    print(json.dumps(out_data, indent=2, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
