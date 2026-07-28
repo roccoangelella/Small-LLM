@@ -10,6 +10,7 @@ from dataset import config
 from dataset.src.bytesource import RangeReader, SourceFile
 from dataset.src.remote import RemoteShardStore, ensure_safe_directory
 from dataset.src.storage import read_json, write_json_atomic
+from dataset.src.verify import verify
 from dataset.src.streaming import StreamCacheConfig, StreamCacheProducer, parallel_read_documents
 from dataset.src.workplan import WorkPlan
 
@@ -131,6 +132,12 @@ def build_production_cache(
                 manifest = read_json(manifest_path)
                 if not isinstance(manifest, dict):
                     raise ValueError("completed production cache has an invalid manifest")
+                report = verify(output_dir, full_scan=False)
+                if not report.passed:
+                    raise RuntimeError(
+                        "completed production cache failed local verification: "
+                        + "; ".join(report.problems)
+                    )
                 if remote_store is not None:
                     mirror_shards(
                         remote_store,
@@ -323,6 +330,12 @@ def build_production_cache(
                         prune_unreferenced=True,
                     )
                 write_json_atomic(manifest_path, manifest)
+                report = verify(output_dir, full_scan=False)
+                if not report.passed:
+                    raise RuntimeError(
+                        "final production cache failed local verification: "
+                        + "; ".join(report.problems)
+                    )
                 write_json_atomic(progress_path, final_state)
                 unlink_durable(backup_path)
                 LOGGER.info(
