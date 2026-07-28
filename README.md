@@ -12,7 +12,7 @@ This repository is working toward a small English language model. The pretrainin
 
 The dataset pipeline provides two formats:
 
-1. **Schema-v1 Deterministic Streaming Cache (`dataset/src/streaming.py`)**:
+1. **Schema-v2 Deterministic Streaming Cache (`dataset/src/streaming.py`)**:
    A framework-independent, first-pass streaming cache that turns validated source documents into fixed-geometry sequence blocks, fsyncs each active-shard block before exposing it to the trainer queue, and atomically finalizes immutable shards at legal boundaries.
 2. **Legacy Monolithic Binary Build (`dataset.main build`)**:
    The original prebuild format that streams byte ranges and appends GPT-2 token IDs directly to continuous `train.bin` and `validation.bin` files. Retained as legacy/prebuild format.
@@ -29,6 +29,8 @@ Validate a JSON weight mapping and confirm sequence geometry without starting a 
 # Stream-cache weight mapping validation (offline/preflight check)
 uv run python -m dataset.main stream-cache --weights-file path/to/approved_weights.json --show-stream-config
 ```
+
+Build or resume the schema-v2 cache with `stream-cache --build` and `stream-cache --build --resume`. See [dataset/README.md](dataset/README.md) for the cursor and authenticated-storage smoke-test contracts.
 
 Legacy monolithic prebuild commands:
 

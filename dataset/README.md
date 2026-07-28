@@ -23,15 +23,27 @@ This directory contains the Nemotron-ClimbMix corpus pipeline with two supported
 uv sync --locked
 ```
 
-### Stream-Cache Weight Validation (Offline Preflight)
+### Stream-Cache Build, Resume, and Weight Validation
 
-The `stream-cache` command validates a JSON cluster weight mapping and displays sequence geometry configuration. It requires `--weights-file` (there is no production default) and does not perform network calls or start a production run:
+The `stream-cache` command requires `--weights-file` because there is no production default. Without `--build` it is an offline geometry/weight preflight:
 
 ```bash
 # Validate weights file and confirm stream cache sequence geometry
 uv run python -m dataset.main stream-cache \
   --weights-file path/to/approved_weights.json \
   --show-stream-config
+```
+
+Build the schema-v2 cache from the pinned source, or resume it after an interruption. A build checkpoints the producer and the source-reader cursor together; resume replays the immutable work plan to that cursor and refuses a changed record order.
+
+```bash
+uv run python -m dataset.main stream-cache --build \
+  --weights-file path/to/approved_weights.json \
+  --output-dir /data/climbmix-cache
+
+uv run python -m dataset.main stream-cache --build --resume \
+  --weights-file path/to/approved_weights.json \
+  --output-dir /data/climbmix-cache
 ```
 
 ### Legacy Monolithic Build Commands
@@ -107,9 +119,9 @@ dataset/output/
 - `RemoteShardStore` accepts only finalized immutable `.bin` files. The Drive backend is optional; credentials come from `GOOGLE_APPLICATION_CREDENTIALS` or an explicit mounted path, never the repository. Unit tests use `InMemoryDriveStore`.
 - A Drive manifest records run ID, logical path, split/index, block range, bytes, sequence/source counts, cluster counts, SHA-256, Drive ID/checksums, verification state/time, schema hash, and configuration hash.
 - `TwoPhaseCheckpointPublisher` uploads a versioned checkpoint, verifies its file manifest, then moves `run/<run-id>/latest.json`. It publishes `best.json` only after the configured metric improves. Old history is never removed automatically.
-- Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, stages the requested immutable prefetch window, verifies SHA-256, and only then installs the cache and checkpoint directories. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
+- Migration fetches `latest.json`, validates the embedded checkpoint and Drive manifests, stages the immutable train shard containing `last_consumed_block_id + 1` (then following shards), verifies SHA-256, and only then installs the cache and checkpoint directories. Arithmetic may not be bitwise-identical across GPU/CUDA environments; serialized logical state must restore exactly.
 
-The streaming library still has no durable remote source-reader cursor or executable `stream-cache build/resume` command. The CLI command above is an offline preflight, not production orchestration.
+The source-reader cursor records the accepted documents incorporated into the durable producer state, including the latest record offset for every active work item. Resume deliberately replays the immutable source plan to verify that cursor before it produces new blocks; that trades restart bandwidth for a simple, auditable no-duplicate contract.
 
 ### 6. Synthetic / Offline Testing Example
 
@@ -127,6 +139,16 @@ Run the unit test suite:
 
 ```bash
 uv run python -m unittest discover -v
+```
+
+The real storage smoke test is opt-in because it writes a small immutable Drive shard and a small private-Hub object under a unique `smoke-...` run ID. It checks an authenticated upload, download, and local SHA-256 cycle; inspect or remove those objects after it finishes.
+
+```bash
+export GOOGLE_APPLICATION_CREDENTIALS=/secure/path/service-account.json
+export SMALL_LLM_DRIVE_FOLDER_ID=your-shared-drive-folder-id
+export SMALL_LLM_HF_REPO_ID=your-org/your-private-checkpoint-repo
+export HF_TOKEN=your-write-token
+SMALL_LLM_LIVE_REMOTE_SMOKE=1 uv run python -m unittest tests.test_live_remote_smoke -v
 ```
 
 ---

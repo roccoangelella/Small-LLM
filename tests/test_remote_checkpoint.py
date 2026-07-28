@@ -182,11 +182,13 @@ class RemoteCheckpointTest(unittest.TestCase):
             import hashlib
             shard = first / "cache" / "train" / "train-000000.bin"; shard.parent.mkdir(parents=True); shard.write_bytes(b"abcd")
             entry = mirror_finalized_shard(drive, run_id="run", cache_root=first / "cache",
-                entry={"filename": "train/train-000000.bin", "byte_size": 4, "checksum": hashlib.sha256(b"abcd").hexdigest()}, config_hash="cfg", schema_hash="schema")
+                entry={"filename": "train/train-000000.bin", "split": "train", "byte_size": 4,
+                       "checksum": hashlib.sha256(b"abcd").hexdigest(), "first_block_id": 0,
+                       "last_block_id": 0}, config_hash="cfg", schema_hash="schema")
             manifest = write_drive_manifest(first / "drive_manifest.json", run_id="run", entries=[entry], configuration_hash="cfg", schema_hash="schema")
             trainer = MockTrainer(); trainer.state["model"] = 7
             coordinator = CheckpointCoordinator(first / "checkpoints", configuration_hash="cfg", source_hash="src", schema_hash="schema")
-            coordinator.save(checkpoint_id="one", trainer=trainer, pipeline_state={"gradient_accumulation_position": 0, "last_consumed_block_id": 0}, optimizer_step_complete=True)
+            coordinator.save(checkpoint_id="one", trainer=trainer, pipeline_state={"gradient_accumulation_position": 0, "last_consumed_block_id": -1}, optimizer_step_complete=True)
             hf = InMemoryHuggingFaceStore(); publisher = TwoPhaseCheckpointPublisher(hf, run_id="run")
             published = coordinator.publish(publisher, checkpoint_id="one", drive_manifest=manifest)
             restore_on_empty_vps(publisher=publisher, store=drive, run_id="run", destination=second,
@@ -194,8 +196,47 @@ class RemoteCheckpointTest(unittest.TestCase):
             restored = MockTrainer(); remote_coordinator = CheckpointCoordinator(second / "checkpoints", configuration_hash="cfg", source_hash="src", schema_hash="schema")
             pipeline = remote_coordinator.load("one", restored)
             self.assertEqual({key: restored.state[key] for key in trainer.state}, trainer.state)
-            self.assertEqual(pipeline["last_consumed_block_id"], 0)
+            self.assertEqual(pipeline["last_consumed_block_id"], -1)
             self.assertTrue((second / "cache" / "train" / "train-000000.bin").exists())
+
+    def test_prefetch_starts_at_shard_containing_next_unconsumed_block(self) -> None:
+        with tempfile.TemporaryDirectory() as first_tmp, tempfile.TemporaryDirectory() as second_tmp:
+            first, second = Path(first_tmp), Path(second_tmp)
+            drive = InMemoryDriveStore()
+            entries = []
+            for index, (first_block, last_block) in enumerate(((0, 1), (2, 3), (4, 5))):
+                filename = f"train/train-{index:06d}.bin"
+                shard = first / "cache" / filename
+                shard.parent.mkdir(parents=True, exist_ok=True)
+                shard.write_bytes(bytes([index + 1]) * 4)
+                entries.append(mirror_finalized_shard(
+                    drive, run_id="run", cache_root=first / "cache",
+                    entry={"filename": filename, "split": "train", "byte_size": 4,
+                           "checksum": sha256_bytes(shard.read_bytes()),
+                           "first_block_id": first_block, "last_block_id": last_block},
+                    config_hash="cfg", schema_hash="schema",
+                ))
+            manifest = write_drive_manifest(
+                first / "drive_manifest.json", run_id="run", entries=entries,
+                configuration_hash="cfg", schema_hash="schema",
+            )
+            coordinator = CheckpointCoordinator(
+                first / "checkpoints", configuration_hash="cfg", source_hash="src", schema_hash="schema"
+            )
+            coordinator.save(
+                checkpoint_id="one", trainer=MockTrainer(),
+                pipeline_state={"gradient_accumulation_position": 0, "last_consumed_block_id": 2},
+                optimizer_step_complete=True,
+            )
+            publisher = TwoPhaseCheckpointPublisher(InMemoryHuggingFaceStore(), run_id="run")
+            pointer = coordinator.publish(publisher, checkpoint_id="one", drive_manifest=manifest)["latest"]
+            restore_on_empty_vps(
+                publisher=publisher, store=drive, run_id="run", destination=second,
+                checkpoint_pointer=pointer, prefetch_shards=2,
+            )
+            self.assertFalse((second / "cache" / "train" / "train-000000.bin").exists())
+            self.assertTrue((second / "cache" / "train" / "train-000001.bin").exists())
+            self.assertTrue((second / "cache" / "train" / "train-000002.bin").exists())
 
     def test_shard_download_rejects_destination_parent_and_part_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

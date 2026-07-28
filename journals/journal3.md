@@ -5,3 +5,7 @@ That is bad! If we train our model on same-domain data for that much, we're basi
 To do that, we have to attribute a token budget to every cluster within every batch, and keep a running total of each cluster's token quota. When quota exceeded, we cut the document and place the next part into the next training batch **. That's a good a idea for a separate project as well.
 
 **maybe that's not that efficient, we could for example enforce an overlapping budget, but that could mean overrepresenting some tokens and i'm afraid of possible consequences. Moreover, i'd like to keep the optimization level quite low now, willing at having a working thing asap, then proceed to optimize single parts.
+
+---
+In the meanwhile that our beloved agent fixes our dataset download pipeline, we can start thinking about the model's architecture. Today i'll probably go through the "preparation" of the decision process, ensuring to have a clear path of decisions to take, so that tomorrow's work is just a matter of study and decision.
+

@@ -268,6 +268,49 @@ def _validate_drive_manifest(manifest: object, *, run_id: str) -> list[tuple[Map
     return validated
 
 
+def _prefetch_from_next_unconsumed_block(
+    shards: list[tuple[Mapping[str, object], Path]],
+    checkpoint_payload: object,
+    prefetch_shards: int,
+) -> list[tuple[Mapping[str, object], Path]]:
+    """Select the train shard containing the next block, then its successors."""
+
+    if prefetch_shards == 0:
+        return []
+    if not isinstance(checkpoint_payload, Mapping):
+        raise RuntimeError("checkpoint.json is not an object")
+    pipeline = checkpoint_payload.get("pipeline_state")
+    if not isinstance(pipeline, Mapping):
+        raise RuntimeError("checkpoint.json has no pipeline_state object")
+    last_consumed = pipeline.get("last_consumed_block_id")
+    if isinstance(last_consumed, bool) or not isinstance(last_consumed, int) or last_consumed < -1:
+        raise RuntimeError("checkpoint pipeline state has an invalid last_consumed_block_id")
+    next_block = last_consumed + 1
+
+    train: list[tuple[int, int, Mapping[str, object], Path]] = []
+    for entry, relative in shards:
+        if entry.get("split") != "train":
+            continue
+        first, last = entry.get("first_block_id"), entry.get("last_block_id")
+        if (
+            isinstance(first, bool) or not isinstance(first, int)
+            or isinstance(last, bool) or not isinstance(last, int)
+            or first < 0 or last < first
+        ):
+            raise RuntimeError("drive manifest train shard has an invalid block range")
+        train.append((first, last, entry, relative))
+    train.sort(key=lambda item: (item[0], item[1], item[3].as_posix()))
+    selected_index = next(
+        (index for index, (first, last, _, _) in enumerate(train) if first <= next_block <= last),
+        None,
+    )
+    if selected_index is None:
+        raise RuntimeError(
+            f"Drive manifest has no train shard containing next unconsumed block {next_block}"
+        )
+    return [(entry, relative) for _, _, entry, relative in train[selected_index:selected_index + prefetch_shards]]
+
+
 def _fsync_tree(path: Path) -> None:
     for item in path.rglob("*"):
         if item.is_file():
@@ -389,8 +432,13 @@ def restore_on_empty_vps(*, publisher: TwoPhaseCheckpointPublisher, store: Any, 
         except (OSError, ValueError, TypeError) as error:
             raise RuntimeError("downloaded drive_manifest.json is not valid JSON") from error
         validated_shards = _validate_drive_manifest(manifest, run_id=run_id)
-
-        selected_shards = validated_shards[:prefetch_shards]
+        try:
+            checkpoint_payload = json.loads((staging / "checkpoint.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as error:
+            raise RuntimeError("downloaded checkpoint.json is not valid JSON") from error
+        selected_shards = _prefetch_from_next_unconsumed_block(
+            validated_shards, checkpoint_payload, prefetch_shards
+        )
         if selected_shards:
             if cache_root.is_symlink():
                 raise RuntimeError(f"cache destination is a symlink: {cache_root}")

@@ -150,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
 
     stream_cache_parser = subcommands.add_parser(
         "stream-cache",
-        help="Validate stream-cache cluster weights JSON and print sequence geometry configuration.",
+        help="Build/resume a schema-v2 stream cache, or validate its configuration.",
     )
     stream_cache_parser.add_argument(
         "--weights-file",
@@ -231,6 +231,27 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print normalized weights and sequence geometry JSON.",
     )
+    stream_cache_parser.add_argument(
+        "--build",
+        action="store_true",
+        help="Resolve the pinned source and build the stream cache.",
+    )
+    stream_cache_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume a stream-cache build from its durable source-reader cursor.",
+    )
+    stream_cache_parser.add_argument(
+        "--output-dir",
+        default=str(config.DEFAULT_OUTPUT_DIR),
+        help="Stream-cache output directory (default: dataset/output).",
+    )
+    stream_cache_parser.add_argument(
+        "--checkpoint-every-documents",
+        type=int,
+        default=1,
+        help="Durably checkpoint the cache and source-reader cursor after this many documents (default: 1).",
+    )
 
     args = parser.parse_args(argv)
     configure_logging()
@@ -290,6 +311,13 @@ def _handle_stream_cache(args: argparse.Namespace) -> int:
 
     from dataset.src.streaming import StreamCacheConfig, normalize_cluster_weights
 
+    if args.resume and not args.build:
+        sys.stderr.write("Error: --resume requires --build\n")
+        return 1
+    if args.checkpoint_every_documents <= 0:
+        sys.stderr.write("Error: --checkpoint-every-documents must be positive\n")
+        return 1
+
     try:
         stream_cfg = StreamCacheConfig(
             context_length=args.context_length,
@@ -348,6 +376,48 @@ def _handle_stream_cache(args: argparse.Namespace) -> int:
             },
         },
     }
+    if not args.build:
+        print(json.dumps(out_data, indent=2, sort_keys=True))
+        return 0
+
+    from dataset.src.bytesource import list_source_files, make_http_reader
+    from dataset.src.streaming import build_stream_cache
+    from dataset.src.workplan import build_work_plan, load_work_plan, save_work_plan
+
+    output_dir = Path(args.output_dir).resolve()
+    plan_path = output_dir / config.WORK_PLAN_FILENAME
+    if args.resume:
+        plan = load_work_plan(plan_path)
+    else:
+        if plan_path.exists() or (output_dir / config.PROGRESS_FILENAME).exists():
+            raise FileExistsError(
+                f"stream-cache state already exists in {output_dir}; use --resume or a new output directory"
+            )
+        source_files = list_source_files(config.DATASET_REPOSITORY, config.DATASET_REVISION)
+        plan = build_work_plan(
+            source_files,
+            region_bytes=config.REGION_BYTES,
+            seed=config.SELECTION_SEED,
+            repository=config.DATASET_REPOSITORY,
+            revision=config.DATASET_REVISION,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        save_work_plan(plan_path, plan)
+    manifest = build_stream_cache(
+        output_dir,
+        stream_cfg,
+        plan,
+        lambda source: make_http_reader(source, config.DATASET_REPOSITORY, config.DATASET_REVISION),
+        resume=bool(args.resume),
+        checkpoint_every_documents=args.checkpoint_every_documents,
+    )
+    out_data.update({
+        "status": "complete",
+        "notice": "Stream-cache build completed from the pinned source revision.",
+        "output_dir": str(output_dir),
+        "work_plan_hash": plan.hash,
+        "manifest": manifest,
+    })
     print(json.dumps(out_data, indent=2, sort_keys=True))
     return 0
 

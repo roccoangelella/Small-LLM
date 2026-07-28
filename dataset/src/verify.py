@@ -174,9 +174,9 @@ def verify(output_dir: Path, *, full_scan: bool = False) -> VerifyReport:
 
 
 def _verify_stream_cache(output_dir: Path, manifest: dict[str, Any]) -> VerifyReport:
-    """Validate schema-v1 cache shards without assuming legacy train.bin files."""
+    """Validate schema-v2 cache shards without assuming legacy train.bin files."""
     problems: list[str] = []
-    if manifest.get("schema_version") != 1:
+    if manifest.get("schema_version") != 2:
         problems.append("unsupported streaming-cache schema")
     if manifest.get("stored_tokens_per_sequence") != int(manifest.get("context_length", -1)) + 1:
         problems.append("context-plus-one geometry is inconsistent")
@@ -184,7 +184,7 @@ def _verify_stream_cache(output_dir: Path, manifest: dict[str, Any]) -> VerifyRe
     if not isinstance(shards, list):
         problems.append("streaming manifest shards must be a list")
         shards = []
-    blocks: list[int] = []
+    blocks_by_split: dict[str, list[int]] = {"train": [], "validation": []}
     source_total = train_source_total = 0
     train_tokens = validation_tokens = 0
     for entry in shards:
@@ -201,24 +201,36 @@ def _verify_stream_cache(output_dir: Path, manifest: dict[str, Any]) -> VerifyRe
             problems.append(f"checksum mismatch for {path.name}")
         if path.stat().st_size % 2:
             problems.append(f"odd byte size for {path.name}")
+        split = entry.get("split")
+        if split not in blocks_by_split:
+            problems.append(f"invalid split for {path.name}")
+            continue
         first, last = entry.get("first_block_id"), entry.get("last_block_id")
         if not isinstance(first, int) or not isinstance(last, int) or last < first:
             problems.append(f"invalid block range for {path.name}")
         else:
-            blocks.extend(range(first, last + 1))
+            blocks_by_split[split].extend(range(first, last + 1))
         per_cluster = entry.get("shard_cluster_source_tokens", {})
+        shard_source_total = 0
         if not isinstance(per_cluster, dict):
             problems.append(f"invalid source-token attribution for {path.name}")
         else:
-            shard_source_total = sum(int(value) for value in per_cluster.values())
+            try:
+                shard_source_total = sum(int(value) for value in per_cluster.values())
+            except (TypeError, ValueError):
+                problems.append(f"invalid source-token attribution for {path.name}")
             source_total += shard_source_total
-        if entry.get("split") == "train":
+        if split == "train":
             train_tokens += path.stat().st_size // 2
             train_source_total += shard_source_total
-        elif entry.get("split") == "validation": validation_tokens += path.stat().st_size // 2
-        else: problems.append(f"invalid split for {path.name}")
-    if blocks and (len(blocks) != len(set(blocks)) or sorted(blocks) != list(range(min(blocks), max(blocks) + 1))):
-        problems.append("duplicate or gapped block ranges")
+        else:
+            validation_tokens += path.stat().st_size // 2
+    for split, blocks in blocks_by_split.items():
+        if blocks and (
+            len(blocks) != len(set(blocks))
+            or sorted(blocks) != list(range(min(blocks), max(blocks) + 1))
+        ):
+            problems.append(f"duplicate or gapped {split} block ranges")
     if any(output_dir.rglob("*.tmp")) or any(output_dir.rglob("*.part")):
         problems.append("incomplete .tmp or .part file is present")
     scheduler = manifest.get("scheduler", {})

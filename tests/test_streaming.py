@@ -11,6 +11,7 @@ from dataset import config
 from dataset.src.bitio import decode_uint16_le
 from dataset.src.bytesource import RangeReader, SourceFile
 from dataset.src.records import ParsedRecord
+from dataset.src.verify import verify
 from dataset.src.streaming import (
     ImmutableShardWriter, PackedSequence, PreparedBlockBuilder, QueueConsumer,
     SequencePacker, SourceDocument, StreamCacheConfig, StreamCacheProducer,
@@ -190,6 +191,25 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             self.assertEqual(validation_ids, [0])
             self.assertEqual(producer.last_durable_block_id, 1)
             self.assertEqual(producer.last_durable_validation_block_id, 0)
+
+    def test_verify_accepts_schema_v2_with_separate_block_namespaces(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            producer = StreamCacheProducer(
+                output, self._stream_config(),
+                _AcknowledgingQueueConsumer(20),
+                validation_consumer=_AcknowledgingQueueConsumer(20),
+            )
+            producer.add_training_document(_doc(1, [1, 2, 3]))
+            producer.add_validation_document(_doc(2, [4, 5, 6]))
+            manifest = producer.finish()
+            self.assertEqual(manifest["schema_version"], 2)
+            report = verify(output, full_scan=True)
+            self.assertTrue(report.passed, report.problems)
+
+            manifest["schema_version"] = 1
+            (output / config.MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+            self.assertFalse(verify(output).passed)
 
     def test_producer_checkpoint_and_from_state_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -697,6 +717,42 @@ class StreamCacheCLITest(unittest.TestCase):
 
 
 class BuildStreamCacheAdapterTest(unittest.TestCase):
+    def test_resume_replays_to_durable_source_cursor_without_duplicate_blocks(self) -> None:
+        synthetic = build_default_synthetic_source()
+        plan = build_work_plan(
+            synthetic.source_files, region_bytes=100, seed=config.SELECTION_SEED,
+            repository=config.DATASET_REPOSITORY, revision=config.DATASET_REVISION,
+        )
+        cfg = StreamCacheConfig(
+            context_length=8, sequences_per_block=2, target_shard_bytes=256,
+            reader_workers=2, max_in_flight_work_items=2, per_cluster_queue_limit=3,
+            prepared_block_queue_limit=1000, prefetch_head_start=0,
+            weights=synthetic_test_weights(), scheduler_tie_break_seed="cursor-resume",
+        )
+        with tempfile.TemporaryDirectory() as reference_tmp, tempfile.TemporaryDirectory() as resumed_tmp:
+            reference = build_stream_cache(
+                Path(reference_tmp), cfg, plan, synthetic.reader_factory(), checkpoint_every_documents=1,
+            )
+            with self.assertRaisesRegex(RuntimeError, "simulated stream-cache interruption"):
+                build_stream_cache(
+                    Path(resumed_tmp), cfg, plan, synthetic.reader_factory(),
+                    checkpoint_every_documents=1, simulate_crash_after_documents=2,
+                )
+            state = json.loads((Path(resumed_tmp) / config.PROGRESS_FILENAME).read_text())
+            self.assertEqual(state["source_reader"]["documents_consumed"], 2)
+            self.assertTrue(state["source_reader"]["last_incorporated_record_start"])
+            resumed = build_stream_cache(
+                Path(resumed_tmp), cfg, plan, synthetic.reader_factory(),
+                resume=True, checkpoint_every_documents=1,
+            )
+            self.assertEqual(resumed, reference)
+            self.assertEqual(
+                sorted(path.relative_to(reference_tmp) for path in Path(reference_tmp).rglob("*.bin")),
+                sorted(path.relative_to(resumed_tmp) for path in Path(resumed_tmp).rglob("*.bin")),
+            )
+            for relative in Path(reference_tmp).rglob("*.bin"):
+                self.assertEqual(relative.read_bytes(), (Path(resumed_tmp) / relative.relative_to(reference_tmp)).read_bytes())
+
     def test_one_vs_multi_reader_equivalence(self) -> None:
         synthetic = build_default_synthetic_source()
         plan = build_work_plan(

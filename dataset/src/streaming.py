@@ -32,7 +32,7 @@ from .bytesource import RangeReader, SourceFile
 from .manifest import sha256_file
 from .records import iter_owned_records, validate_record
 from .split import is_validation
-from .storage import write_json_atomic
+from .storage import read_json, write_json_atomic
 from .workplan import WorkItem, WorkPlan
 
 
@@ -1700,6 +1700,10 @@ def build_stream_cache(
     reader_factory: Callable[[SourceFile], RangeReader],
     consumer: BlockConsumer | None = None,
     validation_consumer: BlockConsumer | None = None,
+    *,
+    resume: bool = False,
+    checkpoint_every_documents: int = 1,
+    simulate_crash_after_documents: int | None = None,
 ) -> dict[str, object]:
     """Execute the bounded streaming-cache adapter layer over a WorkPlan.
 
@@ -1709,13 +1713,59 @@ def build_stream_cache(
     and returns the finalized manifest.
     """
 
+    if checkpoint_every_documents <= 0:
+        raise ValueError("checkpoint_every_documents must be positive")
+    if simulate_crash_after_documents is not None and simulate_crash_after_documents <= 0:
+        raise ValueError("simulate_crash_after_documents must be positive")
     output_dir = Path(output_dir)
-    producer = StreamCacheProducer(
-        output_dir,
-        stream_config,
-        consumer=consumer,
-        validation_consumer=validation_consumer,
-    )
+    progress_path = output_dir / config.PROGRESS_FILENAME
+    if resume:
+        state = read_json(progress_path)
+        if not isinstance(state, Mapping):
+            raise ValueError("stream-cache progress.json must be an object")
+        source_cursor = _source_cursor_from_state(
+            state.get("source_reader"), plan=plan, stream_config=stream_config
+        )
+        if state.get("complete") is True:
+            manifest = read_json(output_dir / config.MANIFEST_FILENAME)
+            if not isinstance(manifest, dict):
+                raise ValueError("completed stream-cache build has an invalid manifest")
+            return manifest
+        _discard_uncheckpointed_active_shards(output_dir)
+        producer = StreamCacheProducer.from_state(
+            output_dir, stream_config, state, consumer, validation_consumer
+        )
+    else:
+        if progress_path.exists():
+            raise FileExistsError(
+                f"stream-cache progress already exists at {progress_path}; use --resume or a new output directory"
+            )
+        producer = StreamCacheProducer(
+            output_dir,
+            stream_config,
+            consumer=consumer,
+            validation_consumer=validation_consumer,
+        )
+        source_cursor = {"documents_consumed": 0, "last_incorporated_record_start": {}}
+
+    documents_consumed = int(source_cursor["documents_consumed"])
+    last_record_start = dict(source_cursor["last_incorporated_record_start"])
+    replay_positions: dict[str, int] = {}
+    replayed = 0
+    replay_verified = documents_consumed == 0
+
+    def durable_state(*, complete: bool = False) -> None:
+        state = producer.checkpoint_state()
+        state["source_reader"] = {
+            "version": 1,
+            "work_plan_hash": plan.hash,
+            "reader_configuration": _reader_configuration(stream_config),
+            "documents_consumed": documents_consumed,
+            "last_incorporated_record_start": dict(sorted(last_record_start.items())),
+        }
+        state["complete"] = complete
+        write_json_atomic(progress_path, state)
+
     try:
         for is_validation_doc, document in parallel_read_documents(
             plan,
@@ -1726,6 +1776,16 @@ def build_stream_cache(
             maximum_documents_per_batch=stream_config.reader_batch_documents,
             maximum_bytes_per_batch=stream_config.reader_batch_max_bytes,
         ):
+            if not replay_verified and replayed < documents_consumed:
+                replay_positions[str(document.work_item_index)] = document.record_start
+                replayed += 1
+                continue
+            if not replay_verified and replayed == documents_consumed:
+                if replay_positions != last_record_start:
+                    raise RuntimeError(
+                        "source reader replay does not match the durable work-item and record-offset cursor"
+                    )
+                replay_verified = True
             if is_validation_doc:
                 producer.add_validation_document(document)
             else:
@@ -1741,7 +1801,79 @@ def build_stream_cache(
                         )
                 producer.add_training_document(document)
                 producer.drain_training(force=False, maximum_documents=1)
+            documents_consumed += 1
+            last_record_start[str(document.work_item_index)] = document.record_start
+            if documents_consumed % checkpoint_every_documents == 0:
+                durable_state()
+            if simulate_crash_after_documents == documents_consumed:
+                raise RuntimeError("simulated stream-cache interruption after durable source-reader checkpoint")
 
-        return producer.finish()
+        if not replay_verified and replay_positions != last_record_start:
+            raise RuntimeError(
+                "source reader replay ended before matching the durable work-item and record-offset cursor"
+            )
+        manifest = producer.finish()
+        manifest["work_plan_hash"] = plan.hash
+        write_json_atomic(output_dir / config.MANIFEST_FILENAME, manifest)
+        durable_state(complete=True)
+        return manifest
     finally:
         producer.close()
+
+
+def _reader_configuration(stream_config: StreamCacheConfig) -> dict[str, int]:
+    return {
+        "reader_workers": stream_config.reader_workers,
+        "max_in_flight_work_items": stream_config.max_in_flight_work_items,
+        "reader_batch_source_tokens": stream_config.reader_batch_source_tokens,
+        "reader_batch_documents": stream_config.reader_batch_documents,
+        "reader_batch_max_bytes": stream_config.reader_batch_max_bytes,
+    }
+
+
+def _source_cursor_from_state(
+    raw: object, *, plan: WorkPlan, stream_config: StreamCacheConfig
+) -> dict[str, object]:
+    """Validate the durable cursor for documents already fed to the producer.
+
+    The reader is replayed from the immutable work plan after a restart, then
+    skips exactly this many accepted documents.  Recording the final accepted
+    record offset for each work item makes that replay auditable and refuses a
+    changed source/order rather than silently duplicating cache input.
+    """
+
+    if not isinstance(raw, Mapping) or raw.get("version") != 1:
+        raise ValueError("stream-cache progress is missing a supported source-reader cursor")
+    if raw.get("work_plan_hash") != plan.hash:
+        raise ValueError("stream-cache source-reader cursor belongs to a different work plan")
+    if raw.get("reader_configuration") != _reader_configuration(stream_config):
+        raise ValueError("stream-cache source-reader configuration does not match this run")
+    documents_consumed = raw.get("documents_consumed")
+    positions = raw.get("last_incorporated_record_start")
+    if isinstance(documents_consumed, bool) or not isinstance(documents_consumed, int) or documents_consumed < 0:
+        raise ValueError("stream-cache source-reader document count is invalid")
+    if not isinstance(positions, Mapping):
+        raise ValueError("stream-cache source-reader offsets are invalid")
+    parsed: dict[str, int] = {}
+    for work_item, record_start in positions.items():
+        if not isinstance(work_item, str) or not work_item.isdigit() or isinstance(record_start, bool):
+            raise ValueError("stream-cache source-reader offset entry is invalid")
+        if not isinstance(record_start, int) or record_start < 0:
+            raise ValueError("stream-cache source-reader record offset is invalid")
+        parsed[work_item] = record_start
+    if documents_consumed == 0 and parsed:
+        raise ValueError("empty stream-cache source-reader cursor has record offsets")
+    return {"documents_consumed": documents_consumed, "last_incorporated_record_start": parsed}
+
+
+def _discard_uncheckpointed_active_shards(output_dir: Path) -> None:
+    """Remove mutable tails not represented by the last durable state."""
+
+    for split in ("train", "validation"):
+        directory = output_dir / split
+        if not directory.exists():
+            continue
+        for path in directory.glob(f".{split}-*.bin.tmp"):
+            if not path.is_file() or path.is_symlink():
+                raise RuntimeError(f"unsafe uncheckpointed active shard: {path}")
+            path.unlink()
