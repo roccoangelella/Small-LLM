@@ -71,7 +71,7 @@ class ProductionRemoteTest(ReaderPatchMixin, unittest.TestCase):
             manifest["shards"][0]["remote_durable"] = False
             manifest_path.write_text(json.dumps(manifest))
             self.use_documents(documents((3, 3, 4)))
-            with self.assertRaisesRegex(RuntimeError, "not remotely durable"):
+            with self.assertRaisesRegex(RuntimeError, "failed local verification"):
                 production.build_production_cache(
                     root,
                     stream_config(),
