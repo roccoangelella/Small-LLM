@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Mapping
 
 from dataset import config
+from dataset.src.remote import safe_path_component
 from dataset.src.storage import canonical_json_bytes
 from dataset.src.streaming import STREAM_CACHE_SCHEMA_VERSION, StreamCacheConfig, StreamCacheProducer
 from dataset.src.workplan import WorkPlan
@@ -25,8 +26,7 @@ class ProductionPolicy:
     remote_required: bool = True
 
     def __post_init__(self) -> None:
-        if not self.run_id or "/" in self.run_id or "\\" in self.run_id or self.run_id in {".", ".."}:
-            raise ValueError("run_id must be a non-empty safe path component")
+        safe_path_component(self.run_id, label="run_id")
         for name in (
             "target_source_tokens", "minimum_source_tokens",
             "maximum_source_tokens", "checkpoint_source_tokens",
