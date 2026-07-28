@@ -21,7 +21,7 @@ The initial scope does **not** deliberately target coding capability. Coding may
 - Initial accelerator: one NVIDIA T4.
 - Likely initial microbatch size: 1, with gradient accumulation.
 - Local VPS storage budget: approximately 400 GB for live cache, checkpoints, temporary files, and working space.
-- Durable dataset storage: 5 TB Google Drive.
+- Durable dataset storage: personal Google Drive/Google One with approximately 5 TB available.
 - Unique first-pass corpus target: 90B accepted source tokens.
 - Minimum acceptable completed corpus: 80B accepted source tokens.
 - Hard maximum: 100B accepted source tokens.
@@ -93,7 +93,7 @@ The clusters are broad heuristics rather than perfectly pure categories. Bounded
 
 The desired training mixture is the empirical source-token distribution of the released Nemotron-ClimbMix corpus, conditioned on cluster 11 being excluded.
 
-For every cluster `c`, calculate:
+For every cluster `c`:
 
 ```text
 source_tokens[c] = sum(record.token_count for records where cluster_id == c)
@@ -107,7 +107,7 @@ Cluster 11 is removed by conditioning:
 weight[c] / sum(weight[j] for j != 11)
 ```
 
-The ratio does not need to be written as floating point. The existing scheduler normalizes integer weights with exact rational arithmetic.
+The existing scheduler normalizes integer weights with exact rational arithmetic.
 
 ### Calibration implementation
 
@@ -141,7 +141,7 @@ climbmix_code_free_weights.json
 
 The exact full calibration has **not yet been run**. It requires transferring the complete approximately 2.04 TB pinned release on the fast-network host. The generated weight file is not approved until the report and file hashes are reviewed.
 
-Mixture accounting is continuous across documents, microbatches, gradient-accumulation windows, prepared blocks, shards, checkpoints, interruptions, and resumes. It is not reset per GPU batch. Small microbatches therefore do not need to contain every cluster.
+Mixture accounting is continuous across documents, microbatches, gradient-accumulation windows, prepared blocks, shards, checkpoints, interruptions, and resumes. It is not reset per GPU batch.
 
 ---
 
@@ -288,18 +288,77 @@ The dataset software implementation is considered **code-complete**. It should n
 
 ---
 
+## Personal Google Drive OAuth Status
+
+The durable store is a personal Google Drive account. Service-account storage and API-key authentication are not used.
+
+PR #4, merged at `cc8d551b76a0478664d78ccee77414694abdd29b`, added installed-app OAuth support using the narrow `https://www.googleapis.com/auth/drive.file` scope.
+
+Local secret files:
+
+```text
+.secrets/google-drive-oauth-client.json
+.secrets/google-drive-authorized-user.json
+.env
+```
+
+`.secrets/` and `.env` are ignored by Git. Real credentials, tokens, folder IDs, API keys, and account identifiers must never be committed.
+
+The setup command is:
+
+```bash
+uv run python -m dataset.drive_auth setup \
+  --client-secrets .secrets/google-drive-oauth-client.json \
+  --token-file .secrets/google-drive-authorized-user.json
+```
+
+The command:
+
+- validates the OAuth client type;
+- performs one-time browser authorization and obtains a refresh token;
+- atomically writes authorized-user credentials;
+- refreshes expired access tokens automatically;
+- creates or reuses `Small LLM Storage/dataset-shards`;
+- writes `SMALL_LLM_GOOGLE_OAUTH_TOKEN` and `SMALL_LLM_DRIVE_FOLDER_ID` to `.env`;
+- runs a real upload, metadata-read, download-hash, and cleanup smoke test.
+
+Commit `1ab7b3b8b5abce006512b96c4a153642489ef78e` corrected the Google API keyword from `file_id` to `fileId` in metadata, download, and cleanup calls and updated the regression test.
+
+Operational verification completed on 2026-07-28:
+
+- the existing authorized-user token was reused without a new browser flow;
+- all 16 focused Drive OAuth unit tests were reported passing;
+- the real Google Drive smoke test passed upload, metadata validation, download SHA-256/MD5 verification, and cleanup;
+- the target folder tree exists and is accessible by the authorized personal account.
+
+The OAuth feature PR passed GitHub Actions before merge. The direct `fileId` hotfix has no separate GitHub Actions status attached; its focused unit-test and real smoke-test results are recorded from the live execution.
+
+### Environment-loading note
+
+`dataset.drive_auth setup` writes `.env`, while `dataset.production` reads process environment variables or explicit CLI options. Until automatic dotenv loading is added, invoke production commands with:
+
+```bash
+uv run --env-file .env python -m dataset.production ...
+```
+
+or pass `--google-oauth-token` and `--drive-folder-id` explicitly.
+
+---
+
 ## Remaining Dataset Operational Gates
+
+The Google Drive authentication and tiny real-object smoke-test gate is complete.
 
 The dataset component is not fully operationally qualified until all of the following pass:
 
 1. Run the complete exact mixture calibration on the pinned release.
 2. Review `mixture_report.json` and approve the SHA-256 of `climbmix_code_free_weights.json`.
-3. Configure the real Google Drive service account and production folder.
-4. Run the authenticated bounded 10M-token dataset pilot.
-5. Interrupt the pilot after a durable checkpoint and resume with identical arguments.
-6. Run full verification on the bounded pilot.
+3. Implement or finalize the reproducible authenticated acceptance-test harness.
+4. Run the authenticated bounded 10M-token dataset pilot using `uv run --env-file .env`.
+5. Interrupt the pilot after a durable checkpoint and resume with identical semantic arguments.
+6. Run full schema-v2 verification on the bounded pilot.
 7. Confirm a second completed `--resume` does not upload duplicate Drive objects.
-8. Confirm no `.tmp`, `.part`, or finalization-backup artifacts remain.
+8. Confirm no `.tmp`, `.part`, smoke-test, or finalization-backup artifacts remain.
 9. Record throughput, retry counts, Drive upload behavior, disk use, and recovery behavior.
 
 The pilot commands and acceptance criteria are documented in `dataset/PRODUCTION_RUNBOOK.md`.
@@ -370,16 +429,15 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 
 ## Immediate Next Steps
 
-1. Merge status: production dataset and exact-mixture scanner are already merged.
-2. Run the exact full mixture calibration on the fast-network host.
-3. Approve the generated weight and report hashes.
-4. Have a coding agent prepare and document the authenticated bounded acceptance-test harness.
-5. Execute the real Drive pilot, interruption, resume, and verification procedure.
-6. Freeze the dataset subsystem after the pilot report passes.
-7. Specify and implement a very small decoder-only smoke model and trainer.
-8. Connect the trainer to the schema-v2 block consumer and joint checkpoint interfaces.
-9. Benchmark candidate architecture/context/global-batch settings on the T4.
-10. Pass a bounded end-to-end training and migration pilot before authorizing base pretraining.
+1. Run the exact full mixture calibration on the fast-network host.
+2. Approve the generated weight and report hashes.
+3. Implement or finalize the authenticated bounded acceptance-test harness.
+4. Execute the real 10M-token Drive pilot, interruption, resume, idempotence, cleanup, and verification procedure.
+5. Freeze the dataset subsystem after the pilot report passes.
+6. Specify and implement a very small decoder-only smoke model and trainer.
+7. Connect the trainer to the schema-v2 block consumer and joint checkpoint interfaces.
+8. Benchmark candidate architecture, context, and global-batch settings on the T4.
+9. Pass a bounded end-to-end training and migration pilot before authorizing base pretraining.
 
 ---
 
@@ -388,11 +446,11 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 ### Dataset operations
 
 - Final approved exact weight-file hash, pending full calibration.
-- Real Google Drive folder identity and service-account deployment.
-- Operational reader/queue/prefetch settings after the live pilot.
+- Operational reader, queue, prefetch, and retry settings after the live pilot.
 - Final shard and prepared-block sizes after throughput measurements.
 - Local cache prefetch/LRU policy during later presentations.
-- Retention/cleanup policy for remote checkpoint history.
+- Retention and cleanup policy for remote dataset and checkpoint history.
+- Whether to add automatic `.env` loading inside production and acceptance CLIs rather than relying on `uv run --env-file .env`.
 
 ### Model and training
 
@@ -405,4 +463,4 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 - Reasoning datasets, teacher model, and post-training procedure.
 - Final compute availability and release policy.
 
-The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, Google Drive shard role, and overlapping first-pass training strategy are no longer open decisions.
+The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, and overlapping first-pass training strategy are no longer open decisions.
