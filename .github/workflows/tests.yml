@@ -25,4 +25,14 @@ jobs:
       - name: Compile production modules
         run: python -m compileall -q dataset tests
       - name: Run unit tests
-        run: python -m unittest discover -v
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -v 2>&1 | tee test-results.log
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: test-results.log
+          if-no-files-found: error
