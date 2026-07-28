@@ -288,7 +288,7 @@ class DriveSmokeTestAndRedactionTest(unittest.TestCase):
 
         run_smoke_test(mock_service, "shards-folder-id")
 
-        mock_service.files().delete.assert_called_once_with(file_id=file_id)
+        mock_service.files().delete.assert_called_once_with(fileId=file_id)
 
     def test_setup_drive_auth_redacts_secrets_and_outputs_account_folder(self) -> None:
         secret_token = "secret-oauth-refresh-token-12345"

@@ -223,14 +223,14 @@ def run_smoke_test(service: Any, folder_id: str) -> None:
 
     try:
         # Verify metadata
-        meta = service.files().get(file_id=file_id, fields="id,size,md5Checksum").execute()
+        meta = service.files().get(fileId=file_id, fields="id,size,md5Checksum").execute()
         if int(meta.get("size", -1)) != len(payload):
             raise RuntimeError(f"Smoke test byte size mismatch: expected {len(payload)}, got {meta.get('size')}")
         if meta.get("md5Checksum") and meta["md5Checksum"] != expected_md5:
             raise RuntimeError(f"Smoke test MD5 checksum mismatch: expected {expected_md5}, got {meta.get('md5Checksum')}")
 
         # Download & check content
-        downloaded = service.files().get_media(file_id=file_id).execute()
+        downloaded = service.files().get_media(fileId=file_id).execute()
         if not isinstance(downloaded, bytes):
             downloaded = bytes(downloaded)
         downloaded_sha256 = hashlib.sha256(downloaded).hexdigest()
@@ -241,7 +241,7 @@ def run_smoke_test(service: Any, folder_id: str) -> None:
     finally:
         # Cleanup temp smoke file
         try:
-            service.files().delete(file_id=file_id).execute()
+            service.files().delete(fileId=file_id).execute()
         except Exception as cleanup_error:
             logger.warning("Failed to clean up temporary smoke test file %s: %s", file_id, cleanup_error)
 
