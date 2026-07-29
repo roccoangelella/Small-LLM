@@ -42,7 +42,27 @@ Doesn't reduce params nor training time, just a bit of computation. Interesting 
 
 ### 4. Mixture-of-Experts Transformer
 The SOTA technique for large models. Surely unattractive for our project: using experts that small would probably mean make them very dumb.
+Let's briefly investigate how MOEs work.
 
+An ordinary decoder block is:
+
+**x→Self-Attention→FFN→y**
+
+A typical MoE block is:
+
+**x→Self-Attention→Router→Selected FFN experts→y**
+
+This means that we first process the whole input via self attention, pass the info to the router, and the router will choose among the experts to which passing the info to produce the next token. That repeats over and over for every token. 
+Straightforward definition:
+
+
+Experts are separate MLPs that process each token’s hidden representation when the router selects them. Their weighted outputs are added back into the residual stream and passed to the next Transformer block.
+
+
+The router is usually a small linear layer that provides the score of every expert (simple classification task). The interesting part is that we don't use softmax for selection, but as weight. Experts selection uses **top k routing**: pick top k experts using router's score ranking, and the output of every expert is conveyed to a unique one by a weighted average of the output using the re-normalized output of the router (re-normalized because, unless we pick every expert, they won't sum to 1).
+
+
+Amazing! So experts are just an MLP, that's why we can "Load only experts in RAM" as antirez and local llms friends say: they're just a separate network that can be safely detatched from the rest of the architecture!
 ### 5. Pure State Space Models
 This architecture uses a State Space Model, compressing the past into a recurrent state just like RNNs do. s_t=F(s_t-1,x_t) and y_t=g(s_t,x_t). No KV cache is stored, and overall very fast inference is obtained. However, it's still quote an underground technique that for now we'll not take into account. Mamba models are the SOTA architectures.
 
