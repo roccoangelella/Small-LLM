@@ -67,3 +67,19 @@ Amazing! So experts are just an MLP, that's why we can "Load only experts in RAM
 This architecture uses a State Space Model, compressing the past into a recurrent state just like RNNs do. s_t=F(s_t-1,x_t) and y_t=g(s_t,x_t). No KV cache is stored, and overall very fast inference is obtained. However, it's still quote an underground technique that for now we'll not take into account. Mamba models are the SOTA architectures.
 
 ### 6. Hybrid linear attention plus full attention
+In standard attention, each new token query compares itself with every past token's key and is multiplied by each past token's value. That's quadratic and slow as hell: every token interacts with every other token, so that grows **O(L^2d)**. The nxn matrix (where n= number of tokens under analysis) is the expensive object, resulting from QK^T.
+
+Instead, **Linear Attention** does the opposite: we first multiply **K^T*V**, which is called **memory**, denoted **S**, and then multiply the Query by the Memory to get the attention score.
+
+Linear attention keeps the basic goal of attention: each token gathers information from other tokens, but changes how the attention weights are computed so that we never build the large n×n attention matrix resulting from QK product.
+
+With no softmax we could easily write ∑​(qi⊤​kj​)vj​=qi⊤​(j∑​kj​vj⊤​). But softmax isn't linear and can't be fitted into both the two formulas. Moreover, running softmax on K^TV would normalize across embedding dimension and not across number of tokens. Therefore, Lienar Attention needs a new way to represent similarity between tokens queries and keys without the need of using softmax function: some map functions (there is a lot of possible ones) do this for us, just allowing us to represent the attention weights by moving the summation symbol forward to the KV part, allowing us first to compute the total KV matrix, and then multiply it by Q, and
+
+— i forgot that attention uses outer product, not dot product, therefore the product between each token's k^T*v is a matrix, and when we sum those matrices we get the final K^TV matrix.
+
+Done that, we multiply the Q matrix (every token's query) by the the "total" matrix, obtaining the attention score of each token with respect to every other in one shot, with a single  matrix multiplication.
+ 
+The convenience is straightforward: instead of having a huge nxn matrix, we first make a dxd matrix (d=QKV matrices embedding vector shapes) out of S=K^TV, then a Lxd matrix by Q*S
+
+A further efficiency step appears: we don't need to recompute KV for every token: we just keep a running total of the KV matrix that gets updated every time a new token is processed. The name "memory" makes even more sense now. However, this initial memory updating process has no obsolete information deletion process nor useful memories protection, or deciding how long information should survive: conflicting information about the same phenomenon may live together in the same space and we'd have no way to delete che old one. Stacking more and more information makes retrieval quality increasingly worse.
+
