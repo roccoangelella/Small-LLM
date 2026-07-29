@@ -82,4 +82,9 @@ Done that, we multiply the Q matrix (every token's query) by the the "total" mat
 The convenience is straightforward: instead of having a huge nxn matrix, we first make a dxd matrix (d=QKV matrices embedding vector shapes) out of S=K^TV, then a Lxd matrix by Q*S
 
 A further efficiency step appears: we don't need to recompute KV for every token: we just keep a running total of the KV matrix that gets updated every time a new token is processed. The name "memory" makes even more sense now. However, this initial memory updating process has no obsolete information deletion process nor useful memories protection, or deciding how long information should survive: conflicting information about the same phenomenon may live together in the same space and we'd have no way to delete che old one. Stacking more and more information makes retrieval quality increasingly worse.
+#### 6.1 DeltaNets
+To overcome this problem, DeltaNets were introduced: we compute the "memory value" (I named it in this way), denoted v^ (^=hat), equal to **v^t=S^T*k**. This determines **what the current memory associates with the new token's key**. Then, we compute the **error** as **v-v^**. That error is framed as the "useful information" that is not yet contained in our memory, therefore we update the memory by **βtktet^T**, treating e like a "useful value". Here b is a sort of learning rate, tuning the update's size.
+
+#### 6.2 Gated DeltaNets
+We supercharge deltanets with memory erasure as well, by updating the memory as **St=αtSt−1+βtkt(vt−αtv^t)⊤​​**. As we can see we introduce the forgetting (or decay rate) denoted alpha, that scales the entire previous memory. We also "forget" v^: equivbalent to simply replacing St-1*k with aSt-1*kt in the v^t formula.
 
