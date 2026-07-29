@@ -107,11 +107,15 @@ which is precisely equivalent to:
 
 $$S_t = \widetilde{S}_{t-1} + \beta_t k_t (v_t - \hat{v}_t)^\top$$
 
-![alt text](image-1.png)
-
 which is the way we always wrote it down. Much easier to digest.
 
 
-Here the $\beta_t$ terms have two roles: it erase 
+Here the $\beta_t$ terms have two roles: it **erases the old association** (the product of $\beta_t$ and $\hat{v}_t$ does this, determining how much of the old key-value association should be removed) and **writes new association** (multiplying $\beta_t$ by the new value $v_t$, deciding how much to keep). To frame it visually:
+- $+\beta_t k_t v_t^\top$ adds the new association between $k_t$ and $v_t$;
+- $-\beta_t k_t \hat{v}_t^\top$ removes part of that old key–value association from memory.
 
+This distinction will come in hand in the next part.
 #### 6.4 Gated DeltaNet-2
+
+Thsi paper (**may 2026! SOTA Stuff!**) splits the task using two different scalars, b for erasing and w for writing. That's smart: KDA can't choose to erase strongly but write weakly, if one is strong, so the other'll do.
+ 
