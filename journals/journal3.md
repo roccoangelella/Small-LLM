@@ -9,7 +9,7 @@ To do that, we have to attribute a token budget to every cluster within every ba
 ---
 In the meanwhile that our beloved agent fixes our dataset download pipeline, we can start thinking about the model's architecture. Today i'll probably go through the "preparation" of the decision process, ensuring to have a clear path of decisions to take, so that tomorrow's work is just a matter of study and decision.
 
-I found out a new interesting concept, ** Tied Embeddings **: with tied embeddings, each entry of the final hidden vector (not the output vector, as i mistakingly initially though) is multiplied by the embedding matrix to produce logits. This product is a measure of similarity between the entry vector and the embedding vector, producing a logit that is a proxy of the "correctness" of the token in i-th position across the 50257 possible ones (50257 is the GPT2 vocabulary's size). With tied embeddings, we reuse that same matrix as the final vocabulary projection instead of learning a second independent matrix.
+I found out a new interesting concept, **Tied Embeddings**: with tied embeddings, each entry of the final hidden vector (not the output vector, as i mistakingly initially thought) is multiplied by the embedding matrix to produce logits. This product is a measure of similarity between the entry vector and the embedding vector, producing a logit that is a proxy of the "correctness" of the token in $i$-th position across the 50257 possible ones (50257 is the GPT2 vocabulary's size). With tied embeddings, we reuse that same matrix as the final vocabulary projection instead of learning a second independent matrix.
 
 that said, we can start with our model geometry investigation:
 
@@ -46,11 +46,11 @@ Let's briefly investigate how MOEs work.
 
 An ordinary decoder block is:
 
-**x→Self-Attention→FFN→y**
+$$x \to \text{Self-Attention} \to \text{FFN} \to y$$
 
 A typical MoE block is:
 
-**x→Self-Attention→Router→Selected FFN experts→y**
+$$x \to \text{Self-Attention} \to \text{Router} \to \text{Selected FFN experts} \to y$$
 
 This means that we first process the whole input via self attention, pass the info to the router, and the router will choose among the experts to which passing the info to produce the next token. That repeats over and over for every token. 
 Straightforward definition:
@@ -64,27 +64,54 @@ The router is usually a small linear layer that provides the score of every expe
 
 Amazing! So experts are just an MLP, that's why we can "Load only experts in RAM" as antirez and local llms friends say: they're just a separate network that can be safely detatched from the rest of the architecture!
 ### 5. Pure State Space Models
-This architecture uses a State Space Model, compressing the past into a recurrent state just like RNNs do. s_t=F(s_t-1,x_t) and y_t=g(s_t,x_t). No KV cache is stored, and overall very fast inference is obtained. However, it's still quote an underground technique that for now we'll not take into account. Mamba models are the SOTA architectures.
+This architecture uses a State Space Model, compressing the past into a recurrent state just like RNNs do: $s_t = F(s_{t-1}, x_t)$ and $y_t = g(s_t, x_t)$. No KV cache is stored, and overall very fast inference is obtained. However, it's still quote an underground technique that for now we'll not take into account. Mamba models are the SOTA architectures.
 
 ### 6. Hybrid linear attention plus full attention
-In standard attention, each new token query compares itself with every past token's key and is multiplied by each past token's value. That's quadratic and slow as hell: every token interacts with every other token, so that grows **O(L^2d)**. The nxn matrix (where n= number of tokens under analysis) is the expensive object, resulting from QK^T.
+In standard attention, each new token query compares itself with every past token's key and is multiplied by each past token's value. That's quadratic and slow as hell: every token interacts with every other token, so that grows $O(L^2 d)$. The $n \times n$ matrix (where $n$ = number of tokens under analysis) is the expensive object, resulting from $Q K^\top$.
 
-Instead, **Linear Attention** does the opposite: we first multiply **K^T*V**, which is called **memory**, denoted **S**, and then multiply the Query by the Memory to get the attention score.
+Instead, **Linear Attention** does the opposite: we first multiply $K^\top V$, which is called **memory**, denoted $S$, and then multiply the Query by the Memory to get the attention score.
 
-Linear attention keeps the basic goal of attention: each token gathers information from other tokens, but changes how the attention weights are computed so that we never build the large n×n attention matrix resulting from QK product.
+Linear attention keeps the basic goal of attention: each token gathers information from other tokens, but changes how the attention weights are computed so that we never build the large $n \times n$ attention matrix resulting from $Q K^\top$ product.
 
-With no softmax we could easily write ∑​(qi⊤​kj​)vj​=qi⊤​(j∑​kj​vj⊤​). But softmax isn't linear and can't be fitted into both the two formulas. Moreover, running softmax on K^TV would normalize across embedding dimension and not across number of tokens. Therefore, Lienar Attention needs a new way to represent similarity between tokens queries and keys without the need of using softmax function: some map functions (there is a lot of possible ones) do this for us, just allowing us to represent the attention weights by moving the summation symbol forward to the KV part, allowing us first to compute the total KV matrix, and then multiply it by Q, and
+With no softmax we could easily write:
+$$\sum_{j} (q_i^\top k_j) v_j = q_i^\top \left( \sum_{j} k_j v_j^\top \right)$$
+But softmax isn't linear and can't be fitted into both the two formulas. Moreover, running softmax on $K^\top V$ would normalize across embedding dimension and not across number of tokens. Therefore, Linear Attention needs a new way to represent similarity between tokens queries and keys without the need of using softmax function: some map functions (there is a lot of possible ones) do this for us, just allowing us to represent the attention weights by moving the summation symbol forward to the KV part, allowing us first to compute the total KV matrix, and then multiply it by $Q$, and
 
-— i forgot that attention uses outer product, not dot product, therefore the product between each token's k^T*v is a matrix, and when we sum those matrices we get the final K^TV matrix.
+— i forgot that attention uses outer product, not dot product, therefore the product between each token's $k_t v_t^\top$ is a matrix, and when we sum those matrices we get the final $K^\top V$ matrix.
 
-Done that, we multiply the Q matrix (every token's query) by the the "total" matrix, obtaining the attention score of each token with respect to every other in one shot, with a single  matrix multiplication.
+Done that, we multiply the $Q$ matrix (every token's query) by the "total" matrix, obtaining the attention score of each token with respect to every other in one shot, with a single matrix multiplication.
  
-The convenience is straightforward: instead of having a huge nxn matrix, we first make a dxd matrix (d=QKV matrices embedding vector shapes) out of S=K^TV, then a Lxd matrix by Q*S
+The convenience is straightforward: instead of having a huge $n \times n$ matrix, we first make a $d \times d$ matrix ($d$ = QKV matrices embedding vector shapes) out of $S = K^\top V$, then an $L \times d$ matrix by $Q S$.
 
 A further efficiency step appears: we don't need to recompute KV for every token: we just keep a running total of the KV matrix that gets updated every time a new token is processed. The name "memory" makes even more sense now. However, this initial memory updating process has no obsolete information deletion process nor useful memories protection, or deciding how long information should survive: conflicting information about the same phenomenon may live together in the same space and we'd have no way to delete che old one. Stacking more and more information makes retrieval quality increasingly worse.
 #### 6.1 DeltaNets
-To overcome this problem, DeltaNets were introduced: we compute the "memory value" (I named it in this way), denoted v^ (^=hat), equal to **v^t=S^T*k**. This determines **what the current memory associates with the new token's key**. Then, we compute the **error** as **v-v^**. That error is framed as the "useful information" that is not yet contained in our memory, therefore we update the memory by **βtktet^T**, treating e like a "useful value". Here b is a sort of learning rate, tuning the update's size.
+To overcome this problem, DeltaNets were introduced: we compute the "memory value" (I named it in this way), denoted $\hat{v}_t$, equal to $\hat{v}_t = S_{t-1}^\top k_t$. This determines **what the current memory associates with the new token's key**. Then, we compute the **error** as $e_t = v_t - \hat{v}_t$. That error is framed as the "useful information" that is not yet contained in our memory, therefore we update the memory by $\beta_t k_t e_t^\top$, treating $e_t$ like a "useful value". Here $\beta_t$ is a sort of learning rate, tuning the update's size.
 
 #### 6.2 Gated DeltaNets
-We supercharge deltanets with memory erasure as well, by updating the memory as **St=αtSt−1+βtkt(vt−αtv^t)⊤​​**. As we can see we introduce the forgetting (or decay rate) denoted alpha, that scales the entire previous memory. We also "forget" v^: equivbalent to simply replacing St-1*k with aSt-1*kt in the v^t formula.
+We supercharge deltanets with memory erasure as well, by updating the memory as:
+$$S_t = \alpha_t S_{t-1} + \beta_t k_t (v_t - \alpha_t \hat{v}_t)^\top$$
+As we can see we introduce the forgetting (or decay rate) denoted $\alpha_t$, that scales the entire previous memory. We also "forget" $\hat{v}_t$: equivalent to simply replacing $S_{t-1} k_t$ with $\alpha_t S_{t-1} k_t$ in the $\hat{v}_t$ formula.
 
+#### 6.3 Kimi Delta Attention
+It replaces Gated DeltaNet's $\alpha_t$ scalar with a diagonalized $\alpha_t$ vector. In this way we obtain much more powerful forgetting ability: we can control the row-wise forgetting instead of it being matrix-wise. It makes sense because each row comes from the aggregation of tokens' key and value interactions, therefore controlling our model's "memory" about different learned key features.
+
+Importantly, the final writing of KDA is:
+
+$$S_t = \widetilde{S}_{t-1} - \beta_t k_t k_t^\top \widetilde{S}_{t-1} + \beta_t k_t v_t^\top$$
+
+where:
+
+$$\widetilde{S}_{t-1} = \operatorname{Diag}(\alpha_t) S_{t-1}$$
+
+which is precisely equivalent to:
+
+$$S_t = \widetilde{S}_{t-1} + \beta_t k_t (v_t - \hat{v}_t)^\top$$
+
+![alt text](image-1.png)
+
+which is the way we always wrote it down. Much easier to digest.
+
+
+Here the $\beta_t$ terms have two roles: it erase 
+
+#### 6.4 Gated DeltaNet-2
