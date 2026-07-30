@@ -117,5 +117,14 @@ Here the $\beta_t$ terms have two roles: it **erases the old association** (the 
 This distinction will come in hand in the next part.
 #### 6.4 Gated DeltaNet-2
 
-Thsi paper (**may 2026! SOTA Stuff!**) splits the task using two different scalars, b for erasing and w for writing. That's smart: KDA can't choose to erase strongly but write weakly, if one is strong, so the other'll do.
- 
+This paper (**may 2026! SOTA Stuff!**) splits the task using two different vectors, $b_t$ for erasing and $w_t$ for writing. That's smart: KDA can't choose to erase strongly but write weakly, if one is strong, so the other'll do.
+
+Its short update is:
+
+$$S_t = \bar{S}_t + k_t (z_t - r_t)^\top$$
+
+Here, $r_t = \bar{S}_t^\top e_t$, with $e_t$ being the "erase key" $e_t = b_t \odot k_t$ (remember $\bar{S}_t = D_t S_{t-1}$), deciding the old value to be removed from memory, and $z_t = w_t \odot v_t$, tuning the amount of new info to be written in memory. Then, the model computes $z_t - r_t$: 
+- $+z_t$ inserts new content 
+- $-r_t$ removes old one. 
+
+Finally, $k_t$ is multiplied by this difference to write the correction into memory.
