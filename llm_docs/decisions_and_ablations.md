@@ -54,6 +54,50 @@ When replacing a decision, record the old default, the new default, the reason, 
 - Approximately 20M smoke geometry.
 - Approximately 100M first substantive geometry: `d_model=512`, 20 layers, `d_ff=1408`, 8 MHA heads of dimension 64, and matching 8-head GDN key/value geometry.
 
+## Frozen fallback hierarchy
+
+The primary architecture remains:
+
+```text
+[GDN-2, GDN-2, GDN-2, gated full MHA] × N
+```
+
+Fallbacks are ordered as follows.
+
+### Plan A.5: Gated DeltaNet v1 hybrid
+
+Use the same 3:1 pattern with ordinary Gated DeltaNet only when GDN-2 is the specific problem and a stable, efficient GDN-v1 training kernel works on the T4:
+
+```text
+[GDN, GDN, GDN, gated full MHA] × N
+```
+
+This is the closest architectural substitute, but it is not considered operationally safe until its kernel is qualified on the actual T4.
+
+### Plan B: sliding-window/global gated-attention transformer
+
+If recurrent or linear-attention training kernels are unavailable or inadequate, use:
+
+```text
+[SWA-512, SWA-512, SWA-512, gated full MHA] × N
+```
+
+`SWA-512` is causal sliding-window attention over the current token and at most the previous 511 tokens. It uses the same MHA projections, per-head QK-RMSNorm, RoPE, elementwise sigmoid output gate, FFN, normalization, bias policy, and parameter geometry as a full-attention block; only the attention mask differs. Every fourth layer remains full causal attention, preserving periodic unrestricted retrieval.
+
+Plan B is the preferred operational fallback because it retains a local/global hybrid structure, requires no recurrent state or specialized linear-attention kernel, and is straightforward to implement with standard PyTorch attention primitives.
+
+### Plan C: all-gated-MHA transformer
+
+The final and simplest fallback is a parameter-matched stack of gated full causal MHA layers:
+
+```text
+[gated full MHA] × L
+```
+
+Plan C is also the mandatory scientific baseline. It remains available even when the primary hybrid works, because architecture claims require comparison against a matched modern transformer.
+
+The previous ordering placed all-MHA before the sliding-window/global transformer. On 2026-07-31 the user explicitly inverted those priorities: the local/global sliding-window transformer is now Plan B, and all-MHA is Plan C while retaining its baseline role.
+
 ## Rationale for newly frozen details
 
 ### PyTorch and optimized kernels
@@ -66,15 +110,20 @@ The Q, K, and V short convolutions are depthwise causal 1D filters with initial 
 
 ### Attention QK-Norm and output gating
 
-These mechanisms are enabled in both the hybrid model and the all-MHA baseline. Keeping them matched prevents the architecture comparison from confounding recurrent versus softmax token mixing with unrelated attention-block changes.
+These mechanisms are enabled in the hybrid model and every transformer fallback or baseline. Keeping them matched prevents architecture comparisons from confounding the sequence mixer with unrelated attention-block changes.
 
 ### Vocabulary padding
 
 The padded rows exist only to align the tied embedding/output matrix. They are not language-model classes. Cropping the aligned logits before cross-entropy and sampling retains hardware-friendly projection dimensions while defining the probability distribution over exactly the semantic vocabulary.
 
-## Baseline
+## Baselines and comparison contract
 
-Maintain a modern all-MHA decoder baseline. Match as closely as possible:
+Maintain both transformer references when resources permit:
+
+1. Plan B local/global sliding-window transformer, for an efficient kernel-independent hybrid comparison;
+2. Plan C all-MHA decoder, as the clean scientific baseline.
+
+Match as closely as possible:
 
 - tokenizer and vocabulary;
 - total parameters;
@@ -93,6 +142,8 @@ These are not defaults and should change one important variable at a time:
 
 - GDN-2:MHA ratios other than 3:1;
 - GQA instead of MHA;
+- sliding-window sizes other than 512;
+- different SWA-to-full-attention ratios;
 - QK-Norm disabled;
 - attention output gate disabled or changed;
 - partial RoPE or NoPE in MHA;
@@ -122,7 +173,7 @@ The required sequence is:
 5. if the upstream path is unavailable or poor, evaluate a T4-compatible CUDA/CUTLASS implementation with the same PyTorch API;
 6. consider publishing the T4-compatible GDN-2 kernel as a separate open-source side project only after correctness and measurable speedup are established.
 
-The main Small LLM project must retain a working fallback and must not be blocked indefinitely by the side project.
+The main Small LLM project must not be blocked indefinitely by the kernel side project. Plan B requires no recurrent kernel and is the preferred operational fallback; Plan C remains the simplest last resort and scientific reference.
 
 ## Still-open architecture details
 
@@ -130,6 +181,8 @@ The main Small LLM project must retain a working fallback and must not be blocke
 - Exact gate initialization where the GDN-2 reference allows alternatives.
 - Depth-dependent residual scaling.
 - Exact larger-scale configurations beyond the frozen smoke and approximately 100M models.
+
+These details do not block implementation of the model package or approximately 20M smoke configuration. Initialization is deliberately resolved by a tiny controlled implementation test rather than additional paper study.
 
 ## Decision standard
 
