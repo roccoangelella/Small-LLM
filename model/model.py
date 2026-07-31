@@ -8,7 +8,7 @@ embedding.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import torch
@@ -26,8 +26,8 @@ def _layer_kinds(config: ModelConfig) -> tuple[str, ...]:
     normalized = tuple(str(kind).lower() for kind in kinds)
     if len(normalized) != config.n_layers:
         raise ValueError("config layer kinds must contain exactly n_layers entries")
-    if any(kind not in {"gdn", "gdn-2", "mha"} for kind in normalized):
-        raise ValueError("layer kinds must be 'gdn', 'gdn-2', or 'mha'")
+    if any(kind not in {"gdn", "gdn-2", "gdn_v1", "swa", "mha"} for kind in normalized):
+        raise ValueError("layer kinds must be gdn, gdn-2, gdn_v1, swa, or mha")
     return normalized
 
 
@@ -52,7 +52,11 @@ def _matched_all_mha_ffn_width(config: ModelConfig) -> int:
         + config.gdn_num_key_heads * config.gdn_key_dim
     )
     mha_per_layer = 5 * d_model * d_model + 2 * config.head_dim
-    replaced_layers = sum(kind == "gdn" for kind in config.layer_kinds)
+    # Plan C's selected layer kinds are already all MHA.  Its compensation
+    # therefore derives from the frozen primary 3:1 pattern it replaces.
+    replaced_layers = sum(kind == "gdn" for kind in config.layer_pattern) * (
+        config.n_layers // len(config.layer_pattern)
+    )
     gap = replaced_layers * (gdn_per_layer - mha_per_layer)
     per_width = config.n_layers * 3 * d_model
     return max(1, config.d_ff + round(gap / per_width))
@@ -99,7 +103,7 @@ class SmallLLM(nn.Module):
     def __init__(self, config: ModelConfig, all_mha: bool = False) -> None:
         super().__init__()
         self.config = config
-        self.all_mha = bool(all_mha)
+        self.all_mha = bool(all_mha or config.architecture == "all_mha")
         configured_kinds = _layer_kinds(config)
         self.layer_kinds = tuple("mha" if self.all_mha else kind for kind in configured_kinds)
         self.ffn_width = _matched_all_mha_ffn_width(config) if self.all_mha else config.d_ff
@@ -109,8 +113,15 @@ class SmallLLM(nn.Module):
         for kind in self.layer_kinds:
             if kind in {"gdn", "gdn-2"}:
                 mixer = GatedDeltaNet2(config)
+            elif kind == "gdn_v1":
+                raise NotImplementedError(
+                    "Plan A.5 requires a separately qualified GDN-v1 backend; "
+                    "it must not silently reuse GDN-2"
+                )
+            elif kind == "swa":
+                mixer = GatedMultiheadAttention(replace(config, attention_window=512))
             else:
-                mixer = GatedMultiheadAttention(config)
+                mixer = GatedMultiheadAttention(replace(config, attention_window=None))
             blocks.append(DecoderBlock(config, mixer, d_ff=self.ffn_width))
         self.blocks = nn.ModuleList(blocks)
         self.final_norm = RMSNorm(config.d_model, config.rms_norm_eps)

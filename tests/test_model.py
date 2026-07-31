@@ -42,6 +42,12 @@ class SharedComponentTests(unittest.TestCase):
             tiny_config(attention_window=9)
         with self.assertRaises(ValueError):
             tiny_config(dropout=0.1)
+        self.assertEqual(
+            tiny_config(architecture="swa_hybrid", max_seq_len=512).layer_kinds,
+            ("swa", "swa", "swa", "mha"),
+        )
+        with self.assertRaises(ValueError):
+            tiny_config(architecture="swa_hybrid", attention_window=256, max_seq_len=512)
         with self.assertRaises(ValueError):
             RMSNorm(8, float("nan"))
         with self.assertRaises(ValueError):
@@ -108,6 +114,17 @@ class ModelAssemblyTests(unittest.TestCase):
         expected = expected + block.ffn(block.ffn_norm(expected))
         self.assertTrue(torch.allclose(block(x), expected))
 
+    def test_plan_b_uses_three_swa_layers_then_full_attention(self):
+        config = tiny_config(architecture="swa_hybrid", max_seq_len=512)
+        model = SmallLLM(config)
+        self.assertEqual(model.layer_kinds, ("swa", "swa", "swa", "mha"))
+        self.assertEqual([block.mixer.config.attention_window for block in model.blocks], [512, 512, 512, None])
+        self.assertEqual(model(torch.randint(0, 24, (1, 4))).shape, (1, 4, 24))
+
+    def test_unqualified_plan_a5_refuses_to_substitute_gdn2(self):
+        with self.assertRaises(NotImplementedError):
+            SmallLLM(tiny_config(architecture="gdn_v1_hybrid"))
+
     def test_parameter_accounting_counts_tied_weight_once(self):
         model = SmallLLM(tiny_config(), all_mha=True)
         counts = count_parameters(model)
@@ -119,10 +136,13 @@ class ModelAssemblyTests(unittest.TestCase):
     def test_all_mha_baseline_is_parameter_matched(self):
         hybrid = SmallLLM(tiny_config())
         baseline = SmallLLM(tiny_config(), all_mha=True)
+        selected_plan_c = SmallLLM(tiny_config(architecture="all_mha"))
         hybrid_total = count_parameters(hybrid).total
         baseline_total = count_parameters(baseline).total
         self.assertNotEqual(baseline.ffn_width, hybrid.config.d_ff)
         self.assertLess(abs(hybrid_total - baseline_total) / hybrid_total, 0.003)
+        self.assertEqual(selected_plan_c.ffn_width, baseline.ffn_width)
+        self.assertEqual(count_parameters(selected_plan_c).total, baseline_total)
 
     def test_gdn_exceptions_and_decay_exclusions_are_named(self):
         model = SmallLLM(tiny_config())

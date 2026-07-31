@@ -8,6 +8,7 @@ from typing import Literal
 
 LayerKind = Literal["gdn", "mha"]
 _DEFAULT_LAYER_PATTERN: tuple[LayerKind, ...] = ("gdn", "gdn", "gdn", "mha")
+Architecture = Literal["gdn2_hybrid", "swa_hybrid", "all_mha", "gdn_v1_hybrid"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +29,7 @@ class ModelConfig:
     gdn_value_dim: int = 64
     gdn_conv_kernel_size: int = 4
     layer_pattern: tuple[LayerKind, ...] = _DEFAULT_LAYER_PATTERN
+    architecture: Architecture = "gdn2_hybrid"
     rms_norm_eps: float = 1e-6
     rope_base: float = 10_000.0
     attention_window: int | None = None
@@ -79,6 +81,8 @@ class ModelConfig:
             raise ValueError("n_layers must be divisible by the layer_pattern length")
         # Keep the frozen dataclass immutable while canonicalizing the documented GDN-2 spelling.
         object.__setattr__(self, "layer_pattern", tuple(normalized_pattern))
+        if self.architecture not in {"gdn2_hybrid", "swa_hybrid", "all_mha", "gdn_v1_hybrid"}:
+            raise ValueError("architecture must be gdn2_hybrid, swa_hybrid, all_mha, or gdn_v1_hybrid")
 
         if isinstance(self.rms_norm_eps, bool) or not isinstance(self.rms_norm_eps, (int, float)):
             raise ValueError("rms_norm_eps must be a positive finite number")
@@ -100,12 +104,23 @@ class ModelConfig:
                 or self.attention_window > self.max_seq_len
             ):
                 raise ValueError("attention_window must be a positive integer no larger than max_seq_len")
+        if self.architecture == "swa_hybrid" and self.attention_window not in (None, 512):
+            raise ValueError("the frozen swa_hybrid fallback uses a 512-token local window")
+        if self.architecture == "swa_hybrid" and self.max_seq_len < 512:
+            raise ValueError("the frozen swa_hybrid fallback requires max_seq_len of at least 512")
 
     @property
     def layer_kinds(self) -> tuple[LayerKind, ...]:
         """Return the configured compact pattern expanded to every layer."""
 
-        return self.layer_pattern * (self.n_layers // len(self.layer_pattern))
+        pattern = self.layer_pattern * (self.n_layers // len(self.layer_pattern))
+        if self.architecture == "swa_hybrid":
+            return tuple("swa" if kind == "gdn" else "mha" for kind in pattern)
+        if self.architecture == "all_mha":
+            return ("mha",) * self.n_layers
+        if self.architecture == "gdn_v1_hybrid":
+            return tuple("gdn_v1" if kind == "gdn" else "mha" for kind in pattern)
+        return pattern
 
     @classmethod
     def smoke(cls, **overrides: object) -> ModelConfig:

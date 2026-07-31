@@ -100,6 +100,10 @@ The previous ordering placed all-MHA before the sliding-window/global transforme
 
 ## Rationale for newly frozen details
 
+### Plan A.5 implementation boundary
+
+The initial package can select the Plan A.5 schedule but deliberately refuses to instantiate it: no GDN-v1 kernel or independent reference implementation has qualified on the target T4. Substituting GDN-2 under the GDN-v1 name would silently change the experiment. The shared decoder builder implements the primary schedule, Plan B `SWA-512`, and Plan C all-MHA now; Plan A.5 becomes runnable only when a separately qualified GDN-v1 backend is supplied.
+
 ### Optional SWA-512 implementation surface
 
 The implementation work includes a 512-token sliding-window attention option because it is useful to exercise the shared attention interface. This does **not** replace the frozen initial full-causal MHA contract: smoke and substantive hybrid configurations keep unrestricted causal attention. SWA-512 is opt-in only, has no bearing on the initial comparison, and must be treated as a later controlled ablation.
