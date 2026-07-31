@@ -4,7 +4,7 @@ _Last updated: 2026-07-31_
 
 ## Current phase
 
-The dataset software is code-complete and undergoing operational qualification. The model and trainer are moving from architecture specification into implementation, beginning with the approximately 20M smoke configuration.
+The dataset software is code-complete and undergoing operational qualification. The approximately 20M model package is implemented and CPU-tested; trainer integration and T4 qualification are next.
 
 The complete 90B dataset build is not authorized yet. The exact mixture calibration, bounded dataset pilot, model/trainer consumer, and small end-to-end training pilot must pass first.
 
@@ -67,6 +67,12 @@ The following are frozen for the initial model family:
 
 See `model_architecture.md`, `model_geometry.md`, and `decisions_and_ablations.md` for the implementation-level specification.
 
+### Model package
+
+The initial PyTorch package now includes validated scalable geometry, tied padded embeddings with semantic-logit cropping, RMSNorm/RoPE/SwiGLU, gated MHA, a readable GDN-2 recurrent oracle and cache, hybrid/all-MHA assembly, tie-aware parameter accounting, and candidate initialization measurements. CPU tests cover forward/backward flow, causality, cache parity, vocabulary boundaries, accounting, and a tiny deterministic overfit.
+
+The all-MHA comparison widens its FFN only to the closest integral parameter match; the frozen hybrid geometry is unchanged. Optimized kernels, T4 FP16 behavior, unified model generation caching, and trainer/checkpoint integration remain unqualified or unimplemented.
+
 ## Remaining dataset operational gates
 
 1. Complete the exact full mixture calibration.
@@ -89,17 +95,14 @@ uv run --env-file .env python -m dataset.production ...
 
 1. Complete and approve the full exact mixture calibration.
 2. Pass the authenticated bounded dataset pilot and freeze the dataset subsystem.
-3. Implement the approximately 20M PyTorch smoke model using the frozen block specification.
-4. Implement exact parameter accounting by component.
-5. Implement gated full attention and `SWA-512` through one shared attention module with different masks.
-6. Implement and test the readable GDN-2 recurrent reference.
-7. Connect the model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
-8. Validate forward pass, backward pass, generation, interruption, resume, and migration.
-9. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
-10. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking Plan B or Plan C.
-11. Implement the Plan C parameter-matched all-MHA baseline and keep Plan B available as the preferred operational fallback.
-12. Train the approximately 100M hybrid and matched transformer references only after smoke and T4 qualification.
-13. Scale only after measured quality, memory, and throughput evidence.
+3. Connect the smoke model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
+4. Validate model generation, interruption, resume, and migration through the trainer path.
+5. Complete the shared-attention Plan B `SWA-512` stack builder and retain Plan C as the parameter-matched baseline.
+6. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
+7. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking Plan B or Plan C.
+8. Freeze initialization after the candidate measurements include target-hardware FP16 evidence.
+9. Train the approximately 100M hybrid and matched transformer references only after smoke and T4 qualification.
+10. Scale only after measured quality, memory, and throughput evidence.
 
 ## Current open decisions
 

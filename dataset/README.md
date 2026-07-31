@@ -149,7 +149,7 @@ uv run python -m dataset.main stream-cache --weights-file /tmp/synth_weights.jso
 Run the unit test suite:
 
 ```bash
-uv run python -m unittest discover -v
+uv run --extra model --with-requirements dataset/requirements-remote.txt python -m unittest discover -v
 ```
 
 The real storage smoke test is opt-in because it writes a small immutable Drive shard and a small private-Hub object under a unique `smoke-...` run ID. It checks an authenticated upload, download, and local SHA-256 cycle; inspect or remove those objects after it finishes.

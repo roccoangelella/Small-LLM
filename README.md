@@ -59,10 +59,11 @@ uv run python -m dataset.main verify
 
 ## Testing & Verification
 
-Run the local offline unit test suite:
+Run the complete local unit test suite (the model extra supplies PyTorch; the
+dataset requirements supply its remote-client imports):
 
 ```bash
-uv run python -m unittest discover -v
+uv run --extra model --with-requirements dataset/requirements-remote.txt python -m unittest discover -v
 ```
 
 See [dataset/README.md](dataset/README.md) for full specifications and checkpoint contracts, and [dataset/PRODUCTION_RUNBOOK.md](dataset/PRODUCTION_RUNBOOK.md) for the authenticated pilot and production acceptance gates.

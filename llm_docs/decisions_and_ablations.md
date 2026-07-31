@@ -100,6 +100,10 @@ The previous ordering placed all-MHA before the sliding-window/global transforme
 
 ## Rationale for newly frozen details
 
+### Optional SWA-512 implementation surface
+
+The implementation work includes a 512-token sliding-window attention option because it is useful to exercise the shared attention interface. This does **not** replace the frozen initial full-causal MHA contract: smoke and substantive hybrid configurations keep unrestricted causal attention. SWA-512 is opt-in only, has no bearing on the initial comparison, and must be treated as a later controlled ablation.
+
 ### PyTorch and optimized kernels
 
 The project remains in PyTorch because the developer is already productive in it and because PyTorch supplies the model, autograd, optimizer, checkpoint, and testing surface needed by the project. Flash Linear Attention is itself a PyTorch package whose fast paths are implemented with Triton or other lower-level backends; adopting a kernel does not require switching model frameworks.
@@ -135,6 +139,8 @@ Match as closely as possible:
 - training tokens;
 - batch and optimizer setup;
 - data ordering and evaluation.
+
+The initial implementation replaces hybrid GDN-2 mixers with MHA and widens only the all-MHA baseline's SwiGLU branches to the closest integral parameter match. At the substantive geometry this is `d_ff=1603`, leaving 14,520 parameters (about 0.015%) of unavoidable integer-width difference. The frozen hybrid uses `d_ff=1408` unchanged.
 
 ## Planned controlled ablations
 
