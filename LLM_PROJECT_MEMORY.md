@@ -1,6 +1,6 @@
 # Small LLM Project Memory
 
-_Last updated: 2026-07-28_
+_Last updated: 2026-07-31_
 
 ## Project Goal
 
@@ -427,6 +427,21 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 
 ---
 
+## Initial Model Architecture Decision
+
+The initial model direction is a hybrid decoder with **Gated DeltaNet-2 as the dominant sequence mixer** and periodic full causal softmax-attention layers.
+
+- Use Gated DeltaNet-2 for most layers.
+- Use ordinary multi-head attention (MHA), not grouped-query attention (GQA), in the periodic full-attention layers for the first implementation.
+- The reason for keeping independent key and value heads is that the model is below 1B parameters and the likely development context is only 2,048 tokens. At this scale, GQA's main savings would be KV-cache size and inference bandwidth rather than a dramatic reduction in training compute, while sharing key/value heads would remove some attention capacity.
+- The leading macroarchitecture is a 3:1 Gated DeltaNet-2-to-MHA pattern, but the exact ratio remains subject to controlled T4 benchmarks.
+- Recurrent layers will initially use their causal recurrence without explicit positional encoding. Full-attention layers will use RoPE.
+- GQA remains a later optimization option if longer contexts, serving throughput, or KV-cache pressure make it worthwhile.
+
+The first architecture comparison should keep tokenizer, data, parameter budget, optimizer, and training tokens matched as closely as possible. A modern all-MHA decoder remains the conventional baseline against which the hybrid is measured.
+
+---
+
 ## Immediate Next Steps
 
 1. Run the exact full mixture calibration on the fast-network host.
@@ -434,9 +449,9 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 3. Implement or finalize the authenticated bounded acceptance-test harness.
 4. Execute the real 10M-token Drive pilot, interruption, resume, idempotence, cleanup, and verification procedure.
 5. Freeze the dataset subsystem after the pilot report passes.
-6. Specify and implement a very small decoder-only smoke model and trainer.
+6. Specify and implement a very small Gated DeltaNet-2/MHA hybrid smoke model and trainer.
 7. Connect the trainer to the schema-v2 block consumer and joint checkpoint interfaces.
-8. Benchmark candidate architecture, context, and global-batch settings on the T4.
+8. Benchmark model geometry, the Gated DeltaNet-2-to-MHA ratio, context, and global-batch settings on the T4 against an all-MHA baseline.
 9. Pass a bounded end-to-end training and migration pilot before authorizing base pretraining.
 
 ---
@@ -454,7 +469,7 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 
 ### Model and training
 
-- Final architecture and parameter count.
+- Final parameter count, depth, width, head geometry, and Gated DeltaNet-2-to-MHA layer ratio.
 - Exact context length; 2,048 remains the likely development value.
 - Any special tokens beyond EOD 50256.
 - Optimizer, LR schedule, initialization, global token batch, and checkpoint cadence.
@@ -463,4 +478,4 @@ No silent skip, unknown duplicate range, or model/data-cursor mismatch is accept
 - Reasoning datasets, teacher model, and post-training procedure.
 - Final compute availability and release policy.
 
-The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, and overlapping first-pass training strategy are no longer open decisions.
+The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, overlapping first-pass training strategy, Gated DeltaNet-2 as the dominant mixer, and ordinary MHA in periodic full-attention layers are no longer open decisions.
