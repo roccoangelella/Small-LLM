@@ -39,6 +39,46 @@ x = x + SwiGLU(RMSNorm(x))
 
 This is sequential pre-norm, not parallel residual execution.
 
+## Ordered fallback architectures
+
+The fallback order is frozen so kernel problems cannot stall the project.
+
+### Plan A.5: Gated DeltaNet v1 hybrid
+
+When GDN-2 itself is the problem but ordinary Gated DeltaNet has a qualified T4 training kernel, preserve the same layer rhythm:
+
+```text
+[GDN, GDN, GDN, gated full MHA] × N
+```
+
+This is the closest architectural substitute but is conditional on measured kernel availability and stability.
+
+### Plan B: local/global sliding-window transformer
+
+When no viable recurrent or linear-attention training kernel is available, use:
+
+```text
+[SWA-512, SWA-512, SWA-512, gated full MHA] × N
+```
+
+`SWA-512` is causal attention over the current token and at most the previous 511 tokens. The block uses the same full set of query, key, value, gate, and output projections as full MHA, with the same per-head QK-RMSNorm, RoPE, sigmoid output gate, normalization, FFN, and bias policy. Only the causal attention mask changes.
+
+Every fourth layer remains full causal attention. This preserves periodic unrestricted retrieval while requiring only standard PyTorch attention operations and no recurrent state.
+
+Plan B is the preferred operational fallback.
+
+### Plan C: all-gated-MHA transformer
+
+The simplest final fallback is:
+
+```text
+[gated full MHA] × L
+```
+
+This is also the mandatory parameter-matched scientific baseline. It remains implemented even when GDN-2 works so that claims about the hybrid can be tested cleanly.
+
+The model configuration and stack builder must support all four mixer schedules without changing the common decoder-block, FFN, embedding, loss, trainer, or checkpoint interfaces.
+
 ## Normalization
 
 Use RMSNorm rather than LayerNorm.
@@ -50,11 +90,11 @@ Use RMSNorm rather than LayerNorm.
 
 The final RMSNorm is required because the last residual update would otherwise reach the output projection without a subsequent pre-norm operation.
 
-## Full-attention layers
+## Full-attention and sliding-window layers
 
-Use full multi-head causal self-attention, not GQA, in the first implementation. The full-attention layers include per-head QK-RMSNorm and an elementwise sigmoid output gate.
+Use full multi-head causal self-attention, not GQA, in the first implementation. Full and sliding-window attention layers include per-head QK-RMSNorm and an elementwise sigmoid output gate.
 
-For each MHA layer:
+For each attention layer:
 
 ```text
 Q = X W_q
@@ -64,7 +104,7 @@ Q_norm = RMSNorm_per_head(Q)
 K_norm = RMSNorm_per_head(K)
 Q_rot = RoPE(Q_norm, positions)
 K_rot = RoPE(K_norm, positions)
-A = softmax((Q_rot K_rotᵀ) / sqrt(d_head) + causal_mask)
+A = softmax((Q_rot K_rotᵀ) / sqrt(d_head) + causal_or_window_mask)
 H = A V
 G = sigmoid(X W_gate)
 Y = (H ⊙ G) W_o
@@ -73,7 +113,8 @@ Y = (H ⊙ G) W_o
 Initial rules:
 
 - independent Q, K, and V heads;
-- full causal attention;
+- full causal attention in global MHA layers;
+- causal 512-token local attention in `SWA-512` layers;
 - per-head QK-RMSNorm before RoPE;
 - fixed RoPE on Q and K only;
 - full-head RoPE;
@@ -86,7 +127,7 @@ Initial rules:
 
 GQA remains a later serving or long-context optimization, not an initial capacity choice.
 
-The parameter-matched all-MHA baseline uses the same QK-RMSNorm and attention output gate so that the comparison isolates the sequence mixer rather than unrelated attention details.
+The Plan B and Plan C transformer models use the same QK-RMSNorm and attention output gate as the hybrid so comparisons isolate the mixer schedule rather than unrelated block details.
 
 ## Gated DeltaNet-2 layers
 
@@ -180,4 +221,4 @@ The exact global initialization and residual-scaling policy remains to be frozen
 - GDN-2 `dt_bias` initialized through inverse softplus so initial time steps occupy the reference small positive range;
 - padded vocabulary rows initialized to zero.
 
-The final choice must be tested for forward variance, early loss, gradient norms, FP16 stability, and agreement with the reference GDN-2 implementation before the approximately 100M run.
+The final choice must be tested for forward variance, early loss, gradient norms, FP16 stability, and agreement with the reference GDN-2 implementation before the approximately 100M run. This experiment does not block implementation of the model package or smoke geometry.
