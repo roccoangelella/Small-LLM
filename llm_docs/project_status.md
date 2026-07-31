@@ -45,15 +45,20 @@ Real upload, metadata-read, download-hash, and cleanup smoke tests passed on 202
 
 The following are frozen for the initial model family:
 
+- PyTorch as the canonical framework, with optimized kernels behind PyTorch interfaces;
+- a readable PyTorch GDN-2 recurrence as the correctness oracle;
 - dense decoder-only hybrid;
 - Gated DeltaNet-2 as the dominant mixer;
-- periodic ordinary MHA layers;
+- periodic full MHA layers;
 - `[GDN-2, GDN-2, GDN-2, MHA]` repeating pattern;
 - sequential pre-RMSNorm blocks;
 - final RMSNorm before the tied LM head;
 - fixed full-head RoPE on MHA Q and K only;
+- per-head QK-RMSNorm and elementwise sigmoid output gating in MHA;
 - dense SwiGLU FFN in every block;
+- zero dropout and bias-free ordinary projection paths;
 - tied input embeddings and output projection;
+- semantic vocabulary 50,257 with a 50,304-row aligned matrix and semantic-logit cropping;
 - 2,048-token initial context;
 - approximately 20M smoke geometry;
 - approximately 100M first substantive geometry.
@@ -82,13 +87,15 @@ uv run --env-file .env python -m dataset.production ...
 
 1. Complete and approve the full exact mixture calibration.
 2. Pass the authenticated bounded dataset pilot and freeze the dataset subsystem.
-3. Implement the approximately 20M smoke model using the frozen block specification.
+3. Implement the approximately 20M PyTorch smoke model using the frozen block specification.
 4. Implement exact parameter accounting by component.
-5. Connect the model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
-6. Validate forward pass, backward pass, generation, interruption, resume, and migration.
-7. Benchmark the smoke geometry and kernels on the T4.
-8. Implement and train the approximately 100M hybrid and a parameter-matched all-MHA baseline.
-9. Scale only after measured quality, memory, and throughput evidence.
+5. Implement and test the readable GDN-2 recurrent reference.
+6. Connect the model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
+7. Validate forward pass, backward pass, generation, interruption, resume, and migration.
+8. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
+9. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking the main model implementation.
+10. Implement and train the approximately 100M hybrid and a parameter-matched all-MHA baseline.
+11. Scale only after measured quality, memory, and throughput evidence.
 
 ## Current open decisions
 
@@ -103,12 +110,9 @@ uv run --env-file .env python -m dataset.production ...
 
 ### Remaining architecture details
 
-- Exact bias policy outside reference-required GDN-2 parameters.
-- Dropout policy, with zero dropout the leading default.
-- Exact initialization, gate initialization, and depth-dependent residual scaling.
-- Whether to use QK-Norm.
-- Whether MHA uses an attention output gate or an ordinary output projection.
-- Exact invalid-logit masking for padded vocabulary rows.
+- Exact global weight initialization.
+- Exact gate initialization where the GDN-2 reference allows alternatives.
+- Depth-dependent residual scaling.
 - Larger-scale geometry beyond the frozen smoke and approximately 100M models.
 
 ### Training and post-training
@@ -134,13 +138,17 @@ The following are frozen unless a controlled experiment later replaces them:
 - exact empirical-mixture derivation and continuous deficit accounting;
 - personal Google Drive identity and durable-mirror role;
 - overlapping first-pass dataset/training strategy;
+- PyTorch as the canonical framework;
 - geometry-scalable model family;
 - GDN-2-dominant 3:1 initial pattern;
-- ordinary MHA rather than GQA in initial attention layers;
+- full MHA rather than GQA in initial attention layers;
+- MHA QK-RMSNorm and output gating;
 - pre-RMSNorm and final RMSNorm;
 - MHA-only RoPE placement;
 - dense SwiGLU FFNs;
+- zero initial dropout and bias-free ordinary projections;
 - tied embeddings;
+- padded internal vocabulary with semantic-logit cropping;
 - initial 2,048-token context;
 - approximately 20M smoke geometry;
 - approximately 100M first substantive geometry.
