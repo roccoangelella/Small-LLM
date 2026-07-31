@@ -101,21 +101,24 @@ The architecture investigation is complete enough to begin implementation. The f
 - [x] Use no additive embedding bias, no separate LM-head bias, and no ordinary linear biases outside faithful GDN-2 exceptions.
 - [x] Use a 50,304-row internally padded tied embedding/output matrix.
 - [x] Crop output logits to the semantic 50,257 classes before loss, evaluation probabilities, and sampling.
+- [x] Freeze fallback order: GDN-v1 hybrid when specifically viable, then Plan B `[SWA-512, SWA-512, SWA-512, gated full MHA] × N`, then Plan C all-gated-MHA.
+- [x] Keep Plan C all-gated-MHA as the mandatory scientific baseline even when the primary hybrid works.
 
 ## Model package implementation
 
-- [ ] Add `ModelConfig` with geometry and architecture validation.
+- [ ] Add `ModelConfig` with geometry, mixer-schedule, and architecture validation.
 - [ ] Add RMSNorm and RoPE modules with numerical tests.
 - [ ] Add the bias-free SwiGLU FFN.
 - [ ] Add gated full causal MHA with QK-RMSNorm.
+- [ ] Add causal `SWA-512` using the same attention module with a local causal mask.
 - [ ] Add a readable PyTorch GDN-2 recurrence.
 - [ ] Add short depthwise causal Q/K/V convolutions with kernel size 4.
 - [ ] Add chunkwise/recurrent state and cache interfaces.
 - [ ] Add an optimized-backend adapter without coupling model code to FLA internals.
-- [ ] Add hybrid decoder blocks and the `[GDN-2, GDN-2, GDN-2, MHA]` stack builder.
+- [ ] Add stack builders for the primary GDN-2 hybrid, conditional GDN-v1 hybrid, Plan B local/global transformer, and Plan C all-MHA model.
 - [ ] Add tied embeddings with aligned projection and semantic-logit cropping.
 - [ ] Add exact parameter accounting by component.
-- [ ] Add forward, backward, causality, shape, state-reset, weight-tying, and padded-vocabulary tests.
+- [ ] Add forward, backward, causality, shape, state-reset, weight-tying, padded-vocabulary, and sliding-window-boundary tests.
 - [ ] Add chunkwise-versus-recurrent numerical-parity tests.
 - [ ] Make the approximately 20M smoke model overfit a tiny deterministic sequence.
 
@@ -151,4 +154,7 @@ The architecture investigation is complete enough to begin implementation. The f
 ## Main-project fallback
 
 - [ ] Do not let the kernel side project block Small LLM.
-- [ ] If no viable GDN-2 training backend exists on the T4, use the matched all-MHA fallback for trainer and dataset integration while continuing kernel work separately.
+- [ ] If GDN-2 fails but GDN-v1 has a qualified T4 kernel, run the GDN-v1 3:1 hybrid.
+- [ ] If no viable recurrent kernel exists, activate Plan B: `[SWA-512, SWA-512, SWA-512, gated full MHA] × N`.
+- [ ] Keep Plan C all-gated-MHA runnable as the simplest final fallback and parameter-matched scientific baseline.
+- [ ] Compare Plan B and Plan C using matched tokenizer, data, parameter budget, optimizer, token count, and evaluation protocol.
