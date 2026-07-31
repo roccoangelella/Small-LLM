@@ -2,13 +2,31 @@
 
 _Last updated: 2026-07-31_
 
+## Documentation decision
+
+The topic files under `llm_docs/` are the sole source of truth for project decisions, technical contracts, current status, and open questions. The former monolithic `LLM_PROJECT_MEMORY.md` file has been retired after its information was consolidated into the topic documents.
+
+When replacing a decision, record the old default, the new default, the reason, and the evidence. Do not silently erase superseded reasoning.
+
+## Frozen project and data defaults
+
+- Train a decoder-only language model below 1B parameters from random initialization.
+- Use a geometry-scalable model implementation rather than a single hard-coded final size.
+- Use the pinned `nvidia/Nemotron-ClimbMix` revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`.
+- Accept clusters 1–10 and 12–20; exclude cluster 11.
+- Use the GPT-2 byte-level BPE IDs already present in the corpus.
+- Use exact empirical source-token mixture weights conditioned on cluster 11 being excluded.
+- Keep mixture accounting continuous across documents, batches, shards, checkpoints, interruptions, and resumes.
+- Use context+1 packing with stride equal to the context length.
+- Use personal Google Drive as the durable dataset mirror, not as the random-access training filesystem.
+- Overlap first-pass dataset preparation and model training after the operational gates pass.
+
 ## Frozen architecture defaults
 
-- Decoder-only dense language model.
-- Geometry-scalable implementation.
+- Dense decoder-only language model.
 - Dominant Gated DeltaNet-2 mixer.
 - Periodic ordinary MHA layers.
-- 3:1 GDN-2-to-MHA pattern.
+- 3:1 GDN-2-to-MHA pattern for the frozen initial models.
 - Sequential pre-RMSNorm residual blocks.
 - RMSNorm epsilon initially `1e-6`.
 - Final RMSNorm before the tied LM head.
@@ -57,14 +75,14 @@ These are not defaults and should change one important variable at a time:
 
 ## Still-open architecture details
 
-- exact bias policy outside reference-required GDN-2 parameters;
-- dropout policy, though zero is the leading default;
-- exact weight and gate initialization;
-- residual-branch scaling;
-- QK-Norm or no QK-Norm;
-- attention output gating or ordinary output projection;
-- final internal vocabulary-padding implementation and invalid-logit masking details;
-- exact larger-scale configurations beyond the frozen smoke and approximately 100M models.
+- Exact bias policy outside reference-required GDN-2 parameters.
+- Dropout policy, though zero is the leading default.
+- Exact weight and gate initialization.
+- Depth-dependent residual scaling.
+- QK-Norm or no QK-Norm.
+- Attention output gating or ordinary output projection.
+- Final internal vocabulary-padding implementation and invalid-logit masking details.
+- Exact larger-scale configurations beyond the frozen smoke and approximately 100M models.
 
 ## Decision standard
 
@@ -73,4 +91,6 @@ Do not add an architectural novelty merely because it appears in a large contemp
 - a clear failure in the current design;
 - a direct small-model result;
 - a controlled T4 benchmark;
-- a compelling implementation or serving constraint.
+- a compelling implementation, memory, or serving constraint.
+
+Scale decisions must follow measurements rather than parameter labels alone.
