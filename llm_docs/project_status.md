@@ -54,14 +54,16 @@ The following are frozen for the initial model family:
 - sequential pre-RMSNorm blocks;
 - final RMSNorm before the tied LM head;
 - fixed full-head RoPE on MHA Q and K only;
-- per-head QK-RMSNorm and elementwise sigmoid output gating in MHA;
+- per-head QK-RMSNorm and elementwise sigmoid output gating in attention layers;
 - dense SwiGLU FFN in every block;
 - zero dropout and bias-free ordinary projection paths;
 - tied input embeddings and output projection;
 - semantic vocabulary 50,257 with a 50,304-row aligned matrix and semantic-logit cropping;
 - 2,048-token initial context;
 - approximately 20M smoke geometry;
-- approximately 100M first substantive geometry.
+- approximately 100M first substantive geometry;
+- ordered fallbacks: conditional GDN-v1 hybrid, Plan B local/global `SWA-512` transformer, then Plan C all-gated-MHA;
+- Plan C all-gated-MHA as the mandatory scientific baseline.
 
 See `model_architecture.md`, `model_geometry.md`, and `decisions_and_ablations.md` for the implementation-level specification.
 
@@ -89,13 +91,15 @@ uv run --env-file .env python -m dataset.production ...
 2. Pass the authenticated bounded dataset pilot and freeze the dataset subsystem.
 3. Implement the approximately 20M PyTorch smoke model using the frozen block specification.
 4. Implement exact parameter accounting by component.
-5. Implement and test the readable GDN-2 recurrent reference.
-6. Connect the model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
-7. Validate forward pass, backward pass, generation, interruption, resume, and migration.
-8. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
-9. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking the main model implementation.
-10. Implement and train the approximately 100M hybrid and a parameter-matched all-MHA baseline.
-11. Scale only after measured quality, memory, and throughput evidence.
+5. Implement gated full attention and `SWA-512` through one shared attention module with different masks.
+6. Implement and test the readable GDN-2 recurrent reference.
+7. Connect the model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
+8. Validate forward pass, backward pass, generation, interruption, resume, and migration.
+9. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
+10. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking Plan B or Plan C.
+11. Implement the Plan C parameter-matched all-MHA baseline and keep Plan B available as the preferred operational fallback.
+12. Train the approximately 100M hybrid and matched transformer references only after smoke and T4 qualification.
+13. Scale only after measured quality, memory, and throughput evidence.
 
 ## Current open decisions
 
@@ -114,6 +118,8 @@ uv run --env-file .env python -m dataset.production ...
 - Exact gate initialization where the GDN-2 reference allows alternatives.
 - Depth-dependent residual scaling.
 - Larger-scale geometry beyond the frozen smoke and approximately 100M models.
+
+These remaining architecture details are implementation experiments, not prerequisites for starting the model package.
 
 ### Training and post-training
 
@@ -151,4 +157,5 @@ The following are frozen unless a controlled experiment later replaces them:
 - padded internal vocabulary with semantic-logit cropping;
 - initial 2,048-token context;
 - approximately 20M smoke geometry;
-- approximately 100M first substantive geometry.
+- approximately 100M first substantive geometry;
+- fallback ordering with Plan B local/global `SWA-512` before Plan C all-gated-MHA.
