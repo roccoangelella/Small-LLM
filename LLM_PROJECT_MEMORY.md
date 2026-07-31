@@ -221,7 +221,7 @@ The packer:
 - checkpoints incomplete carry state;
 - attributes original source tokens across sequence, block, and shard boundaries.
 
-Final context length remains open. The likely development value is 2,048, producing 2,049 stored IDs per sequence.
+The initial development and architecture-trial context length is fixed at 2,048, producing 2,049 stored IDs per sequence. Longer contexts may be introduced only after the base architecture and training pipeline are validated.
 
 ---
 
@@ -437,9 +437,12 @@ The initial model direction is a hybrid decoder with **Gated DeltaNet-2 as the d
 - The leading macroarchitecture is a 3:1 Gated DeltaNet-2-to-MHA pattern, but the exact ratio remains subject to controlled T4 benchmarks.
 - Use **pre-RMSNorm** throughout the decoder: normalize before every sequence-mixer branch and before every FFN branch. Start with `eps = 1e-6`.
 - Gated DeltaNet-2 layers use their causal recurrence without explicit positional encoding.
-- Every periodic MHA layer uses fixed RoPE on its query and key vectors only; values are not rotated. Start with full-head RoPE and a conventional base near 10,000 for the likely 2,048-token development context.
+- Every periodic MHA layer uses fixed RoPE on its query and key vectors only; values are not rotated. Start with full-head RoPE and a conventional base near 10,000 for the initial 2,048-token context.
 - RoPE is not applied to FFNs and is not applied inside Gated DeltaNet-2 in the first implementation. Applying RoPE to the recurrent mixer, partial RoPE, learned frequencies, and NoPE in MHA remain possible later ablations.
 - Use a dense **SwiGLU FFN with SiLU gating in every decoder block**, after both Gated DeltaNet-2 and MHA mixers. Each layer owns independent `W_gate`, `W_up`, and `W_down` parameters; FFN weights are shared across token positions within a layer but not across layers. The exact intermediate width remains open until model geometry is selected.
+- Model implementation and configuration must be geometry-scalable rather than tied to one final parameter count. Development will proceed through small smoke models and progressively larger controlled trials before any near-1B run; approximately 100M parameters is under consideration for the first substantive architecture trial but is not yet frozen.
+- Tie the input token-embedding matrix and output language-model projection at every model scale.
+- Use 2,048 tokens as the initial development and architecture-trial context; consider longer contexts only after the base model and pipeline are validated.
 - GQA remains a later optimization option if longer contexts, serving throughput, or KV-cache pressure make it worthwhile.
 
 The first architecture comparison should keep tokenizer, data, parameter budget, optimizer, and training tokens matched as closely as possible. A modern all-MHA decoder remains the conventional baseline against which the hybrid is measured.
@@ -473,8 +476,9 @@ The first architecture comparison should keep tokenizer, data, parameter budget,
 
 ### Model and training
 
-- Final parameter count, depth, width, head geometry, FFN intermediate width, and Gated DeltaNet-2-to-MHA layer ratio.
-- Exact context length; 2,048 remains the likely development value.
+- Exact first substantive trial size and final parameter target; approximately 100M is a current candidate for the first trial.
+- Final depth, width, MHA head geometry, Gated DeltaNet-2 geometry, FFN intermediate width, and Gated DeltaNet-2-to-MHA layer ratio at each scale.
+- Whether to use a final RMSNorm immediately before the tied LM head; this remains an architecture decision rather than part of the already-frozen pre-norm placement.
 - Any special tokens beyond EOD 50256.
 - Optimizer, LR schedule, initialization, global token batch, and checkpoint cadence.
 - Evaluation suite and `best` metric/direction.
@@ -482,4 +486,4 @@ The first architecture comparison should keep tokenizer, data, parameter budget,
 - Reasoning datasets, teacher model, and post-training procedure.
 - Final compute availability and release policy.
 
-The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, overlapping first-pass training strategy, Gated DeltaNet-2 as the dominant mixer, ordinary MHA in periodic full-attention layers, pre-RMSNorm placement, RoPE placement in the MHA layers, and dense SwiGLU FFNs in every decoder block are no longer open decisions.
+The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, overlapping first-pass training strategy, Gated DeltaNet-2 as the dominant mixer, ordinary MHA in periodic full-attention layers, pre-RMSNorm placement, RoPE placement in the MHA layers, dense SwiGLU FFNs in every decoder block, tied input/output embeddings, geometry-scalable model configuration, and the initial 2,048-token context are no longer open decisions.
