@@ -439,6 +439,7 @@ The initial model direction is a hybrid decoder with **Gated DeltaNet-2 as the d
 - Gated DeltaNet-2 layers use their causal recurrence without explicit positional encoding.
 - Every periodic MHA layer uses fixed RoPE on its query and key vectors only; values are not rotated. Start with full-head RoPE and a conventional base near 10,000 for the likely 2,048-token development context.
 - RoPE is not applied to FFNs and is not applied inside Gated DeltaNet-2 in the first implementation. Applying RoPE to the recurrent mixer, partial RoPE, learned frequencies, and NoPE in MHA remain possible later ablations.
+- Use a dense **SwiGLU FFN with SiLU gating in every decoder block**, after both Gated DeltaNet-2 and MHA mixers. Each layer owns independent `W_gate`, `W_up`, and `W_down` parameters; FFN weights are shared across token positions within a layer but not across layers. The exact intermediate width remains open until model geometry is selected.
 - GQA remains a later optimization option if longer contexts, serving throughput, or KV-cache pressure make it worthwhile.
 
 The first architecture comparison should keep tokenizer, data, parameter budget, optimizer, and training tokens matched as closely as possible. A modern all-MHA decoder remains the conventional baseline against which the hybrid is measured.
@@ -472,7 +473,7 @@ The first architecture comparison should keep tokenizer, data, parameter budget,
 
 ### Model and training
 
-- Final parameter count, depth, width, head geometry, and Gated DeltaNet-2-to-MHA layer ratio.
+- Final parameter count, depth, width, head geometry, FFN intermediate width, and Gated DeltaNet-2-to-MHA layer ratio.
 - Exact context length; 2,048 remains the likely development value.
 - Any special tokens beyond EOD 50256.
 - Optimizer, LR schedule, initialization, global token batch, and checkpoint cadence.
@@ -481,4 +482,4 @@ The first architecture comparison should keep tokenizer, data, parameter budget,
 - Reasoning datasets, teacher model, and post-training procedure.
 - Final compute availability and release policy.
 
-The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, overlapping first-pass training strategy, Gated DeltaNet-2 as the dominant mixer, ordinary MHA in periodic full-attention layers, pre-RMSNorm placement, and RoPE placement in the MHA layers are no longer open decisions.
+The source revision, accepted/excluded cluster policy, tokenizer, sequence stride, exact empirical-mixture derivation, continuous deficit accounting, personal Google Drive OAuth identity, Google Drive shard role, overlapping first-pass training strategy, Gated DeltaNet-2 as the dominant mixer, ordinary MHA in periodic full-attention layers, pre-RMSNorm placement, RoPE placement in the MHA layers, and dense SwiGLU FFNs in every decoder block are no longer open decisions.
