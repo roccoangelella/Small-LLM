@@ -128,3 +128,5 @@ Here, $r_t = \bar{S}_t^\top e_t$, with $e_t$ being the "erase key" $e_t = b_t \o
 - $-r_t$ removes old one. 
 
 Finally, $k_t$ is multiplied by this difference to write the correction into memory.
+
+Worth investigating in the future: GDN2 use 1D convolutions with kernel_size=4. It makes a feature map of the last token + previous 3.
