@@ -82,3 +82,73 @@ Tomorrow is successful if:
 - the model geometry has been drafted;
 - the initial model package exists with at least the dense baseline and test scaffolding started;
 - no architecture decision depends on assumptions that still need to be measured on the T4.
+
+---
+
+# Architecture implementation TODO — July 31, 2026
+
+The architecture investigation is complete enough to begin implementation. The following decisions and tasks supersede the exploratory items above where they conflict.
+
+## Frozen implementation decisions
+
+- [x] Keep PyTorch as the canonical framework for model code, autograd, training, checkpointing, and tests.
+- [x] Keep a readable PyTorch GDN-2 recurrent implementation as the correctness oracle.
+- [x] Use optimized Triton, CUDA, or library kernels only as replaceable backends behind PyTorch interfaces.
+- [x] Use full MHA rather than GQA in the initial hybrid and baseline models.
+- [x] Enable per-head QK-RMSNorm in MHA.
+- [x] Enable an elementwise sigmoid attention-output gate before the output projection.
+- [x] Use zero dropout in the initial model.
+- [x] Use no additive embedding bias, no separate LM-head bias, and no ordinary linear biases outside faithful GDN-2 exceptions.
+- [x] Use a 50,304-row internally padded tied embedding/output matrix.
+- [x] Crop output logits to the semantic 50,257 classes before loss, evaluation probabilities, and sampling.
+
+## Model package implementation
+
+- [ ] Add `ModelConfig` with geometry and architecture validation.
+- [ ] Add RMSNorm and RoPE modules with numerical tests.
+- [ ] Add the bias-free SwiGLU FFN.
+- [ ] Add gated full causal MHA with QK-RMSNorm.
+- [ ] Add a readable PyTorch GDN-2 recurrence.
+- [ ] Add short depthwise causal Q/K/V convolutions with kernel size 4.
+- [ ] Add chunkwise/recurrent state and cache interfaces.
+- [ ] Add an optimized-backend adapter without coupling model code to FLA internals.
+- [ ] Add hybrid decoder blocks and the `[GDN-2, GDN-2, GDN-2, MHA]` stack builder.
+- [ ] Add tied embeddings with aligned projection and semantic-logit cropping.
+- [ ] Add exact parameter accounting by component.
+- [ ] Add forward, backward, causality, shape, state-reset, weight-tying, and padded-vocabulary tests.
+- [ ] Add chunkwise-versus-recurrent numerical-parity tests.
+- [ ] Make the approximately 20M smoke model overfit a tiny deterministic sequence.
+
+## Initialization decision experiment
+
+- [ ] Compare a simple normal initialization against the reference GDN-2 Xavier-style initialization on a tiny model.
+- [ ] Test depth-scaled residual output projections, approximately `1 / sqrt(2L)`.
+- [ ] Preserve reference `A_log` and inverse-softplus `dt_bias` initialization in all candidates.
+- [ ] Record forward activation variance, early loss, gradient norm, overflow events, and FP16 stability.
+- [ ] Freeze the final initialization contract before the approximately 100M architecture trial.
+
+## T4 GDN-2 kernel qualification
+
+- [ ] Record `nvidia-smi --query-gpu=name,compute_cap`, CUDA, driver, PyTorch, and compiler versions on the target VPS.
+- [ ] Run the PyTorch recurrent reference on the T4 and record correctness, memory, and throughput.
+- [ ] Attempt installation and compilation of the current FLA GDN-2 backend.
+- [ ] Determine whether any failure comes from Triton's compute-capability floor, unsupported operations/layouts, or kernel configuration.
+- [ ] Benchmark forward and backward at the smoke and 100M geometries, context 2,048, microbatch 1.
+- [ ] Benchmark recurrent single-token decoding and recurrent-state memory.
+- [ ] Compare outputs and gradients against the PyTorch reference within explicit tolerances.
+- [ ] Record FP16 overflow, NaN, and loss-scaling behavior; do not assume BF16 on T4.
+
+## Possible T4 kernel side project
+
+- [ ] If upstream kernels are unavailable or inadequate, isolate the recurrence hot loops and design a compute-capability-7.5 CUDA/CUTLASS backend.
+- [ ] Keep the same PyTorch-facing API and autograd contract as the main model.
+- [ ] Build correctness tests before optimization.
+- [ ] Tune tile sizes, register pressure, shared memory, and recomputation for Turing's limits.
+- [ ] Require a meaningful measured speedup over the readable PyTorch path before splitting it into a separate repository.
+- [ ] Review the GDN-2 reference license carefully and implement from the published algorithm or permissive sources rather than copying restricted code.
+- [ ] Consider publication only after reproducible T4 benchmarks, documentation, and tests exist.
+
+## Main-project fallback
+
+- [ ] Do not let the kernel side project block Small LLM.
+- [ ] If no viable GDN-2 training backend exists on the T4, use the matched all-MHA fallback for trainer and dataset integration while continuing kernel work separately.
