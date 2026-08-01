@@ -4,88 +4,73 @@ _Last updated: 2026-08-01_
 
 ## Decision
 
-On 2026-08-01 the user approved implementing a reproducible model-hardware qualification harness under `tests/` and running it on a Google Kaggle notebook that exposes an NVIDIA T4.
+On 2026-08-01 the user approved correcting the T4 qualification harness after investigation showed that the first parity test did not reproduce the real GDN-2 recurrence contract.
 
-The executable entry point is:
+The executable entry point remains:
 
 ```bash
 python -m tests.t4_qualification
 ```
 
-The exact Kaggle commands and report interpretation are documented in `tests/README.md`.
+Exact Kaggle commands are documented in `tests/README.md`.
 
-## Purpose
+## Why the first parity test was invalid
 
-The harness answers three separate questions without changing the model architecture:
+The schema-v1 harness used unconstrained Gaussian Q/K vectors and an order-one random initial state. The actual GDN-2 layer L2-normalizes Q and K before the recurrence, starts every independent training record from a zero FP32 state, and carries a nonzero state only during segmented/cache execution.
 
-1. Does the differentiable chunkwise GDN-2 backend still match the readable recurrent oracle in FP32 and FP16?
-2. Which tested chunk size is stable and operationally best on the available T4 at the frozen 2,048-token context?
-3. Does the current PyTorch GDN-2 path qualify for smoke pretraining, or is the Plan-B `SWA-512` fallback required?
+With unnormalized keys, the delta update can become strongly expansive. The resulting synthetic recurrence reached enormous magnitudes, so small floating-point evaluation-order differences became large absolute discrepancies. The first report therefore remains valid as evidence that the model can execute on a T4 and as a rough memory/throughput measurement, but its parity failures are not valid evidence of a chunkwise algebra defect.
 
-It also supplies the first target-hardware evidence for choosing between the existing normal and Xavier initialization candidates.
+No model code was changed by this correction.
 
-## Implemented checks
+## Corrected schema-v2 parity contract
 
-### Recurrence correctness
+For chunk sizes 16, 32, and 64, and for FP32 and FP16-quantized inputs, the harness now compares the chunkwise backend against the tokenwise oracle using two profiles:
 
-For chunk sizes 16, 32, and 64, the harness compares the chunkwise backend against the tokenwise recurrent oracle for:
+1. `training_zero_state`: normalized Q/K and a zero FP32 initial state;
+2. `bounded_cache_state`: normalized Q/K and a small bounded FP32 carried state.
+
+The test compares independently:
 
 - every token output;
 - final FP32 recurrent state;
-- gradients with respect to Q, K, V, log-decay, erase gate, write gate, and initial state;
-- FP32 and FP16 input paths;
-- multiple chunks and a shorter final chunk.
+- gradients with respect to Q, K, V, log-decay, erase gate, write gate, and initial state.
 
-The default parity sequence length is 129. Correctness is tested on deliberately small recurrence tensors so the serial oracle remains a useful mathematical reference rather than dominating the full hardware benchmark with a Python token loop.
+Parity runs with CUDA autocast explicitly disabled. FP16 parity therefore means FP16-quantized recurrence inputs entering the implementation's explicit FP32 core. This isolates mathematical equivalence from mixed-precision operational behavior.
 
-### Full smoke-model benchmark
+## Full-model operational benchmark
 
-For every requested chunk size and precision, the harness constructs the frozen approximately-20M smoke model and runs actual optimizer steps with:
+The approximately-20M smoke model is still benchmarked with:
 
-- context length 2,048;
+- context 2,048;
 - microbatch 1 by default;
 - next-token cross-entropy;
 - AdamW;
-- CUDA FP16 autocast and `torch.amp.GradScaler` for FP16;
+- real CUDA FP16 autocast and `GradScaler` for FP16;
 - configurable warmup and measured steps.
 
-It records:
+This benchmark remains responsible for detecting real mixed-precision failures such as the first run's FP16 chunk-64 non-finite behavior. It records losses, global gradient norms, scale reductions, peak allocated/reserved memory, step time, throughput, OOMs, and non-finite failures.
 
-- losses and global gradient norms;
-- FP16 scale reductions/overflow events;
-- mean step time and tokens per second;
-- peak allocated and peak reserved CUDA memory;
-- OOM and non-finite failures.
+## Initialization probe correction
 
-### Initialization probe
+The schema-v1 harness always used the largest requested chunk for normal-versus-Xavier screening. Because chunk 64 failed FP16 operationally, both initializer probes failed before they could compare initialization behavior.
 
-Unless explicitly skipped, the harness runs short FP16 training probes for both existing initialization candidates:
+Schema version 2 selects the fastest FP16 chunk that first:
 
-- GPT-style normal initialization with standard deviation 0.02;
-- Xavier-uniform initialization.
+- passes every requested parity precision and both parity profiles;
+- completes the full-model FP16 benchmark with finite loss and gradients;
+- produces no scaler reduction during the measured window.
 
-Both retain the shared residual scaling, GDN-specific state initialization, RMSNorm initialization, and padded-vocabulary invariants already implemented by `model.initialization`.
-
-The default initialization probe uses a shorter 256-token context and three steps. It is a screening test, not sufficient by itself to freeze initialization. A final choice requires repeatable T4 evidence and review of early loss, gradient norms, and overflow behavior.
-
-### Plan-B reference
-
-With `--include-plan-b`, the same smoke training-step benchmark is run for the parameter-matched `SWA-512` fallback in FP16. Plan B is recommended only when no GDN-2 chunk candidate passes both recurrence parity and finite training.
+When no such chunk exists, the initialization probe is explicitly skipped instead of producing a misleading initializer failure.
 
 ## Candidate-selection rule
 
-The generated report prefers FP16 because it is the intended T4 training precision. A GDN-2 chunk size is eligible only when:
+A GDN-2 chunk is eligible only when all requested bounded parity cases pass and the corresponding full-model benchmark succeeds. Among eligible candidates, the report prefers FP16 and selects the highest measured tokens per second.
 
-- its parity checks pass in every requested precision;
-- its full smoke-model benchmark completes;
-- measured loss and gradient norm remain finite;
-- no FP16 scale reduction is observed during the short measured window.
+Plan B is labelled a `fallback_candidate` only when no GDN-2 candidate meets both correctness and operational gates. The harness never changes `ModelConfig.gdn_chunk_size` or the architecture automatically.
 
-Among eligible candidates, the report identifies the highest measured tokens-per-second result. This is labelled a `candidate`; it does not silently alter `ModelConfig.gdn_chunk_size=64`.
+## Required rerun
 
-If no GDN-2 candidate qualifies and the optional Plan-B benchmark succeeds, the report labels Plan B a `fallback_candidate`. If neither path completes, the result is `blocked`.
-
-## Full Kaggle command
+The corrected report must use a new output path, for example:
 
 ```bash
 python -m tests.t4_qualification \
@@ -97,20 +82,12 @@ python -m tests.t4_qualification \
   --warmup-steps 1 \
   --measure-steps 3 \
   --include-plan-b \
-  --output /kaggle/working/t4_qualification.json
+  --output /kaggle/working/t4_qualification_v2.json
 ```
 
-## Qualification boundary
+Until that schema-v2 report is run and reviewed, the project conclusion is limited to:
 
-The harness is now implemented, but no T4 result has been recorded yet. Therefore the current chunkwise PyTorch backend remains mathematically qualified on CPU and operationally unqualified on the target GPU until the Kaggle report is run and reviewed.
-
-This command does not yet validate:
-
-- schema-v2 dataset consumption;
-- a full trainer or learning-rate schedule;
-- joint checkpoint interruption/resume;
-- unified generation caching;
-- the approximately-100M substantive geometry;
-- an upstream fused GDN-2 kernel.
-
-Those remain later pretraining-system gates. The purpose of this harness is to decide whether the existing model path is numerically and operationally suitable enough to proceed to integrated smoke pretraining.
+- GDN-2 execution feasibility on the T4 is established;
+- the first parity failure is reclassified as a harness defect;
+- FP16 chunk-64 non-finite behavior remains real operational evidence;
+- trusted GDN-2 pretraining remains blocked pending corrected qualification.
