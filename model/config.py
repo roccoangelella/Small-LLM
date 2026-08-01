@@ -28,6 +28,7 @@ class ModelConfig:
     gdn_key_dim: int = 64
     gdn_value_dim: int = 64
     gdn_conv_kernel_size: int = 4
+    gdn_chunk_size: int = 64
     layer_pattern: tuple[LayerKind, ...] = _DEFAULT_LAYER_PATTERN
     architecture: Architecture = "gdn2_hybrid"
     rms_norm_eps: float = 1e-6
@@ -50,6 +51,7 @@ class ModelConfig:
             "gdn_key_dim": self.gdn_key_dim,
             "gdn_value_dim": self.gdn_value_dim,
             "gdn_conv_kernel_size": self.gdn_conv_kernel_size,
+            "gdn_chunk_size": self.gdn_chunk_size,
         }
         for name, value in positive_ints.items():
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -79,7 +81,6 @@ class ModelConfig:
             raise ValueError("layer_pattern must be the frozen repeating ('gdn', 'gdn', 'gdn', 'mha') pattern")
         if self.n_layers % len(normalized_pattern):
             raise ValueError("n_layers must be divisible by the layer_pattern length")
-        # Keep the frozen dataclass immutable while canonicalizing the documented GDN-2 spelling.
         object.__setattr__(self, "layer_pattern", tuple(normalized_pattern))
         if self.architecture not in {"gdn2_hybrid", "swa_hybrid", "all_mha", "gdn_v1_hybrid"}:
             raise ValueError("architecture must be gdn2_hybrid, swa_hybrid, all_mha, or gdn_v1_hybrid")
