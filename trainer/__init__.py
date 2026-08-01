@@ -1,7 +1,8 @@
 """Schema-v2 consumer, trainer, and joint-checkpoint integration."""
 
 from .config import TrainerConfig
-from .data import LiveBlockConsumer, PreparedBlockDecoder, SchemaV2ShardReader, TokenBatch
+from .data import LiveBlockConsumer, PreparedBlockDecoder, TokenBatch
+from .shards import SchemaV2ShardReader
 from .engine import (
     StepMetrics,
     TrainerEngine,
