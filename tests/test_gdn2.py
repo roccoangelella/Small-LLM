@@ -7,8 +7,10 @@ from model.gdn2 import (
     GDN2Cache,
     GatedDeltaNet2,
     OptimizedGDN2BackendAdapter,
+    PyTorchChunkwiseGDN2Backend,
     PyTorchGDN2Backend,
     assert_gdn2_backend_parity,
+    gdn2_chunkwise_reference,
     gdn2_recurrent_reference,
 )
 
@@ -27,6 +29,8 @@ def tiny_config(**overrides):
         "gdn_num_value_heads": 2,
         "gdn_key_dim": 16,
         "gdn_value_dim": 16,
+        "gdn_conv_kernel_size": 4,
+        "gdn_chunk_size": 3,
         "layer_pattern": ("gdn", "gdn", "gdn", "mha"),
     }
     values.update(overrides)
@@ -43,7 +47,65 @@ class GDN2RecurrenceTests(unittest.TestCase):
         output, state = gdn2_recurrent_reference(q, k, v, zeros, zeros, write)
         expected_state = torch.tensor([[[[3.0, 5.0], [0.0, 0.0]]]])
         self.assertTrue(torch.equal(state, expected_state))
-        self.assertTrue(torch.allclose(output, torch.tensor([[[[3.0 / 2**0.5, 5.0 / 2**0.5]]]])))
+        self.assertTrue(
+            torch.allclose(output, torch.tensor([[[[3.0 / 2**0.5, 5.0 / 2**0.5]]]]))
+        )
+
+    def test_chunkwise_outputs_states_and_gradients_match_oracle(self):
+        torch.manual_seed(1)
+        batch, sequence, heads, key_dim, value_dim = 1, 7, 2, 4, 3
+        q = torch.randn(batch, sequence, heads, key_dim)
+        k = torch.randn(batch, sequence, heads, key_dim)
+        v = torch.randn(batch, sequence, heads, value_dim)
+        log_decay = -0.05 * torch.rand(batch, sequence, heads, key_dim)
+        erase = torch.sigmoid(torch.randn(batch, sequence, heads, key_dim))
+        write = torch.sigmoid(torch.randn(batch, sequence, heads, value_dim))
+        initial_state = torch.randn(batch, heads, key_dim, value_dim)
+
+        backend = PyTorchChunkwiseGDN2Backend(chunk_size=3)
+        assert_gdn2_backend_parity(
+            backend,
+            q,
+            k,
+            v,
+            log_decay,
+            erase,
+            write,
+            initial_state,
+            atol=3e-5,
+            rtol=3e-5,
+            check_gradients=True,
+        )
+        direct_output, direct_state = gdn2_chunkwise_reference(
+            q,
+            k,
+            v,
+            log_decay,
+            erase,
+            write,
+            initial_state,
+            chunk_size=3,
+        )
+        backend_output, backend_state = backend(
+            q, k, v, log_decay, erase, write, initial_state
+        )
+        self.assertTrue(torch.equal(direct_output, backend_output))
+        self.assertTrue(torch.equal(direct_state, backend_state))
+
+    def test_chunk_size_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            PyTorchChunkwiseGDN2Backend(0)
+        q = k = v = torch.randn(1, 1, 1, 2)
+        with self.assertRaises(ValueError):
+            gdn2_chunkwise_reference(
+                q,
+                k,
+                v,
+                torch.zeros_like(q),
+                torch.zeros_like(q),
+                torch.zeros_like(v),
+                chunk_size=0,
+            )
 
     def test_adapter_without_backend_matches_reference(self):
         tensors = [torch.randn(1, 3, 1, 2) for _ in range(5)]
@@ -86,6 +148,10 @@ class GDN2LayerTests(unittest.TestCase):
         torch.manual_seed(2)
         self.module = GatedDeltaNet2(tiny_config())
 
+    def test_default_backend_uses_configured_chunk_size(self):
+        self.assertIsInstance(self.module.backend, PyTorchChunkwiseGDN2Backend)
+        self.assertEqual(self.module.backend.chunk_size, 3)
+
     def test_shape_backward_and_causality(self):
         x = torch.randn(2, 5, 32, requires_grad=True)
         output = self.module(x)
@@ -95,7 +161,14 @@ class GDN2LayerTests(unittest.TestCase):
         changed = x.detach().clone()
         changed[:, 4] += 10
         with torch.no_grad():
-            self.assertTrue(torch.allclose(self.module(x.detach())[:, :4], self.module(changed)[:, :4], atol=1e-5, rtol=1e-5))
+            self.assertTrue(
+                torch.allclose(
+                    self.module(x.detach())[:, :4],
+                    self.module(changed)[:, :4],
+                    atol=3e-5,
+                    rtol=3e-5,
+                )
+            )
 
     def test_tokenwise_and_segmented_cache_match_one_shot(self):
         x = torch.randn(1, 6, 32)
@@ -109,10 +182,23 @@ class GDN2LayerTests(unittest.TestCase):
             tokenwise = torch.cat(pieces, dim=1)
             first, cache = self.module(x[:, :2], return_cache=True)
             second, segmented_cache = self.module(x[:, 2:], cache=cache, return_cache=True)
-        self.assertTrue(torch.allclose(tokenwise, full, atol=1e-5, rtol=1e-5))
-        self.assertTrue(torch.allclose(torch.cat((first, second), dim=1), full, atol=1e-5, rtol=1e-5))
-        self.assertTrue(torch.allclose(segmented_cache.recurrent_state, full_cache.recurrent_state, atol=1e-5, rtol=1e-5))
-        self.assertTrue(torch.allclose(segmented_cache.q_history, full_cache.q_history, atol=1e-5, rtol=1e-5))
+        self.assertTrue(torch.allclose(tokenwise, full, atol=3e-5, rtol=3e-5))
+        self.assertTrue(
+            torch.allclose(torch.cat((first, second), dim=1), full, atol=3e-5, rtol=3e-5)
+        )
+        self.assertTrue(
+            torch.allclose(
+                segmented_cache.recurrent_state,
+                full_cache.recurrent_state,
+                atol=3e-5,
+                rtol=3e-5,
+            )
+        )
+        self.assertTrue(
+            torch.allclose(
+                segmented_cache.q_history, full_cache.q_history, atol=1e-5, rtol=1e-5
+            )
+        )
 
     def test_absent_cache_resets_state(self):
         x = torch.randn(1, 3, 32)
