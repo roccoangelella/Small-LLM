@@ -40,6 +40,8 @@ Purpose: validate implementation, kernels, data flow, backward pass, generation,
 | GDN value heads | 4 |
 | GDN key dimension per head | 64 |
 | GDN value dimension per head | 64 |
+| GDN short-convolution kernel | 4 |
+| GDN chunk size | 64 |
 | Tied embeddings | yes |
 | Final RMSNorm | yes |
 
@@ -75,12 +77,13 @@ Purpose: first real comparison of the hybrid architecture against matched transf
 | GDN key dimension per head | 64 |
 | GDN value dimension per head | 64 |
 | GDN short-convolution kernel | 4 |
+| GDN chunk size | 64 |
 | Tied embeddings | yes |
 | Final RMSNorm | yes |
 | Semantic vocabulary | 50,257 |
 | Padded vocabulary | 50,304 |
 
-The source of truth is the implemented model's exact parameter counter, split by embeddings, GDN-2 mixers, MHA mixers, FFNs, norms, and other parameters.
+The source of truth is the implemented model's exact parameter counter, split by embeddings, GDN-2 mixers, MHA mixers, FFNs, norms, and other parameters. Chunk size changes execution geometry and activation memory but does not change learned parameter count.
 
 ## Implementation-verified substantive parameter counts
 
@@ -153,6 +156,8 @@ The frozen substantive residual geometry is exactly:
 512 = 8 × 64
 ```
 
+The GDN-2 chunk size 64 gives each chunk a 64×64 triangular interaction system and dense intra-chunk products. This matches the reference algorithm's natural tile size, but the optimal size on a T4 remains a benchmark question. A shorter final chunk is handled directly.
+
 The matched transformer width `1603` is selected for parameter equality rather than tile alignment. Before a large transformer-reference run, benchmark it against a nearby aligned width such as 1,600; changing to the aligned width would be a documented compute-efficiency variant, not the default matched comparison.
 
 ## SwiGLU geometry
@@ -179,15 +184,19 @@ At the substantive hybrid geometry:
 
 The two expanded branches are multiplied elementwise; they are not concatenated.
 
-## GDN-2 recurrent state geometry
+## GDN-2 recurrent and chunk geometry
 
-With 8 heads and 64-dimensional keys and values, each GDN-2 layer maintains a recurrent matrix state with approximately:
+With 8 heads and 64-dimensional keys and values, each GDN-2 layer maintains a recurrent matrix state with:
 
 ```text
 8 × 64 × 64 = 32,768 state values per active sequence
 ```
 
-This state is independent of context length during recurrent decoding. Efficient training still requires a chunkwise or otherwise parallel backend that stores the activations needed for backpropagation.
+This state is independent of context length during recurrent decoding.
+
+For context 2,048 and chunk size 64, the chunkwise path advances through 32 chunks. The current PyTorch implementation is sequential across those 32 chunk boundaries and parallel within each chunk through cumulative sums, triangular solves, and dense matrix products. Activation memory also includes per-chunk token tensors and 64×64 interaction matrices required by autograd.
+
+The exact peak memory depends on batch size, dtype, PyTorch autograd retention, and backend fusion, so it must be measured rather than inferred from state size alone.
 
 ## Benchmark contract
 
@@ -197,8 +206,11 @@ Before accepting a larger scale, measure on the target T4:
 - peak training memory at context 2,048;
 - maximum stable microbatch;
 - tokens per second;
-- forward and backward kernel time;
+- recurrent-oracle versus chunkwise output, final-state, and gradient parity;
+- forward and backward time for chunk sizes such as 16, 32, and 64;
+- FP16 overflow, NaN, and loss-scaling behavior;
 - GDN recurrent-state memory;
+- GDN chunk activation memory;
 - MHA activation memory;
 - checkpoint size and save/load time;
 - matched loss curves against Plan B and Plan C.
