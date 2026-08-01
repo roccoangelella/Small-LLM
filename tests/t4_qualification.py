@@ -1,9 +1,12 @@
 """Kaggle/T4 qualification CLI for the Small LLM model path.
 
-This is intentionally a hardware acceptance harness rather than an ordinary
-unit test. It checks GDN-2 mathematical parity on small tensors, benchmarks
-full smoke-model training steps at the frozen 2,048-token context, probes both
-candidate initializers, and writes a machine-readable JSON report.
+The harness separates two questions:
+
+* mathematical parity on bounded, model-like recurrence inputs; and
+* operational training behavior under CUDA FP16 autocast at context 2,048.
+
+The first distinction matters because pathological synthetic recurrence inputs
+can explode even when two evaluation orders implement the same equations.
 """
 
 from __future__ import annotations
@@ -26,13 +29,23 @@ from torch import Tensor
 from torch.nn import functional as F
 
 from model.config import ModelConfig
-from model.gdn2 import PyTorchChunkwiseGDN2Backend, assert_gdn2_backend_parity
+from model.gdn2 import PyTorchChunkwiseGDN2Backend, gdn2_recurrent_reference
 from model.initialization import initialize_model
 from model.model import SmallLLM
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 DEFAULT_CHUNK_SIZES = (16, 32, 64)
 DEFAULT_PRECISIONS = ("fp32", "fp16")
+PARITY_PROFILES = ("training_zero_state", "bounded_cache_state")
+GRADIENT_NAMES = (
+    "q",
+    "k",
+    "v",
+    "log_decay",
+    "erase_gate",
+    "write_gate",
+    "initial_state",
+)
 
 
 def _positive_int(value: str) -> int:
@@ -71,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         choices=DEFAULT_PRECISIONS,
         default=list(DEFAULT_PRECISIONS),
-        help="Precisions to test.",
+        help="Input precisions for recurrence parity and training benchmark precisions.",
     )
     parser.add_argument(
         "--sequence-length",
@@ -114,6 +127,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("warmup_steps must be non-negative")
     if len(set(args.chunk_sizes)) != len(args.chunk_sizes):
         raise ValueError("chunk_sizes must not contain duplicates")
+    if len(set(args.precisions)) != len(args.precisions):
+        raise ValueError("precisions must not contain duplicates")
     if args.sequence_length < 2:
         raise ValueError("sequence_length must be at least 2")
     if args.parity_sequence_length < 2:
@@ -179,26 +194,104 @@ def _parity_tolerances(precision: str) -> dict[str, float]:
 
 
 def _make_parity_inputs(
-    *, device: torch.device, precision: str, sequence_length: int, seed: int
+    *,
+    device: torch.device,
+    precision: str,
+    sequence_length: int,
+    seed: int,
+    profile: str,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Create bounded recurrence inputs matching the layer's operating contract.
+
+    The real layer L2-normalizes Q and K before the recurrence, starts an
+    independent training record from a zero state, and carries an FP32 state
+    only for segmented/cache use. The previous harness used unconstrained
+    Gaussian Q/K and an order-one random state, which can make the delta
+    recurrence explode and turn harmless evaluation-order differences into
+    enormous absolute errors.
+    """
+
+    if profile not in PARITY_PROFILES:
+        raise ValueError(f"unsupported parity profile: {profile}")
     dtype = _precision_dtype(precision)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
     shape = (1, sequence_length, 2, 16)
-    q = torch.randn(shape, generator=generator, device=device, dtype=torch.float32).to(dtype)
-    k = torch.randn(shape, generator=generator, device=device, dtype=torch.float32).to(dtype)
-    v = torch.randn(shape, generator=generator, device=device, dtype=torch.float32).to(dtype)
-    log_decay = (-0.05 * torch.rand(shape, generator=generator, device=device)).to(dtype)
+
+    q_float = torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
+    k_float = torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
+    q = F.normalize(q_float, dim=-1, eps=1e-6).to(dtype)
+    k = F.normalize(k_float, dim=-1, eps=1e-6).to(dtype)
+    v = F.silu(
+        0.5 * torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
+    ).to(dtype)
+    log_decay = -(
+        0.001
+        + 0.049 * torch.rand(shape, generator=generator, device=device, dtype=torch.float32)
+    ).to(dtype)
     erase = torch.sigmoid(
         torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
     ).to(dtype)
     write = torch.sigmoid(
         torch.randn(shape, generator=generator, device=device, dtype=torch.float32)
     ).to(dtype)
-    initial_state = torch.randn(
-        (1, 2, 16, 16), generator=generator, device=device, dtype=torch.float32
-    )
+
+    state_shape = (1, 2, 16, 16)
+    if profile == "training_zero_state":
+        initial_state = torch.zeros(state_shape, device=device, dtype=torch.float32)
+    else:
+        initial_state = 0.05 * torch.randn(
+            state_shape, generator=generator, device=device, dtype=torch.float32
+        )
     return q, k, v, log_decay, erase, write, initial_state
+
+
+def _tensor_comparison(
+    candidate: Tensor,
+    reference: Tensor,
+    *,
+    atol: float,
+    rtol: float,
+) -> dict[str, Any]:
+    candidate_float = candidate.detach().float()
+    reference_float = reference.detach().float()
+    finite = bool(
+        torch.isfinite(candidate_float).all().item()
+        and torch.isfinite(reference_float).all().item()
+    )
+    if not finite:
+        return {
+            "status": "fail",
+            "finite": False,
+            "mismatched_elements": candidate.numel(),
+            "total_elements": candidate.numel(),
+            "max_abs_error": None,
+            "max_relative_error": None,
+        }
+
+    absolute = (candidate_float - reference_float).abs()
+    scale = torch.maximum(candidate_float.abs(), reference_float.abs()).clamp_min(1e-12)
+    relative = absolute / scale
+    close_mask = torch.isclose(candidate_float, reference_float, atol=atol, rtol=rtol)
+    mismatched = int((~close_mask).sum().item())
+    return {
+        "status": "pass" if mismatched == 0 else "fail",
+        "finite": True,
+        "mismatched_elements": mismatched,
+        "total_elements": candidate.numel(),
+        "max_abs_error": float(absolute.max().item()) if absolute.numel() else 0.0,
+        "max_relative_error": float(relative.max().item()) if relative.numel() else 0.0,
+    }
+
+
+def _gradient_probe_loss(output: Tensor, state: Tensor) -> Tensor:
+    return output.float().square().mean() + state.float().square().mean()
+
+
+def _parity_execution_mode(precision: str) -> str:
+    if precision == "fp16":
+        return "fp16_inputs_with_explicit_fp32_recurrence_core"
+    return "fp32_inputs_with_explicit_fp32_recurrence_core"
 
 
 def run_parity_case(
@@ -208,39 +301,98 @@ def run_parity_case(
     chunk_size: int,
     sequence_length: int,
     seed: int,
+    profile: str,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     tolerances = _parity_tolerances(precision)
+    base = {
+        "precision": precision,
+        "execution_mode": _parity_execution_mode(precision),
+        "chunk_size": chunk_size,
+        "sequence_length": sequence_length,
+        "profile": profile,
+        "tolerances": tolerances,
+    }
     try:
         tensors = _make_parity_inputs(
             device=device,
             precision=precision,
             sequence_length=sequence_length,
             seed=seed,
+            profile=profile,
         )
-        assert_gdn2_backend_parity(
-            PyTorchChunkwiseGDN2Backend(chunk_size),
-            *tensors,
-            check_gradients=True,
-            **tolerances,
+        source_tensors = tensors[:-1]
+        initial_state = tensors[-1]
+        backend = PyTorchChunkwiseGDN2Backend(chunk_size)
+
+        # Mathematical parity is tested outside CUDA autocast. FP16 here means
+        # quantized model inputs entering the recurrence's explicit FP32 core.
+        with torch.autocast(device_type="cuda", enabled=False):
+            reference_output, reference_state = gdn2_recurrent_reference(*tensors)
+            candidate_output, candidate_state = backend(*tensors)
+
+        output_result = _tensor_comparison(
+            candidate_output,
+            reference_output,
+            atol=tolerances["atol"],
+            rtol=tolerances["rtol"],
         )
+        state_result = _tensor_comparison(
+            candidate_state,
+            reference_state,
+            atol=tolerances["atol"],
+            rtol=tolerances["rtol"],
+        )
+
+        reference_inputs = [tensor.detach().clone().requires_grad_(True) for tensor in source_tensors]
+        candidate_inputs = [tensor.detach().clone().requires_grad_(True) for tensor in source_tensors]
+        reference_initial = initial_state.detach().clone().requires_grad_(True)
+        candidate_initial = initial_state.detach().clone().requires_grad_(True)
+        with torch.autocast(device_type="cuda", enabled=False):
+            ref_output, ref_state = gdn2_recurrent_reference(*reference_inputs, reference_initial)
+            cand_output, cand_state = backend(*candidate_inputs, candidate_initial)
+            reference_gradients = torch.autograd.grad(
+                _gradient_probe_loss(ref_output, ref_state),
+                reference_inputs + [reference_initial],
+            )
+            candidate_gradients = torch.autograd.grad(
+                _gradient_probe_loss(cand_output, cand_state),
+                candidate_inputs + [candidate_initial],
+            )
+
+        gradient_results = {
+            name: _tensor_comparison(
+                candidate_gradient,
+                reference_gradient,
+                atol=tolerances["gradient_atol"],
+                rtol=tolerances["gradient_rtol"],
+            )
+            for name, candidate_gradient, reference_gradient in zip(
+                GRADIENT_NAMES,
+                candidate_gradients,
+                reference_gradients,
+                strict=True,
+            )
+        }
+        status = "pass"
+        if output_result["status"] != "pass" or state_result["status"] != "pass":
+            status = "fail"
+        if any(result["status"] != "pass" for result in gradient_results.values()):
+            status = "fail"
         torch.cuda.synchronize(device)
         return {
-            "status": "pass",
-            "precision": precision,
-            "chunk_size": chunk_size,
-            "sequence_length": sequence_length,
-            "tolerances": tolerances,
+            **base,
+            "status": status,
             "elapsed_seconds": time.perf_counter() - started,
+            "output": output_result,
+            "final_state": state_result,
+            "gradients": gradient_results,
         }
     except Exception as exc:
         torch.cuda.synchronize(device)
         return {
+            **base,
             "status": "fail",
-            "precision": precision,
-            "chunk_size": chunk_size,
-            "sequence_length": sequence_length,
-            "tolerances": tolerances,
             "elapsed_seconds": time.perf_counter() - started,
             "error_type": type(exc).__name__,
             "error": str(exc),
@@ -284,15 +436,13 @@ def _build_model(
     device: torch.device,
     seed: int,
 ) -> SmallLLM:
-    overrides: dict[str, Any] = {
-        "architecture": architecture,
-        "gdn_chunk_size": chunk_size,
-        "max_seq_len": sequence_length,
-    }
-    if architecture == "swa_hybrid":
-        overrides["attention_window"] = 512
     torch.manual_seed(seed)
-    model = SmallLLM(ModelConfig.smoke(**overrides)).to(device)
+    config = ModelConfig.smoke(
+        architecture=architecture,
+        max_seq_len=sequence_length,
+        gdn_chunk_size=chunk_size,
+    )
+    model = SmallLLM(config).to(device)
     initialize_model(model, initializer)
     model.train()
     return model
@@ -450,32 +600,80 @@ def benchmark_model(
         torch.cuda.empty_cache()
 
 
+def _parity_group_statuses(
+    parity_results: Sequence[dict[str, Any]],
+) -> dict[tuple[int, str], list[str]]:
+    grouped: dict[tuple[int, str], list[str]] = {}
+    for result in parity_results:
+        chunk_size = result.get("chunk_size")
+        precision = result.get("precision")
+        if not isinstance(chunk_size, int) or not isinstance(precision, str):
+            continue
+        grouped.setdefault((chunk_size, precision), []).append(str(result.get("status")))
+    return grouped
+
+
+def fully_qualified_chunks(
+    parity_results: Sequence[dict[str, Any]],
+    requested_precisions: Iterable[str],
+) -> set[int]:
+    requested = tuple(requested_precisions)
+    grouped = _parity_group_statuses(parity_results)
+    chunks = {
+        result.get("chunk_size")
+        for result in parity_results
+        if isinstance(result.get("chunk_size"), int)
+    }
+    qualified: set[int] = set()
+    for chunk in chunks:
+        if all(
+            (chunk, precision) in grouped
+            and len(grouped[(chunk, precision)]) == len(PARITY_PROFILES)
+            and all(status == "pass" for status in grouped[(chunk, precision)])
+            for precision in requested
+        ):
+            qualified.add(chunk)
+    return qualified
+
+
+def choose_initialization_chunk(
+    parity_results: Sequence[dict[str, Any]],
+    benchmarks: Sequence[dict[str, Any]],
+    requested_precisions: Iterable[str],
+) -> int | None:
+    requested = tuple(requested_precisions)
+    if "fp16" not in requested:
+        return None
+    qualified = fully_qualified_chunks(parity_results, requested)
+    candidates = [
+        result
+        for result in benchmarks
+        if result.get("architecture") == "gdn2_hybrid"
+        and result.get("precision") == "fp16"
+        and result.get("status") == "pass"
+        and result.get("chunk_size") in qualified
+    ]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda item: float(item["tokens_per_second"]))
+    return int(best["chunk_size"])
+
+
 def choose_recommendation(
     parity_results: Sequence[dict[str, Any]],
     benchmarks: Sequence[dict[str, Any]],
     requested_precisions: Iterable[str],
 ) -> dict[str, Any]:
     requested = tuple(requested_precisions)
-    precision_order = [p for p in ("fp16", "fp32") if p in set(requested)]
-    parity_pass = {
-        (result.get("chunk_size"), result.get("precision"))
-        for result in parity_results
-        if result.get("status") == "pass"
-    }
-    fully_qualified_chunks = {
-        result.get("chunk_size")
-        for result in parity_results
-        if all((result.get("chunk_size"), precision) in parity_pass for precision in requested)
-    }
-    candidates = []
-    for result in benchmarks:
-        if result.get("architecture") != "gdn2_hybrid" or result.get("status") != "pass":
-            continue
-        chunk_size = result.get("chunk_size")
-        precision = result.get("precision")
-        if chunk_size not in fully_qualified_chunks or (chunk_size, precision) not in parity_pass:
-            continue
-        candidates.append(result)
+    precision_order = [precision for precision in ("fp16", "fp32") if precision in requested]
+    qualified = fully_qualified_chunks(parity_results, requested)
+    candidates = [
+        result
+        for result in benchmarks
+        if result.get("architecture") == "gdn2_hybrid"
+        and result.get("status") == "pass"
+        and result.get("chunk_size") in qualified
+    ]
 
     for precision in precision_order:
         matching = [result for result in candidates if result.get("precision") == precision]
@@ -488,7 +686,7 @@ def choose_recommendation(
                 "chunk_size": best["chunk_size"],
                 "precision": precision,
                 "tokens_per_second": best["tokens_per_second"],
-                "reason": "Fastest parity-qualified finite smoke-model result in the preferred precision.",
+                "reason": "Fastest bounded-parity-qualified finite smoke-model result in the preferred precision.",
             }
 
     plan_b = [
@@ -505,7 +703,7 @@ def choose_recommendation(
             "chunk_size": None,
             "precision": best["precision"],
             "tokens_per_second": best["tokens_per_second"],
-            "reason": "No GDN-2 chunk candidate passed both parity and training; Plan B ran successfully.",
+            "reason": "No GDN-2 chunk passed bounded parity and training; Plan B ran successfully.",
         }
     return {
         "status": "blocked",
@@ -513,7 +711,7 @@ def choose_recommendation(
         "backend": None,
         "chunk_size": None,
         "precision": None,
-        "reason": "No parity-qualified finite training candidate completed.",
+        "reason": "No bounded-parity-qualified finite training candidate completed.",
     }
 
 
@@ -539,15 +737,17 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     parity_results = []
     for precision in args.precisions:
         for chunk_size in args.chunk_sizes:
-            parity_results.append(
-                run_parity_case(
-                    device=device,
-                    precision=precision,
-                    chunk_size=chunk_size,
-                    sequence_length=args.parity_sequence_length,
-                    seed=args.seed,
+            for profile_index, profile in enumerate(PARITY_PROFILES):
+                parity_results.append(
+                    run_parity_case(
+                        device=device,
+                        precision=precision,
+                        chunk_size=chunk_size,
+                        sequence_length=args.parity_sequence_length,
+                        seed=args.seed + profile_index,
+                        profile=profile,
+                    )
                 )
-            )
 
     benchmarks = []
     for precision in args.precisions:
@@ -583,24 +783,36 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             )
         )
 
-    initialization_probe = []
+    initialization_probe: list[dict[str, Any]] = []
+    selected_initialization_chunk = None
     if not args.skip_initialization_probe:
-        probe_length = min(args.initialization_sequence_length, args.sequence_length)
-        for initializer in ("normal", "xavier"):
+        selected_initialization_chunk = choose_initialization_chunk(
+            parity_results, benchmarks, args.precisions
+        )
+        if selected_initialization_chunk is None:
             initialization_probe.append(
-                benchmark_model(
-                    device=device,
-                    architecture="gdn2_hybrid",
-                    chunk_size=max(args.chunk_sizes),
-                    precision="fp16",
-                    initializer=initializer,
-                    sequence_length=probe_length,
-                    batch_size=args.batch_size,
-                    warmup_steps=0,
-                    measure_steps=args.initialization_steps,
-                    seed=args.seed,
-                )
+                {
+                    "status": "skipped",
+                    "reason": "No FP16 GDN-2 chunk passed every requested bounded parity profile and its full-model benchmark.",
+                }
             )
+        else:
+            probe_length = min(args.initialization_sequence_length, args.sequence_length)
+            for initializer in ("normal", "xavier"):
+                initialization_probe.append(
+                    benchmark_model(
+                        device=device,
+                        architecture="gdn2_hybrid",
+                        chunk_size=selected_initialization_chunk,
+                        precision="fp16",
+                        initializer=initializer,
+                        sequence_length=probe_length,
+                        batch_size=args.batch_size,
+                        warmup_steps=0,
+                        measure_steps=args.initialization_steps,
+                        seed=args.seed,
+                    )
+                )
 
     recommendation = choose_recommendation(parity_results, benchmarks, args.precisions)
     report = {
@@ -609,16 +821,28 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "arguments": {
             key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()
         },
+        "parity_contract": {
+            "profiles": list(PARITY_PROFILES),
+            "qk_normalized": True,
+            "training_initial_state": "zero_fp32",
+            "cache_initial_state": "bounded_random_fp32_scale_0.05",
+            "autocast_disabled": True,
+            "fp16_meaning": "FP16-quantized recurrence inputs with the explicit FP32 recurrence core",
+        },
         "parity": parity_results,
         "benchmarks": benchmarks,
+        "initialization_probe_chunk_size": selected_initialization_chunk,
         "initialization_probe": initialization_probe,
         "recommendation": recommendation,
         "notes": [
-            "A candidate result is not an automatic architecture or configuration change.",
-            "Review repeatability, losses, gradient norms, overflow counts, memory, and throughput before freezing a choice.",
+            "The first schema-v1 report used unnormalized Gaussian Q/K and an order-one random state; do not use its parity failures as mathematical evidence.",
+            "Full-model FP16 benchmarks still run under CUDA autocast and remain the operational stability test.",
+            "A candidate result is evidence for review, not an automatic architecture or configuration change.",
         ],
     }
-    parity_ok = all(result["status"] == "pass" for result in parity_results)
+    parity_ok = bool(parity_results) and all(
+        result.get("status") == "pass" for result in parity_results
+    )
     exit_code = 0 if parity_ok and recommendation["status"] != "blocked" else 1
     return report, exit_code
 
