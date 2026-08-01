@@ -4,9 +4,17 @@ _Last updated: 2026-08-01_
 
 ## Current phase
 
-The dataset software, model reference package, corrected T4 qualification harness, and first single-device training system are code-complete and CPU-tested. The first T4 run proved GDN-2 execution feasibility and exposed a real FP16 chunk-64 operational failure, but its recurrent/chunkwise parity conclusion was invalidated by unrealistic test inputs. The project is in **correctness and operational qualification**: rerun the corrected model-like parity test, approve the exact mixture, pass the authenticated bounded dataset pilot, and validate trainer interruption/resume.
+The dataset software, model reference package, corrected T4 qualification harness, and first single-device training system are code-complete and CPU-tested.
 
-The complete 90B dataset build and approximately-100M architecture comparison are not authorized yet.
+The corrected schema-v2 T4 run has now passed every recurrent-versus-chunkwise mathematical parity case. The project is no longer blocked by a demonstrated GDN-2 logic mismatch. The current model-side work is **integrated and operational qualification**:
+
+- use the parity-qualified FP16 chunk-32 candidate for bounded T4 training experiments;
+- keep FP16 chunk 64 unqualified because it still produces non-finite values under full-model autocast;
+- use normal initialization for the next bounded FP16 smoke run, while keeping the final initialization policy formally open;
+- qualify schema-v2 trainer, checkpoint/resume, and longer-run stability;
+- address the large throughput gap between ordinary-PyTorch GDN-2 and Plan B.
+
+The complete 90B dataset build and approximately-100M architecture comparison remain unauthorized.
 
 ## Completed foundations
 
@@ -26,7 +34,7 @@ PR #2, merged at `4f7822d128b6b4e563efffd4a197642403a743c3`, added the productio
 - configuration, schema, policy, weight, and source drift rejection;
 - locking, disk preflight, retry policy, orphan cleanup, and empty-VPS restore primitives.
 
-The dataset subsystem remains frozen except for defects revealed by operational acceptance testing and narrow compatibility surfaces needed by the trainer.
+The dataset subsystem remains frozen except for defects revealed by operational acceptance testing and narrow trainer compatibility surfaces.
 
 ### Exact-mixture calibration
 
@@ -38,28 +46,52 @@ PR #4, merged at `cc8d551b76a0478664d78ccee77414694abdd29b`, added installed-app
 
 ### Model architecture and reference package
 
-The initial family is frozen as a dense decoder-only hybrid with dominant GDN-2, periodic full MHA, a `[GDN-2, GDN-2, GDN-2, MHA]` pattern, sequential pre-RMSNorm blocks, final RMSNorm, MHA-only RoPE, MHA QK-RMSNorm and output gating, dense SwiGLU, zero dropout, tied padded embeddings, semantic-logit cropping, and 2,048-token context.
+The initial family remains frozen as a dense decoder-only hybrid with dominant GDN-2, periodic full MHA, a `[GDN-2, GDN-2, GDN-2, MHA]` pattern, sequential pre-RMSNorm blocks, final RMSNorm, MHA-only RoPE, MHA QK-RMSNorm and output gating, dense SwiGLU, zero dropout, tied padded embeddings, semantic-logit cropping, and 2,048-token context.
 
 The PyTorch package contains:
 
 - scalable approximately-20M and approximately-100M geometry;
 - a readable recurrent GDN-2 oracle;
 - a differentiable FP32-internal WY-style chunkwise GDN-2 backend;
-- default chunk size 64 with shorter final chunks;
+- configurable chunk size with a frozen architecture default of 64;
 - gated full MHA and `SWA-512`;
 - primary, Plan-B, and Plan-C assembly;
-- tie-aware parameter accounting and explicit optimizer decay exclusions;
+- tie-aware parameter accounting and optimizer decay exclusions;
 - initialization candidates and CPU numerical tests.
 
 The substantive hybrid has 101,252,280 parameters at `d_ff=1408`. Plan B and Plan C each have 101,237,760 parameters at matched `d_ff=1603`.
 
-### T4 qualification harness
+### Corrected T4 GDN-2 qualification
 
-The corrected Kaggle/T4 harness separates mathematical parity from operational mixed-precision behavior.
+The schema-v2 Kaggle run used a Tesla T4, PyTorch 2.10.0 with CUDA 12.8, context 2,048, and microbatch 1.
 
-Parity now uses L2-normalized Q/K and two model-relevant FP32-state profiles: zero state for independent training records and a small bounded state for carried-state/cache behavior. It compares token outputs, final state, and named gradients outside CUDA autocast for FP32 and FP16-quantized inputs. The schema-v1 harness used unnormalized Gaussian Q/K and an order-one random state; its first parity failures are therefore reclassified as a test-harness defect rather than evidence of a GDN-2 algebra defect.
+Mathematical parity passed in all 12 cases:
 
-The full-model benchmark remains unchanged in purpose: it runs real context-2,048 optimizer steps under CUDA FP16 autocast, measures throughput and memory, and catches operational failures. The first run validly established that FP32 chunks 16/32/64 and FP16 chunks 16/32 can execute short smoke steps, while FP16 chunk 64 fails with non-finite values and Plan B succeeds. A corrected schema-v2 Kaggle report is now required before GDN-2 is trusted for pretraining.
+- chunk sizes 16, 32, and 64;
+- FP32 and FP16-quantized recurrence inputs;
+- zero-state training and bounded carried-state profiles;
+- token outputs, final recurrent state, and gradients for Q, K, V, log-decay, erase, write, and initial state.
+
+The earlier schema-v1 parity failure is conclusively classified as a harness-input defect. It used unnormalized Gaussian Q/K and an order-one random state, unlike the real layer contract.
+
+Full-model operational results were:
+
+- FP32 chunks 16, 32, and 64 passed;
+- FP16 chunks 16 and 32 passed;
+- FP16 chunk 64 failed with non-finite chunkwise values;
+- FP16 chunk 32 is the current qualified GDN-2 candidate at approximately 1,291 tokens/s and 2,347 MiB peak allocated memory;
+- Plan B passed at approximately 17,260 tokens/s, around 13.4 times faster than GDN-2 chunk 32 in this short ordinary-PyTorch benchmark.
+
+The current evidence therefore establishes GDN-2 correctness and T4 execution feasibility. Remaining concerns are mixed-precision chunk-64 stability and throughput, not recurrent/chunkwise algebra.
+
+### Initialization screening
+
+The corrected initializer probe used FP16 chunk 32 at context 256.
+
+- normal initialization passed with decreasing loss, finite gradients, and no overflow;
+- Xavier initialization failed with NaN gradients and three scaler reductions in three measured steps.
+
+Normal initialization is the current candidate for bounded T4 FP16 smoke work. Final initialization remains open pending repeated and integrated evidence.
 
 ### Training system
 
@@ -74,47 +106,48 @@ The `trainer/` package includes:
 - gradient clipping and bounded overflow retry;
 - token-count constant and WSD-style schedules;
 - token-weighted validation and greedy generation checks;
-- complete model/optimizer/scheduler/scaler/RNG state;
+- complete model, optimizer, scheduler, scaler, and RNG state;
 - joint checkpoint save/load at an agreed consumed block;
 - deterministic CPU interruption/resume tests;
 - a bounded `python -m trainer` CLI.
 
-This freezes the implementation boundary only. Optimizer, schedule, LR, batch, initialization, cadence, and token budget remain experiment decisions. Trusted GDN-2 CLI training remains blocked until the corrected T4 qualification passes.
+The trainer CLI still contains a safety gate and message referring to the old T4 parity defect. That code is now stale relative to the corrected result and must be revised before trusted GDN-2 integration runs. This is a consistency task, not evidence that parity remains blocked.
 
 ## Remaining operational gates
 
 ### Dataset
 
-1. Complete and inspect the exact full mixture calibration.
+1. Complete and inspect exact full mixture calibration.
 2. Approve `mixture_report.json` and the weight-file SHA-256.
-3. Finalize and run the reproducible authenticated 10M-token acceptance pilot.
-4. Interrupt/resume it with identical semantic arguments.
-5. Pass full schema-v2 verification and completed-resume idempotence.
+3. Run the reproducible authenticated 10M-token acceptance pilot.
+4. Interrupt and resume it with identical semantic arguments.
+5. Pass schema-v2 verification and completed-resume idempotence.
 6. Record throughput, retries, Drive behavior, disk use, and cleanup.
 
 ### Model and trainer
 
-1. Rerun schema-v2 T4 parity with normalized Q/K, zero-state training, and bounded carried-state profiles.
-2. Determine whether any remaining failure is mathematical, FP16/autocast-specific, or chunk-size-specific.
-3. Select a trustworthy GDN-2 chunk candidate, or use the documented fallback if correction is not practical.
-4. Qualify trainer/checkpoint plumbing on a verified schema-v2 pilot with Plan B while GDN-2 remains blocked.
-5. Intentionally interrupt and resume at a joint checkpoint.
-6. Restore into an empty environment and continue from the prefetched Drive cache window.
-7. Verify the next consumed block, counters, scaler, scheduler, and model trajectory.
-8. Record throughput, peak memory, starvation, checkpoint latency, and numerical stability.
-9. Repeat integrated qualification with corrected GDN-2 before freezing initialization or training policy.
+1. Revise the trainer CLI's obsolete parity-defect gate and wording.
+2. Run integrated approximately-20M schema-v2 training with GDN-2 chunk 32, FP16, and normal initialization.
+3. Measure longer-run loss, gradients, scaler behavior, memory, throughput, and data starvation.
+4. Intentionally interrupt and resume at a joint checkpoint.
+5. Restore into an empty environment and continue from the prefetched Drive cache window.
+6. Verify the next consumed block, counters, scaler, scheduler, RNG state, and model trajectory.
+7. Investigate FP16 chunk 64 or leave it unqualified and explicitly configure chunk 32.
+8. Attempt or implement a faster T4-compatible GDN-2 backend and require the same parity contract.
+9. Compare the qualified GDN-2 path with Plan B and Plan C under matched training conditions.
+10. Repeat initialization screening across seeds and a longer bounded run before freezing it.
 
 ## Immediate next steps
 
 1. Finish and approve mixture calibration.
 2. Pass the authenticated bounded dataset pilot.
-3. Run the corrected schema-v2 T4 harness and inspect parity plus FP16 chunk behavior.
-4. If chunk-64 FP16 still fails after parity passes, isolate autocast-sensitive operations or choose a smaller qualified chunk.
-5. Run the integrated approximately-20M schema-v2 trainer qualification with Plan B for plumbing and corrected GDN-2 for architecture validation.
-6. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
-7. Screen learning rate, global token batch, initialization, decay, clipping, and schedule on bounded runs.
-8. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after the preceding gates pass.
-9. Scale only from measured quality, memory, and throughput evidence.
+3. Align the trainer safety gate with the corrected T4 result.
+4. Run integrated smoke training with GDN-2 chunk 32 and normal initialization.
+5. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
+6. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
+7. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
+8. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
+9. Scale only from measured quality, stability, memory, and throughput evidence.
 
 ## Current open decisions
 
@@ -127,8 +160,11 @@ This freezes the implementation boundary only. Optimizer, schedule, LR, batch, i
 - remote checkpoint and dataset retention policy;
 - automatic `.env` loading.
 
-### Remaining architecture details
+### Model operations
 
+- whether to replace the frozen default chunk size 64 with the T4-qualified FP16 candidate 32;
+- whether to repair chunk-64 mixed-precision execution or simply leave it unqualified;
+- which optimized GDN-2 backend, if any, can close the throughput gap;
 - final global and gate initialization;
 - depth-dependent residual scaling;
 - larger geometries beyond the frozen smoke and approximately-100M models.
@@ -146,6 +182,6 @@ This freezes the implementation boundary only. Optimizer, schedule, LR, batch, i
 
 ## Decisions no longer open
 
-Frozen choices include the source revision and cluster policy, GPT-2 token IDs and EOD token, context+1 packing and stride, exact empirical-mixture derivation, Google Drive's durable-mirror role, overlapping first-pass preparation/training strategy after gates pass, PyTorch, the geometry-scalable model family, the GDN-2-dominant 3:1 pattern, the differentiable chunkwise backend with default chunk size 64, full MHA in attention layers, QK-RMSNorm and output gating, pre-RMSNorm/final RMSNorm, MHA-only RoPE, dense SwiGLU, zero dropout, tied padded embeddings, initial 2,048 context, smoke and substantive reference geometries, fallback ordering, and matched transformer FFN widths.
+Frozen choices include the source revision and cluster policy, GPT-2 token IDs and EOD token, context+1 packing and stride, exact empirical-mixture derivation, Google Drive's durable-mirror role, overlapping first-pass preparation/training strategy after gates pass, PyTorch, the geometry-scalable model family, the GDN-2-dominant 3:1 pattern, the differentiable chunkwise backend, full MHA in attention layers, QK-RMSNorm and output gating, pre-RMSNorm/final RMSNorm, MHA-only RoPE, dense SwiGLU, zero dropout, tied padded embeddings, initial 2,048 context, smoke and substantive reference geometries, fallback ordering, and matched transformer FFN widths.
 
-The frozen training-system contract is: schema-v2 prepared blocks are acknowledged only after complete optimizer updates, and joint checkpoints bind the exact consumed block to complete trainer and RNG state. It does not freeze the values of the training recipe.
+The frozen training-system contract remains: schema-v2 prepared blocks are acknowledged only after complete optimizer updates, and joint checkpoints bind the exact consumed block to complete trainer and RNG state. It does not freeze the training-recipe values.
