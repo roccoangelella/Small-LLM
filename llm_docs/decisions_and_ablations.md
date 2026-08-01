@@ -1,6 +1,6 @@
 # Decisions and Ablations
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-01_
 
 ## Documentation decision
 
@@ -28,6 +28,8 @@ When replacing a decision, record the old default, the new default, the reason, 
 - Treat Triton, CUDA, and external library kernels as replaceable optimized backends behind PyTorch interfaces.
 - Do not let an optimized kernel redefine the mathematical contract.
 - Require chunkwise and recurrent optimized paths to agree numerically with the reference path.
+- Treat one-shot, segmented, and tokenwise execution of the current Python recurrent loop as recurrence/cache tests, not as evidence that a parallel chunkwise training path exists.
+- Require a real chunkwise or otherwise parallel training backend, plus output and gradient parity against the reference recurrence, before accepting GDN-2 for substantive training.
 
 ## Frozen architecture defaults
 
@@ -52,7 +54,8 @@ When replacing a decision, record the old default, the new default, the reason, 
 - Crop aligned output logits to the first 50,257 classes before loss, evaluation probabilities, and sampling.
 - Initial context 2,048.
 - Approximately 20M smoke geometry.
-- Approximately 100M first substantive geometry: `d_model=512`, 20 layers, `d_ff=1408`, 8 MHA heads of dimension 64, and matching 8-head GDN key/value geometry.
+- Approximately 100M first substantive geometry: `d_model=512`, 20 layers, hybrid `d_ff=1408`, 8 MHA heads of dimension 64, and matching 8-head GDN key/value geometry.
+- Parameter-matched Plan B and Plan C transformer schedules use the same derived FFN width; at the substantive geometry both use `d_ff=1603`.
 
 ## Frozen fallback hierarchy
 
@@ -82,9 +85,9 @@ If recurrent or linear-attention training kernels are unavailable or inadequate,
 [SWA-512, SWA-512, SWA-512, gated full MHA] × N
 ```
 
-`SWA-512` is causal sliding-window attention over the current token and at most the previous 511 tokens. It uses the same MHA projections, per-head QK-RMSNorm, RoPE, elementwise sigmoid output gate, FFN, normalization, bias policy, and parameter geometry as a full-attention block; only the attention mask differs. Every fourth layer remains full causal attention, preserving periodic unrestricted retrieval.
+`SWA-512` is causal sliding-window attention over the current token and at most the previous 511 tokens. It uses the same MHA projections, per-head QK-RMSNorm, RoPE, elementwise sigmoid output gate, normalization, bias policy, and parameter geometry as a full-attention block; only the attention mask differs. Every fourth layer remains full causal attention, preserving periodic unrestricted retrieval.
 
-Plan B is the preferred operational fallback because it retains a local/global hybrid structure, requires no recurrent state or specialized linear-attention kernel, and is straightforward to implement with standard PyTorch attention primitives.
+Plan B is the preferred operational fallback because it retains a local/global hybrid structure, requires no recurrent state or specialized linear-attention kernel, and is straightforward to implement with standard PyTorch attention primitives. For controlled comparison it uses the same parameter-matching FFN rule as Plan C.
 
 ### Plan C: all-gated-MHA transformer
 
@@ -102,11 +105,23 @@ The previous ordering placed all-MHA before the sliding-window/global transforme
 
 ### Plan A.5 implementation boundary
 
-The initial package can select the Plan A.5 schedule but deliberately refuses to instantiate it: no GDN-v1 kernel or independent reference implementation has qualified on the target T4. Substituting GDN-2 under the GDN-v1 name would silently change the experiment. The shared decoder builder implements the primary schedule, Plan B `SWA-512`, and Plan C all-MHA now; Plan A.5 becomes runnable only when a separately qualified GDN-v1 backend is supplied.
+The configuration can name the Plan A.5 schedule, but the model builder refuses to instantiate it until a real GDN-v1 implementation is supplied. GDN-v1 and GDN-2 are different recurrence algorithms. Reusing the existing GDN-2 module while labeling the run “GDN-v1” would produce a runnable model whose name, experimental condition, and actual mathematics disagree. Failing loudly prevents that silent substitution. Plan A.5 becomes runnable only after a separately implemented and T4-qualified GDN-v1 backend exists.
+
+### Transformer fallback FFN matching
+
+The old implementation widened only Plan C to the closest total-parameter match and left Plan B at the hybrid's `d_ff`. On 2026-08-01 the user replaced that asymmetry: Plan B and Plan C now use the same derived transformer FFN width.
+
+The reason is structural. Both schedules replace the same number of GDN-2 mixers with gated attention mixers, and SWA-512 differs from full MHA only by its mask. Their learned mixer parameter counts are therefore identical, so there is no architecture-based reason for their FFN widths to differ. At the substantive geometry both use `d_ff=1603`, yielding 101,237,760 parameters versus 101,252,280 for the primary hybrid, a 14,520-parameter difference (about 0.014%). The hybrid remains at its frozen `d_ff=1408`.
+
+### Recurrent reference versus chunkwise training
+
+The current PyTorch GDN-2 oracle updates its matrix state sequentially for each token. Calling it once on a 2,048-token tensor still executes that serial recurrence inside Python. Splitting the same sequence into segments or single tokens and obtaining the same result proves causality, state reset, convolution-history handling, and cache correctness.
+
+It does not prove the existence of the training path described in the architecture design. A production chunkwise path reorganizes the same recurrence into GPU-friendly chunks or scans so many token operations can run concurrently while preserving exact causal state transitions and supporting efficient backward propagation. That path needs its own implementation or qualified external kernel and must be compared against the oracle for outputs, final states, and gradients. Until then, the mathematics has a readable correctness reference, but GDN-2 training throughput at context 2,048 is not qualified.
 
 ### Optional SWA-512 implementation surface
 
-The implementation work includes a 512-token sliding-window attention option because it is useful to exercise the shared attention interface. This does **not** replace the frozen initial full-causal MHA contract: smoke and substantive hybrid configurations keep unrestricted causal attention. SWA-512 is opt-in only, has no bearing on the initial comparison, and must be treated as a later controlled ablation.
+The implementation work includes a 512-token sliding-window attention option because it is useful to exercise the shared attention interface. This does **not** replace the frozen initial full-causal MHA contract: smoke and substantive hybrid configurations keep unrestricted causal attention. SWA-512 is opt-in only, has no bearing on the primary hybrid, and is the defined Plan B fallback.
 
 ### PyTorch and optimized kernels
 
@@ -136,7 +151,7 @@ Match as closely as possible:
 - tokenizer and vocabulary;
 - total parameters;
 - depth or total compute, with differences documented;
-- FFN type and width;
+- FFN type and width between Plan B and Plan C;
 - normalization;
 - QK-RMSNorm and attention output gating;
 - RoPE;
@@ -144,7 +159,7 @@ Match as closely as possible:
 - batch and optimizer setup;
 - data ordering and evaluation.
 
-The initial implementation replaces hybrid GDN-2 mixers with MHA and widens only the all-MHA baseline's SwiGLU branches to the closest integral parameter match. At the substantive geometry this is `d_ff=1603`, leaving 14,520 parameters (about 0.015%) of unavoidable integer-width difference. The frozen hybrid uses `d_ff=1408` unchanged.
+The initial implementation replaces the hybrid's GDN-2 mixers with attention and widens the transformer schedules' SwiGLU branches to the closest integral total-parameter match. At the substantive geometry Plan B and Plan C both use `d_ff=1603`, leaving 14,520 parameters (about 0.014%) of unavoidable integer-width difference. The frozen primary hybrid uses `d_ff=1408` unchanged.
 
 ## Planned controlled ablations
 
@@ -164,6 +179,7 @@ These are not defaults and should change one important variable at a time:
 - GDN short convolution disabled or resized;
 - no final RMSNorm;
 - different FFN expansion ratios;
+- an aligned transformer FFN width such as 1,600 instead of the exact-match width 1,603;
 - expanded MHA Q/K/V projection width;
 - longer contexts;
 - nonzero dropout;
@@ -180,8 +196,9 @@ The required sequence is:
 2. attempt the current FLA GDN-2 backend and record installation, compilation, correctness, and performance results;
 3. inspect whether failure is a hard Triton architecture restriction, an unsupported instruction/layout choice, or only an autotuning/configuration issue;
 4. benchmark forward, backward, chunkwise training, recurrent decoding, peak memory, and FP16 stability;
-5. if the upstream path is unavailable or poor, evaluate a T4-compatible CUDA/CUTLASS implementation with the same PyTorch API;
-6. consider publishing the T4-compatible GDN-2 kernel as a separate open-source side project only after correctness and measurable speedup are established.
+5. compare chunkwise outputs, final states, and gradients against the PyTorch recurrent oracle within explicit tolerances;
+6. if the upstream path is unavailable or poor, evaluate a T4-compatible CUDA/CUTLASS implementation with the same PyTorch API;
+7. consider publishing the T4-compatible GDN-2 kernel as a separate open-source side project only after correctness and measurable speedup are established.
 
 The main Small LLM project must not be blocked indefinitely by the kernel side project. Plan B requires no recurrent kernel and is the preferred operational fallback; Plan C remains the simplest last resort and scientific reference.
 
