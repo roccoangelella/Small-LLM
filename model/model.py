@@ -31,14 +31,15 @@ def _layer_kinds(config: ModelConfig) -> tuple[str, ...]:
     return normalized
 
 
-def _matched_all_mha_ffn_width(config: ModelConfig) -> int:
-    """Return the closest integral FFN width for the all-MHA comparison.
+def _matched_transformer_ffn_width(config: ModelConfig) -> int:
+    """Return the closest integral FFN width for transformer replacements.
 
-    Replacing each GDN-2 mixer with MHA removes parameters.  The baseline
-    widens only its SwiGLU branches to compensate; the frozen hybrid geometry
-    is never changed.  Integer matrix dimensions prevent literal equality,
-    so this minimizes the remaining difference (14,520 parameters at the
-    substantive geometry, or 0.015%).
+    Plan B and Plan C both replace every GDN-2 mixer with a gated attention
+    mixer.  Because sliding-window and full attention have identical learned
+    parameters, both transformer schedules use the same widened SwiGLU width.
+    The frozen hybrid geometry is never changed.  Integer matrix dimensions
+    prevent literal equality, so this minimizes the remaining difference
+    (14,520 parameters at the substantive geometry, or about 0.014%).
     """
 
     d_model = config.d_model
@@ -52,8 +53,8 @@ def _matched_all_mha_ffn_width(config: ModelConfig) -> int:
         + config.gdn_num_key_heads * config.gdn_key_dim
     )
     mha_per_layer = 5 * d_model * d_model + 2 * config.head_dim
-    # Plan C's selected layer kinds are already all MHA.  Its compensation
-    # therefore derives from the frozen primary 3:1 pattern it replaces.
+    # Transformer schedules contain no GDN layers, so compensation derives
+    # from the frozen primary 3:1 pattern they replace.
     replaced_layers = sum(kind == "gdn" for kind in config.layer_pattern) * (
         config.n_layers // len(config.layer_pattern)
     )
@@ -106,7 +107,10 @@ class SmallLLM(nn.Module):
         self.all_mha = bool(all_mha or config.architecture == "all_mha")
         configured_kinds = _layer_kinds(config)
         self.layer_kinds = tuple("mha" if self.all_mha else kind for kind in configured_kinds)
-        self.ffn_width = _matched_all_mha_ffn_width(config) if self.all_mha else config.d_ff
+        transformer_replacement = self.all_mha or config.architecture == "swa_hybrid"
+        self.ffn_width = (
+            _matched_transformer_ffn_width(config) if transformer_replacement else config.d_ff
+        )
 
         self.token_embedding = TiedEmbedding(config)
         blocks: list[DecoderBlock] = []
