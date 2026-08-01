@@ -4,7 +4,7 @@ _Last updated: 2026-08-01_
 
 ## Current phase
 
-The dataset software is code-complete and undergoing operational qualification. The approximately 20M model reference package is implemented and CPU-tested; trainer integration, a real chunkwise GDN-2 training path, and T4 qualification are next.
+The dataset software is code-complete and undergoing operational qualification. The approximately 20M model reference package now includes a differentiable chunkwise GDN-2 training path and is CPU-tested; trainer integration and T4 qualification are next.
 
 The complete 90B dataset build is not authorized yet. The exact mixture calibration, bounded dataset pilot, model/trainer consumer, and small end-to-end training pilot must pass first.
 
@@ -46,7 +46,9 @@ Real upload, metadata-read, download-hash, and cleanup smoke tests passed on 202
 The following are frozen for the initial model family:
 
 - PyTorch as the canonical framework, with optimized kernels behind PyTorch interfaces;
-- a readable PyTorch GDN-2 recurrence as the correctness oracle;
+- a readable tokenwise PyTorch GDN-2 recurrence as the correctness oracle;
+- a differentiable PyTorch WY-style chunkwise GDN-2 training backend;
+- initial GDN chunk size 64 with shorter final-chunk support;
 - dense decoder-only hybrid;
 - Gated DeltaNet-2 as the dominant mixer;
 - periodic full MHA layers;
@@ -66,17 +68,21 @@ The following are frozen for the initial model family:
 - Plan B and Plan C use the same derived parameter-matching FFN width;
 - Plan C all-gated-MHA remains the mandatory scientific baseline.
 
-See `model_architecture.md`, `model_geometry.md`, and `decisions_and_ablations.md` for the implementation-level specification.
+See `model_architecture.md`, `model_geometry.md`, `gdn2_chunkwise_training.md`, and `decisions_and_ablations.md` for the implementation-level specification.
 
 ### Model reference package
 
-The initial PyTorch package includes validated scalable geometry, tied padded embeddings with semantic-logit cropping, RMSNorm/RoPE/SwiGLU, gated MHA, a readable GDN-2 recurrent oracle and cache, primary/Plan-B/Plan-C assembly, tie-aware parameter accounting, and candidate initialization measurements. CPU tests cover forward/backward flow, causality, recurrent cache parity, vocabulary boundaries, accounting, fallback schedules, and a tiny deterministic overfit.
+The initial PyTorch package includes validated scalable geometry, tied padded embeddings with semantic-logit cropping, RMSNorm/RoPE/SwiGLU, gated MHA, a readable GDN-2 recurrent oracle and cache, a differentiable chunkwise GDN-2 backend, primary/Plan-B/Plan-C assembly, tie-aware parameter accounting, and candidate initialization measurements.
+
+The chunkwise backend uses cumulative FP32 log-decay, a decay-normalized asymmetric WY formulation, a small unit-lower-triangular solve, and dense intra-chunk matrix products. `GatedDeltaNet2` uses it by default with `ModelConfig.gdn_chunk_size=64`. Only chunk boundaries remain sequential.
+
+CPU tests cover forward/backward flow, causality, recurrent cache parity, vocabulary boundaries, accounting, fallback schedules, and a tiny deterministic overfit. Dedicated GDN-2 tests compare chunkwise and recurrent token outputs, final states, and gradients with respect to Q, K, V, log-decay, erase, write, and initial state. They cover multiple chunks and a partial final chunk.
 
 The primary substantive hybrid has 101,252,280 parameters at `d_ff=1408`. Plan B and Plan C both use the closest integral matched transformer width `d_ff=1603` and each has 101,237,760 parameters, 14,520 fewer than the hybrid.
 
-The current GDN-2 implementation is a serial PyTorch recurrence. One-shot, segmented, and tokenwise parity verifies the recurrence and cache contract, but does not constitute a parallel chunkwise training implementation. No optimized chunkwise backend has yet been integrated or qualified for output, state, and gradient parity. Plan A.5 also remains unavailable until a separate GDN-v1 implementation qualifies, rather than silently substituting GDN-2.
+Plan A.5 remains unavailable until a separate GDN-v1 implementation qualifies, rather than silently substituting GDN-2.
 
-Optimized kernels, T4 FP16 behavior, unified model generation caching, and trainer/checkpoint integration remain unqualified or unimplemented.
+The chunkwise mathematical and autograd path is implemented, but it is still a correctness-first ordinary-PyTorch backend. T4 FP16 behavior, peak memory, throughput, optimal chunk size, and any fused optimized kernel remain unqualified. Unified model generation caching and trainer/checkpoint integration also remain unimplemented.
 
 ## Remaining dataset operational gates
 
@@ -102,12 +108,13 @@ uv run --env-file .env python -m dataset.production ...
 2. Pass the authenticated bounded dataset pilot and freeze the dataset subsystem.
 3. Connect the smoke model and trainer to the schema-v2 consumer and joint-checkpoint interfaces.
 4. Validate model generation, interruption, resume, and migration through the trainer path.
-5. Integrate or implement a chunkwise GDN-2 training backend and test outputs, final states, and gradients against the recurrent oracle.
-6. Qualify the available GDN-2 optimized kernels on the T4 for installation, correctness, FP16 stability, memory, and throughput.
-7. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking Plan B or Plan C.
-8. Freeze initialization after the candidate measurements include target-hardware FP16 evidence.
-9. Train the approximately 100M hybrid and matched transformer references only after smoke and T4 qualification.
-10. Scale only after measured quality, memory, and throughput evidence.
+5. Run recurrent-versus-chunkwise output, final-state, and gradient parity on the T4 in FP32 and FP16.
+6. Benchmark chunk sizes 16, 32, and 64 at context 2,048 for memory, throughput, and numerical stability.
+7. Attempt and qualify available upstream optimized GDN-2 kernels on the T4.
+8. If needed, prototype a T4-compatible CUDA/CUTLASS GDN-2 backend without blocking Plan B or Plan C.
+9. Freeze initialization after the candidate measurements include target-hardware FP16 evidence.
+10. Train the approximately 100M hybrid and matched transformer references only after smoke, trainer, and T4 qualification.
+11. Scale only after measured quality, memory, and throughput evidence.
 
 ## Current open decisions
 
@@ -155,6 +162,7 @@ The following are frozen unless a controlled experiment later replaces them:
 - PyTorch as the canonical framework;
 - geometry-scalable model family;
 - GDN-2-dominant 3:1 initial pattern;
+- differentiable PyTorch GDN-2 chunkwise training path with default chunk size 64;
 - full MHA rather than GQA in initial attention layers;
 - MHA QK-RMSNorm and output gating;
 - pre-RMSNorm and final RMSNorm;
