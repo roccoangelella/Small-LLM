@@ -1,4 +1,4 @@
-"""Readable PyTorch GDN-2 recurrence and backend boundary."""
+"""Readable recurrent and differentiable chunkwise PyTorch GDN-2 backends."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def gdn2_recurrent_reference(
     write_gate: Tensor,
     initial_state: Tensor | None = None,
 ) -> tuple[Tensor, Tensor]:
-    """Run recurrence on ``[B,T,H,K]`` q/k and ``[B,T,H,V]`` v tensors."""
+    """Run the tokenwise oracle on ``[B,T,H,*]`` tensors."""
 
     _, _, _, value_dim = _check_recurrence_inputs(
         q, k, v, log_decay, erase_gate, write_gate, initial_state
@@ -103,6 +103,114 @@ def gdn2_recurrent_reference(
     return output, state
 
 
+def gdn2_chunkwise_reference(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    log_decay: Tensor,
+    erase_gate: Tensor,
+    write_gate: Tensor,
+    initial_state: Tensor | None = None,
+    *,
+    chunk_size: int = 64,
+) -> tuple[Tensor, Tensor]:
+    """Run a differentiable WY-style chunkwise GDN-2 training path.
+
+    The sequence is recurrent only across chunks. Inside each chunk, the
+    decay-normalized asymmetric delta recurrence is evaluated with cumulative
+    sums, a small unit-lower-triangular solve, and dense matrix products. All
+    arithmetic that advances the state or forms cumulative decay is FP32; the
+    token output is cast back to the query dtype.
+    """
+
+    batch, sequence, heads, value_dim = _check_recurrence_inputs(
+        q, k, v, log_decay, erase_gate, write_gate, initial_state
+    )
+    if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+        raise ValueError(f"chunk_size must be a positive integer, got {chunk_size!r}")
+    key_dim = q.shape[-1]
+    state = (
+        initial_state.float()
+        if initial_state is not None
+        else torch.zeros(batch, heads, key_dim, value_dim, device=q.device, dtype=torch.float32)
+    )
+    if sequence == 0:
+        return q.new_empty((batch, 0, heads, value_dim)), state
+
+    q_float = q.float()
+    k_float = k.float()
+    v_float = v.float()
+    log_decay_float = log_decay.float()
+    erase_float = erase_gate.float()
+    write_float = write_gate.float()
+    scale = 1.0 / math.sqrt(key_dim)
+    outputs: list[Tensor] = []
+
+    for start in range(0, sequence, chunk_size):
+        end = min(start + chunk_size, sequence)
+        current_size = end - start
+
+        q_chunk = q_float[:, start:end].transpose(1, 2)
+        k_chunk = k_float[:, start:end].transpose(1, 2)
+        e_chunk = (erase_float[:, start:end] * k_float[:, start:end]).transpose(1, 2)
+        z_chunk = (write_float[:, start:end] * v_float[:, start:end]).transpose(1, 2)
+        cumulative_log_decay = torch.cumsum(
+            log_decay_float[:, start:end].transpose(1, 2), dim=2
+        )
+
+        # Factor exp(G_r - G_s) around a per-channel midpoint. This avoids
+        # explicitly materializing exp(-G) and reduces overflow risk while
+        # preserving the exact pairwise decay ratios.
+        decay_max = cumulative_log_decay.amax(dim=2, keepdim=True)
+        decay_min = cumulative_log_decay.amin(dim=2, keepdim=True)
+        decay_center = 0.5 * (decay_max + decay_min)
+        left_decay = torch.exp(cumulative_log_decay - decay_center)
+        right_decay = torch.exp(decay_center - cumulative_log_decay)
+        centered_erase = left_decay * e_chunk
+        centered_key = right_decay * k_chunk
+
+        strictly_lower = torch.tril(
+            centered_erase @ centered_key.transpose(-1, -2), diagonal=-1
+        )
+        identity = torch.eye(
+            current_size, device=q.device, dtype=torch.float32
+        ).view(1, 1, current_size, current_size).expand(
+            batch, heads, current_size, current_size
+        )
+        wy_inverse = torch.linalg.solve_triangular(
+            identity + strictly_lower,
+            identity,
+            upper=False,
+            unitriangular=True,
+        )
+
+        center_scale = torch.exp(decay_center)
+        erase_aux = (wy_inverse @ centered_erase) * center_scale
+        write_aux = wy_inverse @ z_chunk
+        correction = write_aux - erase_aux @ state
+
+        centered_query = left_decay * q_chunk * scale
+        decayed_query = centered_query * center_scale
+        causal_qk = torch.tril(centered_query @ centered_key.transpose(-1, -2))
+        chunk_output = decayed_query @ state + causal_qk @ correction
+        outputs.append(chunk_output.transpose(1, 2))
+
+        final_log_decay = cumulative_log_decay[:, :, -1:, :]
+        tail_key = torch.exp(final_log_decay - cumulative_log_decay) * k_chunk
+        state = (
+            torch.exp(final_log_decay.squeeze(2)).unsqueeze(-1) * state
+            + tail_key.transpose(-1, -2) @ correction
+        )
+
+    output = torch.cat(outputs, dim=1).to(dtype=q.dtype)
+    if not bool(torch.isfinite(output).all()) or not bool(torch.isfinite(state).all()):
+        raise ValueError(
+            "chunkwise GDN-2 produced non-finite values; reduce gdn_chunk_size "
+            "or use a qualified fused backend"
+        )
+    return output, state
+
+
 @runtime_checkable
 class GDN2Backend(Protocol):
     """Callable backend for the ``[B,T,H,*]`` GDN-2 recurrence."""
@@ -120,7 +228,7 @@ class GDN2Backend(Protocol):
 
 
 class PyTorchGDN2Backend:
-    """Reference PyTorch backend for the GDN-2 recurrence."""
+    """Tokenwise PyTorch oracle used for correctness and recurrent decoding."""
 
     def __call__(
         self,
@@ -134,6 +242,36 @@ class PyTorchGDN2Backend:
     ) -> tuple[Tensor, Tensor]:
         return gdn2_recurrent_reference(
             q, k, v, log_decay, erase_gate, write_gate, initial_state
+        )
+
+
+class PyTorchChunkwiseGDN2Backend:
+    """Autograd-compatible PyTorch chunkwise backend for training."""
+
+    def __init__(self, chunk_size: int = 64) -> None:
+        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+            raise ValueError(f"chunk_size must be a positive integer, got {chunk_size!r}")
+        self.chunk_size = chunk_size
+
+    def __call__(
+        self,
+        q: Tensor,
+        k: Tensor,
+        v: Tensor,
+        log_decay: Tensor,
+        erase_gate: Tensor,
+        write_gate: Tensor,
+        initial_state: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor]:
+        return gdn2_chunkwise_reference(
+            q,
+            k,
+            v,
+            log_decay,
+            erase_gate,
+            write_gate,
+            initial_state,
+            chunk_size=self.chunk_size,
         )
 
 
@@ -168,11 +306,17 @@ def _validate_backend_result(
 
 
 class OptimizedGDN2BackendAdapter:
-    """Use a supplied recurrence callable, otherwise use the PyTorch reference."""
+    """Use a supplied optimized callable, otherwise use chunkwise PyTorch."""
 
-    def __init__(self, optimized_callable: Callable[..., object] | None = None) -> None:
+    def __init__(
+        self,
+        optimized_callable: Callable[..., object] | None = None,
+        fallback_backend: GDN2Backend | None = None,
+    ) -> None:
         self.optimized_callable = optimized_callable
-        self.reference_backend = PyTorchGDN2Backend()
+        self.fallback_backend = (
+            fallback_backend if fallback_backend is not None else PyTorchChunkwiseGDN2Backend()
+        )
 
     def __call__(
         self,
@@ -191,8 +335,14 @@ class OptimizedGDN2BackendAdapter:
                 return _validate_backend_result(result, q, v, initial_state)
             except (ImportError, NotImplementedError, TypeError):
                 pass
-        result = self.reference_backend(q, k, v, log_decay, erase_gate, write_gate, initial_state)
+        result = self.fallback_backend(
+            q, k, v, log_decay, erase_gate, write_gate, initial_state
+        )
         return _validate_backend_result(result, q, v, initial_state)
+
+
+def _gradient_probe_loss(output: Tensor, state: Tensor) -> Tensor:
+    return output.float().square().mean() + state.square().mean()
 
 
 def assert_gdn2_backend_parity(
@@ -207,13 +357,15 @@ def assert_gdn2_backend_parity(
     *,
     atol: float = 1e-5,
     rtol: float = 1e-5,
+    check_gradients: bool = False,
+    gradient_atol: float = 3e-5,
+    gradient_rtol: float = 3e-5,
 ) -> None:
-    """Raise if a candidate recurrence backend differs from the oracle.
+    """Raise when a candidate backend differs from the recurrent oracle.
 
-    Backend authors call this qualification helper before installing an
-    optimized path.  It compares both token outputs and the final FP32 state,
-    so a shape-valid but mathematically different kernel cannot pass merely by
-    satisfying the adapter boundary.
+    Value parity compares token outputs and the final FP32 state. Optional
+    gradient parity reruns both paths on independent differentiable clones and
+    compares gradients for q, k, v, log-decay, erase, write, and initial state.
     """
 
     reference_output, reference_state = gdn2_recurrent_reference(
@@ -223,6 +375,41 @@ def assert_gdn2_backend_parity(
     output, state = _validate_backend_result(candidate, q, v, initial_state)
     torch.testing.assert_close(output, reference_output, atol=atol, rtol=rtol)
     torch.testing.assert_close(state, reference_state, atol=atol, rtol=rtol)
+    if not check_gradients:
+        return
+
+    source_tensors = (q, k, v, log_decay, erase_gate, write_gate)
+    reference_inputs = [tensor.detach().clone().requires_grad_(True) for tensor in source_tensors]
+    candidate_inputs = [tensor.detach().clone().requires_grad_(True) for tensor in source_tensors]
+    reference_initial = (
+        initial_state.detach().clone().requires_grad_(True) if initial_state is not None else None
+    )
+    candidate_initial = (
+        initial_state.detach().clone().requires_grad_(True) if initial_state is not None else None
+    )
+
+    ref_output, ref_state = gdn2_recurrent_reference(*reference_inputs, reference_initial)
+    candidate_output, candidate_state = backend(*candidate_inputs, candidate_initial)
+    candidate_output, candidate_state = _validate_backend_result(
+        (candidate_output, candidate_state), candidate_inputs[0], candidate_inputs[2], candidate_initial
+    )
+    ref_targets = reference_inputs + ([reference_initial] if reference_initial is not None else [])
+    candidate_targets = candidate_inputs + ([candidate_initial] if candidate_initial is not None else [])
+    reference_gradients = torch.autograd.grad(
+        _gradient_probe_loss(ref_output, ref_state), ref_targets
+    )
+    candidate_gradients = torch.autograd.grad(
+        _gradient_probe_loss(candidate_output, candidate_state), candidate_targets
+    )
+    for reference_gradient, candidate_gradient in zip(
+        reference_gradients, candidate_gradients, strict=True
+    ):
+        torch.testing.assert_close(
+            candidate_gradient,
+            reference_gradient,
+            atol=gradient_atol,
+            rtol=gradient_rtol,
+        )
 
 
 class GatedDeltaNet2(nn.Module):
@@ -273,13 +460,14 @@ class GatedDeltaNet2(nn.Module):
         self.A_log = nn.Parameter(torch.zeros(self.n_heads, dtype=torch.float32))
         self.dt_bias = nn.Parameter(torch.zeros(self.n_heads, self.key_dim, dtype=torch.float32))
         with torch.no_grad():
-            # Keep these state-dynamics parameters in their reference-style
-            # positive-rate / inverse-softplus parameterization.  Ordinary
-            # initializer experiments deliberately preserve them.
             self.A_log.copy_(torch.log(torch.arange(1, self.n_heads + 1, dtype=torch.float32)))
             dt = torch.logspace(-3, -1, self.key_dim, dtype=torch.float32)
             self.dt_bias.copy_(torch.log(torch.expm1(dt)).expand(self.n_heads, -1))
-        self.backend: GDN2Backend = backend if backend is not None else PyTorchGDN2Backend()
+        self.backend: GDN2Backend = (
+            backend
+            if backend is not None
+            else PyTorchChunkwiseGDN2Backend(config.gdn_chunk_size)
+        )
 
     def _apply(self, fn: Callable[[Tensor], Tensor]) -> nn.Module:
         module = super()._apply(fn)
@@ -321,7 +509,10 @@ class GatedDeltaNet2(nn.Module):
             raise ValueError("cache recurrent_state must be float32")
         if not bool(torch.isfinite(cache.recurrent_state).all()):
             raise ValueError("cache recurrent_state must be finite")
-        if any(not bool(torch.isfinite(history).all()) for history in (cache.q_history, cache.k_history, cache.v_history)):
+        if any(
+            not bool(torch.isfinite(history).all())
+            for history in (cache.q_history, cache.k_history, cache.v_history)
+        ):
             raise ValueError("cache histories must be finite")
 
     def forward(
@@ -362,7 +553,9 @@ class GatedDeltaNet2(nn.Module):
         k = F.normalize(k.view(batch, x.shape[1], self.n_heads, self.key_dim), dim=-1, eps=1e-6)
         v = v.view(batch, x.shape[1], self.n_heads, self.value_dim)
 
-        decay_features = self.decay_proj(x).float().view(batch, x.shape[1], self.n_heads, self.key_dim)
+        decay_features = self.decay_proj(x).float().view(
+            batch, x.shape[1], self.n_heads, self.key_dim
+        )
         log_decay = -torch.exp(self.A_log.float()).view(1, 1, self.n_heads, 1) * F.softplus(
             decay_features + self.dt_bias.float().view(1, 1, self.n_heads, self.key_dim)
         )
@@ -399,3 +592,16 @@ class GatedDeltaNet2(nn.Module):
             for history, raw in ((q_history, q_raw), (k_history, k_raw), (v_history, v_raw))
         ]
         return output, GDN2Cache(final_state, histories[0], histories[1], histories[2])
+
+
+__all__ = [
+    "GDN2Backend",
+    "GDN2Cache",
+    "GatedDeltaNet2",
+    "OptimizedGDN2BackendAdapter",
+    "PyTorchChunkwiseGDN2Backend",
+    "PyTorchGDN2Backend",
+    "assert_gdn2_backend_parity",
+    "gdn2_chunkwise_reference",
+    "gdn2_recurrent_reference",
+]
