@@ -24,12 +24,14 @@ When replacing a decision, record the old default, the new default, the reason, 
 ## Frozen implementation defaults
 
 - PyTorch is the canonical model and training framework.
-- Keep a readable PyTorch GDN-2 recurrence as the correctness oracle.
+- Keep a readable tokenwise PyTorch GDN-2 recurrence as the mathematical correctness oracle.
+- Keep a differentiable PyTorch WY-style chunkwise GDN-2 implementation as the default training backend.
+- Use an initial GDN-2 chunk size of 64 tokens through `ModelConfig.gdn_chunk_size`; support a shorter final chunk.
 - Treat Triton, CUDA, and external library kernels as replaceable optimized backends behind PyTorch interfaces.
 - Do not let an optimized kernel redefine the mathematical contract.
-- Require chunkwise and recurrent optimized paths to agree numerically with the reference path.
-- Treat one-shot, segmented, and tokenwise execution of the current Python recurrent loop as recurrence/cache tests, not as evidence that a parallel chunkwise training path exists.
-- Require a real chunkwise or otherwise parallel training backend, plus output and gradient parity against the reference recurrence, before accepting GDN-2 for substantive training.
+- Require candidate chunkwise and recurrent optimized paths to agree with the recurrent oracle for token outputs, final state, and gradients.
+- Treat one-shot, segmented, and tokenwise cache agreement as cache and recurrence evidence, separate from chunkwise-training evidence.
+- Treat the ordinary-PyTorch chunkwise path as correctness-complete but not target-hardware qualified until T4 FP16, memory, and throughput measurements pass.
 
 ## Frozen architecture defaults
 
@@ -113,11 +115,17 @@ The old implementation widened only Plan C to the closest total-parameter match 
 
 The reason is structural. Both schedules replace the same number of GDN-2 mixers with gated attention mixers, and SWA-512 differs from full MHA only by its mask. Their learned mixer parameter counts are therefore identical, so there is no architecture-based reason for their FFN widths to differ. At the substantive geometry both use `d_ff=1603`, yielding 101,237,760 parameters versus 101,252,280 for the primary hybrid, a 14,520-parameter difference (about 0.014%). The hybrid remains at its frozen `d_ff=1408`.
 
-### Recurrent reference versus chunkwise training
+### Chunkwise GDN-2 training decision
 
-The current PyTorch GDN-2 oracle updates its matrix state sequentially for each token. Calling it once on a 2,048-token tensor still executes that serial recurrence inside Python. Splitting the same sequence into segments or single tokens and obtaining the same result proves causality, state reset, convolution-history handling, and cache correctness.
+The old repository state had only the serial tokenwise GDN-2 oracle. Segmenting that same loop proved cache correctness but did not create a parallel training algorithm.
 
-It does not prove the existence of the training path described in the architecture design. A production chunkwise path reorganizes the same recurrence into GPU-friendly chunks or scans so many token operations can run concurrently while preserving exact causal state transitions and supporting efficient backward propagation. That path needs its own implementation or qualified external kernel and must be compared against the oracle for outputs, final states, and gradients. Until then, the mathematics has a readable correctness reference, but GDN-2 training throughput at context 2,048 is not qualified.
+On 2026-08-01 the user approved implementing a genuine chunkwise path. The repository now contains a differentiable PyTorch implementation of the GDN-2 decay-normalized WY equations. It computes cumulative decay, solves a small unit-lower-triangular system, and evaluates intra-chunk interactions with dense matrix products. The state remains sequential only between chunks. The default chunk size is 64.
+
+The implementation uses a centered factorization of pairwise cumulative-decay ratios to avoid explicitly forming unstable inverse cumulative decays. It keeps cumulative decay, triangular solve, chunk auxiliaries, and state arithmetic in FP32. A non-finite result fails loudly.
+
+CPU qualification now compares the chunkwise path with the recurrent oracle for every token output, final state, and gradients with respect to Q, K, V, log-decay, erase gate, write gate, and initial state. Tests cover multiple chunks and a partial final chunk. This satisfies the repository-level mathematical and autograd contract.
+
+It does not freeze a performance claim. The current path uses ordinary PyTorch operations and is not yet benchmarked for T4 FP16 stability, peak memory, or throughput. A fused upstream or T4-specific backend may replace it behind the same interface only after passing the same parity tests. See `gdn2_chunkwise_training.md`.
 
 ### Optional SWA-512 implementation surface
 
@@ -125,7 +133,7 @@ The implementation work includes a 512-token sliding-window attention option bec
 
 ### PyTorch and optimized kernels
 
-The project remains in PyTorch because the developer is already productive in it and because PyTorch supplies the model, autograd, optimizer, checkpoint, and testing surface needed by the project. Flash Linear Attention is itself a PyTorch package whose fast paths are implemented with Triton or other lower-level backends; adopting a kernel does not require switching model frameworks.
+The project remains in PyTorch because the developer is already productive in it and because PyTorch supplies the model, autograd, optimizer, checkpoint, and testing surface needed by the project. An optimized kernel is an implementation behind the PyTorch-facing backend contract, not a framework change.
 
 ### GDN-2 short convolutions
 
@@ -177,6 +185,7 @@ These are not defaults and should change one important variable at a time:
 - negative-eigenvalue GDN-2 mode;
 - grouped or expanded GDN value heads;
 - GDN short convolution disabled or resized;
+- GDN chunk sizes other than 64;
 - no final RMSNorm;
 - different FFN expansion ratios;
 - an aligned transformer FFN width such as 1,600 instead of the exact-match width 1,603;
@@ -188,17 +197,19 @@ These are not defaults and should change one important variable at a time:
 
 ## T4 kernel qualification and possible side project
 
-The target T4 is a Turing, compute-capability-7.5 GPU. Current upstream Triton documents NVIDIA support beginning at compute capability 8.0, while the current Flash Linear Attention CUDA extra depends on Triton. Therefore T4 support must be treated as an empirical and possibly unsupported path rather than assumed.
+The target T4 is a Turing, compute-capability-7.5 GPU. Upstream optimized GDN-2 paths must be treated as empirical and possibly unsupported rather than assumed compatible.
 
 The required sequence is:
 
-1. run the PyTorch reference recurrence on the T4;
-2. attempt the current FLA GDN-2 backend and record installation, compilation, correctness, and performance results;
-3. inspect whether failure is a hard Triton architecture restriction, an unsupported instruction/layout choice, or only an autotuning/configuration issue;
-4. benchmark forward, backward, chunkwise training, recurrent decoding, peak memory, and FP16 stability;
-5. compare chunkwise outputs, final states, and gradients against the PyTorch recurrent oracle within explicit tolerances;
-6. if the upstream path is unavailable or poor, evaluate a T4-compatible CUDA/CUTLASS implementation with the same PyTorch API;
-7. consider publishing the T4-compatible GDN-2 kernel as a separate open-source side project only after correctness and measurable speedup are established.
+1. run the recurrent oracle and PyTorch chunkwise backend on the T4;
+2. compare their outputs, final states, and gradients within explicit tolerances;
+3. record FP16 overflow, NaN, and loss-scaling behavior;
+4. benchmark forward, backward, peak memory, and throughput at smoke and substantive geometry, context 2,048, microbatch 1;
+5. benchmark recurrent single-token decoding and recurrent-state memory;
+6. attempt the current upstream optimized GDN-2 backend and record installation, compilation, correctness, and performance results;
+7. inspect whether any failure is a hard architecture restriction, unsupported operation or layout, or only a kernel-configuration issue;
+8. if the upstream path is unavailable or poor, evaluate a T4-compatible CUDA/CUTLASS implementation with the same PyTorch API;
+9. consider publishing the T4-compatible GDN-2 kernel as a separate open-source side project only after correctness and measurable speedup are established.
 
 The main Small LLM project must not be blocked indefinitely by the kernel side project. Plan B requires no recurrent kernel and is the preferred operational fallback; Plan C remains the simplest last resort and scientific reference.
 
