@@ -1,69 +1,83 @@
 # Small-LLM
 
-This repository is working toward a small English language model. The pretraining-corpus data pipeline is in `dataset/`.
+This repository is building a dense decoder-only English language model below 1B parameters. It now contains the deterministic pretraining-corpus pipeline in `dataset/`, the hybrid model package in `model/`, and the first single-device pretraining system in `trainer/`.
 
 > [!WARNING]
-> **Production Cluster Weights Are Open and Unapproved**
-> Final production cluster weights for the streaming cache are currently **open and unapproved**. No production run may start without an approved `--weights-file` JSON weight mapping signed off by the team.
+> **Production cluster weights are still open and unapproved.** No complete production corpus run may start until the exact full-corpus mixture report and generated weight-file SHA-256 have been reviewed.
 
----
+## Current architecture
 
-## Overview & Architecture
+The primary model is a geometry-scalable dense hybrid:
 
-The dataset pipeline provides two formats:
-
-1. **Schema-v2 Deterministic Streaming Cache (`dataset/src/streaming.py`)**:
-   A framework-independent, first-pass streaming cache that turns validated source documents into fixed-geometry sequence blocks, fsyncs each active-shard block before exposing it to the trainer queue, and atomically finalizes immutable shards at legal boundaries.
-2. **Legacy Monolithic Binary Build (`dataset.main build`)**:
-   The original prebuild format that streams byte ranges and appends GPT-2 token IDs directly to continuous `train.bin` and `validation.bin` files. Retained as legacy/prebuild format.
-
-Both paths process NVIDIA Nemotron-ClimbMix at the pinned immutable revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`, keeping accepted clusters 1–10 and 12–20 while strictly excluding cluster 11 (programming/software).
-
----
-
-## Command Line Interface
-
-Validate a JSON weight mapping and confirm sequence geometry without starting a network run:
-
-```bash
-# Stream-cache weight mapping validation (offline/preflight check)
-uv run python -m dataset.main stream-cache --weights-file path/to/approved_weights.json --show-stream-config
+```text
+[GDN-2, GDN-2, GDN-2, gated full MHA] × N
 ```
 
-The production dataset command is `python -m dataset.production`. It enforces the 80B/90B/100B corpus envelope, uses source-token checkpoint cadence, requires verified Google Drive durability by default, refuses configuration drift on resume, and recovers uncommitted shard tails. Run the bounded authenticated pilot in [the production runbook](dataset/PRODUCTION_RUNBOOK.md) before authorizing the full corpus.
+It uses sequential pre-RMSNorm blocks, dense SwiGLU FFNs, tied padded embeddings with semantic-logit cropping, MHA QK-RMSNorm and output gating, and a 2,048-token initial context. The approximately-20M smoke geometry is the integration target; the approximately-100M geometry is the first substantive comparison. Plan B is a matched `SWA-512`/full-attention hybrid and Plan C is the matched all-MHA baseline.
 
-The lower-level `dataset.main stream-cache --build` command remains useful for development and cache-primitive testing, but it is not the production orchestration entry point.
+## Dataset paths
 
-Legacy monolithic prebuild commands:
+The dataset pipeline provides:
+
+1. **Schema-v2 deterministic streaming cache** in `dataset/src/streaming.py`: validated documents become fixed `context+1` blocks, each active-shard block is flushed and fsynced before trainer visibility, and shards are atomically finalized.
+2. **Legacy monolithic binary build** through `dataset.main build`: retained for compatibility and prebuild experiments.
+
+Both use the pinned Nemotron-ClimbMix revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`, accept clusters 1–10 and 12–20, and exclude cluster 11.
+
+The production dataset command is:
 
 ```bash
-uv run python -m dataset.main build
-uv run python -m dataset.main build --resume
-uv run python -m dataset.main status
-uv run python -m dataset.main verify
+uv run --env-file .env python -m dataset.production ...
 ```
 
----
+It enforces the 80B/90B/100B envelope, exact source-token accounting, verified Google Drive durability, configuration-drift rejection, and crash-safe resume. Run the authenticated bounded pilot in `dataset/PRODUCTION_RUNBOOK.md` before authorizing the complete corpus.
 
-## Streaming Cache Architecture & Contracts
+## Trainer
 
-- **Context+1 Sequence Geometry**: Every sequence in the cache stores `context_length` input tokens plus 1 target token (`stored_sequence_tokens = context_length + 1`, e.g. 2049 tokens for context length 2048), encoded as raw little-endian uint16 integers.
-- **Stride Is Context Length**: The target at the end of one record is physically reused as the first input token of the next record. It is stored twice but counted once as an original source token; no next-token transition is dropped at a record edge.
-- **Deterministic Concurrency**: `parallel_read_documents` reads HTTP source ranges concurrently while reordering futures to yield records in exact work-plan order. `TokenDeficitScheduler` uses exact integer arithmetic (`Fraction`) and deterministic SHA-256 tie-breaking.
-- **Durability-Before-Trainer Contract**: Sequence blocks are written, flushed, and fsynced in active shard files (`.tmp`) before becoming visible to the trainer queue. Completed shards are separately finalized with `fsync` and atomic rename.
-- **Shard Layout**: Output files are written to `train/` and `validation/` subdirectories (`train-XXXXXX.bin`), with full metadata written to `manifest.json`.
-- **Joint Checkpoints**: `dataset.src.joint_checkpoint.CheckpointCoordinator` writes model/trainer opaque state plus data-pipeline state only at a completed optimizer boundary, fsyncs a temporary directory, then atomically renames it. It is framework-independent so the eventual trainer supplies model/optimizer/scheduler/scaler/RNG artifacts.
-- **Remote Durability**: immutable finalized `.bin` shards are mirrored through `RemoteShardStore` and verified by ID, size, and SHA-256 before they can be referenced by a checkpoint. Google Drive is the durable mirror; local SSD remains the live cache. A two-phase publisher sends versioned `last` data to a private Hugging Face model repository and moves `latest.json` only after verification.
+`trainer/` consumes schema-v2 prepared blocks, treats one complete block as one atomic optimizer update, microbatches its sequences, and acknowledges it only after a successful step. It supports AdamW, token-count constant or warmup/stable/decay schedules, FP32/FP16/BF16, gradient scaling and clipping, validation, generation checks, and joint dataset/model checkpoints.
 
----
+A bounded smoke run against a completed local cache is:
 
-## Testing & Verification
+```bash
+uv run --extra model python -m trainer \
+  --dataset-dir /data/climbmix-pilot \
+  --checkpoint-dir /data/small-llm-checkpoints \
+  --steps 10 \
+  --sequences-per-block <pilot-block-size> \
+  --model-size smoke \
+  --architecture swa_hybrid \
+  --device cuda \
+  --precision fp16 \
+  --microbatch-size 1
+```
 
-Run the complete local unit test suite (the model extra supplies PyTorch; the
-dataset requirements supply its remote-client imports):
+Use `--resume step-XXXXXXXX` with the same semantic configuration. A restored checkpoint can use `--dataset-manifest <checkpoint>/drive_manifest.json` while `--dataset-dir` points at its prefetched `cache/` directory.
+
+The CLI defaults are qualification defaults, not frozen substantive-run hyperparameters. See `llm_docs/training_system.md`.
+
+## Core contracts
+
+- Every schema-v2 record stores `context_length + 1` little-endian uint16 tokens.
+- Stride equals context length, so each real next-token transition is trained once.
+- Data ordering and source-token mixture accounting remain deterministic across concurrency, shards, interruptions, and resumes.
+- Trainer acknowledgements occur only after complete optimizer steps.
+- `CheckpointCoordinator` atomically stores trainer state and data-pipeline state at the same consumed block.
+- Immutable shards are mirrored to Google Drive and verified by ID, size, and SHA-256. Versioned joint checkpoints can be published to a private Hugging Face repository only after all referenced shards are remotely durable.
+
+## Qualification
+
+The Kaggle/T4 hardware harness is:
+
+```bash
+python -m tests.t4_qualification --require-t4 --include-plan-b
+```
+
+It tests recurrent/chunkwise GDN-2 parity, FP32/FP16 smoke steps, chunk sizes 16/32/64, memory, throughput, overflow behavior, initialization candidates, and the Plan-B fallback. The first T4 run proved execution feasibility but found a blocking parity defect: FP32 exceeded strict recurrent-reference tolerances, FP16 parity was non-finite for all tested chunk sizes, and FP16 chunk 64 also failed the full smoke step. The CLI therefore requires `--allow-unqualified-gdn2` for diagnostic GDN-2 runs; Plan B is the safe trainer-plumbing qualification path until the defect is fixed.
+
+Run the complete local test suite with:
 
 ```bash
 uv run --extra model --with-requirements dataset/requirements-remote.txt python -m unittest discover -v
 ```
 
-See [dataset/README.md](dataset/README.md) for full specifications and checkpoint contracts, and [dataset/PRODUCTION_RUNBOOK.md](dataset/PRODUCTION_RUNBOOK.md) for the authenticated pilot and production acceptance gates.
+Project decisions and status live in `llm_docs/`. Dataset operations are documented in `dataset/README.md` and `dataset/PRODUCTION_RUNBOOK.md`.
