@@ -119,6 +119,7 @@ class ModelAssemblyTests(unittest.TestCase):
         model = SmallLLM(config)
         self.assertEqual(model.layer_kinds, ("swa", "swa", "swa", "mha"))
         self.assertEqual([block.mixer.config.attention_window for block in model.blocks], [512, 512, 512, None])
+        self.assertNotEqual(model.ffn_width, config.d_ff)
         self.assertEqual(model(torch.randint(0, 24, (1, 4))).shape, (1, 4, 24))
 
     def test_unqualified_plan_a5_refuses_to_substitute_gdn2(self):
@@ -133,15 +134,18 @@ class ModelAssemblyTests(unittest.TestCase):
         self.assertEqual(counts.gdn_mixers, 0)
         self.assertGreater(counts.mha_mixers, 0)
 
-    def test_all_mha_baseline_is_parameter_matched(self):
+    def test_transformer_fallbacks_share_parameter_matched_ffn(self):
         hybrid = SmallLLM(tiny_config())
+        plan_b = SmallLLM(tiny_config(architecture="swa_hybrid", max_seq_len=512))
         baseline = SmallLLM(tiny_config(), all_mha=True)
         selected_plan_c = SmallLLM(tiny_config(architecture="all_mha"))
         hybrid_total = count_parameters(hybrid).total
         baseline_total = count_parameters(baseline).total
         self.assertNotEqual(baseline.ffn_width, hybrid.config.d_ff)
-        self.assertLess(abs(hybrid_total - baseline_total) / hybrid_total, 0.003)
+        self.assertEqual(plan_b.ffn_width, baseline.ffn_width)
         self.assertEqual(selected_plan_c.ffn_width, baseline.ffn_width)
+        self.assertLess(abs(hybrid_total - baseline_total) / hybrid_total, 0.003)
+        self.assertEqual(count_parameters(plan_b).total, baseline_total)
         self.assertEqual(count_parameters(selected_plan_c).total, baseline_total)
 
     def test_gdn_exceptions_and_decay_exclusions_are_named(self):
