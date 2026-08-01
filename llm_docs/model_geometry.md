@@ -1,6 +1,6 @@
 # Model Geometry
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-01_
 
 ## Geometry strategy
 
@@ -32,7 +32,8 @@ Purpose: validate implementation, kernels, data flow, backward pass, generation,
 | Decoder layers | 8 |
 | GDN-2 layers | 6 |
 | MHA layers | 2 |
-| SwiGLU width `d_ff` | 704 |
+| Hybrid SwiGLU width `d_ff` | 704 |
+| Matched Plan B / Plan C `d_ff` | 835 |
 | MHA heads | 4 |
 | MHA head dimension | 64 |
 | GDN key heads | 4 |
@@ -42,11 +43,19 @@ Purpose: validate implementation, kernels, data flow, backward pass, generation,
 | Tied embeddings | yes |
 | Final RMSNorm | yes |
 
-The implementation must calculate and report the exact parameter count rather than trusting the approximate label.
+Implemented exact counts:
+
+| Smoke schedule | Exact parameters | Difference from hybrid |
+|---|---:|---:|
+| Primary GDN-2 hybrid, `d_ff=704` | 20,637,592 | — |
+| Plan B SWA/full-attention transformer, `d_ff=835` | 20,634,880 | -2,712 (-0.013%) |
+| Plan C all-MHA transformer, `d_ff=835` | 20,634,880 | -2,712 (-0.013%) |
+
+Plan B and Plan C have equal learned parameter counts because sliding-window attention changes only the mask, not the projections or normalization parameters.
 
 ## Frozen first substantive configuration
 
-Purpose: first real comparison of the hybrid architecture against a matched all-MHA baseline.
+Purpose: first real comparison of the hybrid architecture against matched transformer references.
 
 | Quantity | Value |
 |---|---:|
@@ -57,7 +66,8 @@ Purpose: first real comparison of the hybrid architecture against a matched all-
 | GDN-2 layers | 15 |
 | MHA layers | 5 |
 | Layer pattern | `[GDN-2, GDN-2, GDN-2, MHA] × 5` |
-| SwiGLU width `d_ff` | 1,408 |
+| Hybrid SwiGLU width `d_ff` | 1,408 |
+| Matched Plan B / Plan C `d_ff` | 1,603 |
 | MHA heads | 8 |
 | MHA head dimension | 64 |
 | GDN key heads | 8 |
@@ -68,30 +78,47 @@ Purpose: first real comparison of the hybrid architecture against a matched all-
 | Tied embeddings | yes |
 | Final RMSNorm | yes |
 | Semantic vocabulary | 50,257 |
-| Candidate padded vocabulary | 50,304 |
+| Padded vocabulary | 50,304 |
 
-The expected total is approximately 100M parameters. The source of truth is the implemented model's exact parameter counter, split by embeddings, GDN-2 mixers, MHA mixers, FFNs, norms, and other parameters.
+The source of truth is the implemented model's exact parameter counter, split by embeddings, GDN-2 mixers, MHA mixers, FFNs, norms, and other parameters.
 
-## Approximate 100M parameter decomposition
+## Implementation-verified substantive parameter counts
 
-Before implementation-level verification, the working estimate is:
+The former pre-implementation estimate of approximately 99.9M understated the gated-MHA parameters because the implemented attention mixer has five full-width projections: Q, K, V, output gate, and output projection.
 
-| Component | Approximate parameters |
+### Primary GDN-2 hybrid
+
+| Component | Exact parameters |
 |---|---:|
-| Tied embedding/output matrix | 25.76M |
-| 20 SwiGLU FFNs | 43.25M |
-| 5 MHA mixers | 5.24M |
-| 15 GDN-2 mixers | 25.67M |
-| Norms and small parameters | small remainder |
-| Total | approximately 99.9M |
+| Tied embedding/output matrix | 25,755,648 |
+| 20 SwiGLU FFNs at `d_ff=1408` | 43,253,760 |
+| 5 gated MHA mixers | 6,554,240 |
+| 15 GDN-2 mixers | 25,667,640 |
+| Block and final RMSNorms outside mixer counts | 20,992 |
+| **Total** | **101,252,280** |
 
-The exact GDN-2 count depends on the final faithful implementation of gates, short convolutions, output normalization, and reference-required biases.
+Mixer-local QK norms, GDN output norms, and GDN reference-required offsets are included in their corresponding mixer totals.
+
+### Parameter-matched transformer schedules
+
+Both Plan B and Plan C replace the same 15 GDN-2 mixers with gated attention mixers. Since SWA-512 and full MHA differ only in their causal mask, both use the same closest integral compensating FFN width:
+
+```text
+d_ff = 1603
+```
+
+| Transformer schedule | Exact parameters | Difference from hybrid |
+|---|---:|---:|
+| Plan B `[SWA-512, SWA-512, SWA-512, full MHA] × 5` | 101,237,760 | -14,520 (-0.014%) |
+| Plan C `[full MHA] × 20` | 101,237,760 | -14,520 (-0.014%) |
+
+The 14,520-parameter remainder is caused by integral FFN width. The primary hybrid remains frozen at `d_ff=1408`; widening is used only to compensate transformer replacements for controlled comparisons.
 
 ## Scale templates
 
-These are planning templates, not yet authorized production models.
+These are planning templates, not yet authorized production models. Transformer replacements should derive their matched FFN width from the implemented parameter counter rather than copying the hybrid `d_ff` unchanged.
 
-| Role | Approx. parameters | `d_model` | Layers | `d_ff` | Heads × head dimension |
+| Role | Approx. parameters | `d_model` | Layers | Hybrid `d_ff` | Heads × head dimension |
 |---|---:|---:|---:|---:|---:|
 | Kernel smoke | 20M | 256 | 8 | 704 | 4 × 64 |
 | Intermediate debug | 44M | 384 | 12 | 1,024 | 6 × 64 |
@@ -101,7 +128,7 @@ These are planning templates, not yet authorized production models.
 
 Larger configurations should preserve a 64-dimensional head initially unless profiling or quality evidence supports 128-dimensional heads or expanded projected widths.
 
-## Why these dimensions are hardware-friendly
+## Why the primary dimensions are hardware-friendly
 
 GPU matrix kernels split dimensions into fixed-size tiles. Dimensions divisible by 8, 16, 32, or 64 usually avoid partially empty edge tiles and make optimized Tensor Core kernels easier to use.
 
@@ -120,13 +147,13 @@ For ordinary MHA:
 d_model = n_heads × d_head
 ```
 
-The frozen 100M choice is exactly:
+The frozen substantive residual geometry is exactly:
 
 ```text
 512 = 8 × 64
 ```
 
-Arbitrary dimensions such as 515 or a 70-dimensional head can waste padded work, complicate reshaping, or force slower kernel paths.
+The matched transformer width `1603` is selected for parameter equality rather than tile alignment. Before a large transformer-reference run, benchmark it against a nearby aligned width such as 1,600; changing to the aligned width would be a documented compute-efficiency variant, not the default matched comparison.
 
 ## SwiGLU geometry
 
@@ -144,13 +171,13 @@ Ignoring biases:
 parameters per SwiGLU FFN = 3 × d_model × d_ff
 ```
 
-At the 100M geometry:
+At the substantive hybrid geometry:
 
 ```text
 3 × 512 × 1408 = 2,162,688 parameters per FFN
 ```
 
-The two 1,408-wide branches do not make a 2,816-wide hidden vector because they are multiplied elementwise.
+The two expanded branches are multiplied elementwise; they are not concatenated.
 
 ## GDN-2 recurrent state geometry
 
@@ -160,7 +187,7 @@ With 8 heads and 64-dimensional keys and values, each GDN-2 layer maintains a re
 8 × 64 × 64 = 32,768 state values per active sequence
 ```
 
-This state is independent of context length during recurrent decoding, although training uses chunkwise kernels and stores additional activations for backpropagation.
+This state is independent of context length during recurrent decoding. Efficient training still requires a chunkwise or otherwise parallel backend that stores the activations needed for backpropagation.
 
 ## Benchmark contract
 
@@ -174,6 +201,6 @@ Before accepting a larger scale, measure on the target T4:
 - GDN recurrent-state memory;
 - MHA activation memory;
 - checkpoint size and save/load time;
-- matched loss curves against the all-MHA baseline.
+- matched loss curves against Plan B and Plan C.
 
 Scale decisions must follow measurements rather than parameter labels alone.
