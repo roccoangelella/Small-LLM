@@ -1,6 +1,6 @@
 # Model Architecture
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-01_
 
 ## Scope
 
@@ -12,11 +12,16 @@ PyTorch is the canonical framework for the model, trainer, autograd, checkpointi
 
 Optimized Triton, CUDA, or library kernels are optional backend implementations behind stable PyTorch module and autograd interfaces. They do not replace PyTorch or define the mathematical contract. Every optimized GDN-2 path must be checked against a readable PyTorch reference recurrence.
 
-The initial GDN-2 backend ladder is:
+The implemented GDN-2 backend ladder is:
 
-1. readable PyTorch recurrent reference for correctness;
-2. available optimized chunkwise and recurrent kernels when compatible with the target GPU;
-3. a T4-specific CUDA or other compatible kernel only if profiling shows that the existing path is unsupported or inadequate.
+1. readable tokenwise PyTorch recurrent reference for the mathematical oracle and cache checks;
+2. differentiable PyTorch WY-style chunkwise training backend, used by `GatedDeltaNet2` by default;
+3. optimized chunkwise and recurrent kernels when compatible with the target GPU;
+4. a T4-specific CUDA or other compatible kernel only if profiling shows that the existing paths are unsupported or inadequate.
+
+The PyTorch chunkwise path is a real parallel-within-chunk algorithm, not segmented invocation of the serial oracle. It remains recurrent only across chunks and uses cumulative decay, a unit-lower-triangular WY solve, and dense matrix products inside each chunk. The frozen initial chunk size is 64 tokens through `ModelConfig.gdn_chunk_size`; a shorter final chunk is supported.
+
+The correctness-first PyTorch chunkwise implementation does not by itself establish acceptable T4 throughput, memory use, or FP16 stability. Those remain target-hardware qualification gates. See `gdn2_chunkwise_training.md` for the exact implementation and verification contract.
 
 ## Decoder macroarchitecture
 
@@ -51,7 +56,7 @@ When GDN-2 itself is the problem but ordinary Gated DeltaNet has a qualified T4 
 [GDN, GDN, GDN, gated full MHA] × N
 ```
 
-This is the closest architectural substitute but is conditional on measured kernel availability and stability.
+This is the closest architectural substitute but is conditional on measured kernel availability and stability. The model builder must fail loudly until a genuine GDN-v1 implementation is supplied; it must never label GDN-2 as GDN-v1.
 
 ### Plan B: local/global sliding-window transformer
 
@@ -77,7 +82,9 @@ The simplest final fallback is:
 
 This is also the mandatory parameter-matched scientific baseline. It remains implemented even when GDN-2 works so that claims about the hybrid can be tested cleanly.
 
-The model configuration and stack builder must support all four mixer schedules without changing the common decoder-block, FFN, embedding, loss, trainer, or checkpoint interfaces.
+Plan B and Plan C use the same derived FFN width because SWA and full MHA have identical learned parameter geometry and differ only in their masks.
+
+The model configuration and stack builder must support all four mixer schedules without changing the common decoder-block, embedding, loss, trainer, or checkpoint interfaces.
 
 ## Normalization
 
@@ -141,7 +148,7 @@ The initial layer follows the reference GDN-2 structure:
 - short depthwise causal 1D convolutions on Q, K, and V;
 - initial convolution kernel size 4;
 - gated output normalization and output projection;
-- chunkwise training kernel and recurrent inference path.
+- differentiable chunkwise training path and recurrent-state cache path.
 
 The short convolutions are not a CNN backbone. Each projected channel is mixed only with its own recent token history, initially the current token and the previous three positions. This supplies a small local receptive field before the recurrent state update.
 
@@ -153,11 +160,15 @@ For the first implementation:
 - grouped value attention is not used;
 - negative-eigenvalue support is not enabled unless separately benchmarked;
 - Q, K, V, decay, erase, write, and output projections follow the reference-required bias policy;
-- `A_log`, `dt_bias`, and decay arithmetic remain FP32 where required for stability;
+- `A_log`, `dt_bias`, cumulative decay, triangular solves, and recurrent state arithmetic remain FP32;
 - independent 2,048-token training records do not share recurrent or convolution state;
-- chunkwise and recurrent paths must pass numerical-parity tests against the PyTorch reference.
+- the initial chunk size is 64 tokens and is configurable for controlled stability or hardware tests;
+- chunkwise and recurrent paths must pass output, final-state, and gradient parity tests;
+- non-finite chunkwise values fail loudly rather than silently falling back to altered mathematics.
 
-RoPE inside GDN-2, grouped value geometry, disabling short convolution, resizing the convolution, and negative-eigenvalue variants are controlled later ablations.
+The current PyTorch chunkwise implementation evaluates all token interactions inside a chunk with dense matrix operations and only advances the state sequentially between chunks. A fused kernel may replace it behind the same backend interface after qualification.
+
+RoPE inside GDN-2, grouped value geometry, disabling short convolution, resizing the convolution, changing chunk size, and negative-eigenvalue variants are controlled later ablations.
 
 ## Feed-forward network
 
