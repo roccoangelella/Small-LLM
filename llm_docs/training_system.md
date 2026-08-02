@@ -1,6 +1,6 @@
 # Training System
 
-_Last updated: 2026-08-01_
+_Last updated: 2026-08-02_
 
 ## Decision
 
@@ -150,15 +150,14 @@ These tests qualify the software contract, not target-hardware performance.
 
 ## Remaining operational gates
 
-The following still require the real dataset artefacts and accelerator environment:
+The exact mixture report and production weight-file SHA-256 are approved in `dataset_and_tokenization.md`. The following still require the real dataset artefacts and accelerator environment:
 
-1. approve the exact mixture report and weight-file SHA-256;
-2. pass the authenticated bounded dataset pilot and completed-resume idempotence check;
-3. diagnose the T4 recurrent/chunkwise parity and FP16 non-finite failures, then rerun qualification;
-4. qualify trainer/checkpoint plumbing with Plan B against a verified schema-v2 pilot while the GDN-2 defect is isolated;
-5. intentionally interrupt and resume it, then compare the next batch, step counters, and loss trajectory;
-6. restore the same joint checkpoint into an empty environment and continue from the prefetched Drive shard window;
-7. record starvation, throughput, peak memory, scaler behavior, checkpoint latency, and recovery behavior;
-8. repeat the integrated run with GDN-2 only after parity is fixed, then screen the approximately-100M training policy.
+1. pass the authenticated bounded dataset pilot and completed-resume idempotence check;
+2. diagnose the T4 recurrent/chunkwise parity and FP16 non-finite failures, then rerun qualification;
+3. qualify trainer/checkpoint plumbing with Plan B against a verified schema-v2 pilot while the GDN-2 defect is isolated;
+4. intentionally interrupt and resume it, then compare the next batch, step counters, and loss trajectory;
+5. restore the same joint checkpoint into an empty environment and continue from the prefetched Drive shard window;
+6. record starvation, throughput, peak memory, scaler behavior, checkpoint latency, and recovery behavior;
+7. repeat the integrated run with GDN-2 only after parity is fixed, then screen the approximately-100M training policy.
 
 The complete 90B corpus and substantive architecture comparison remain unauthorized until these gates pass.

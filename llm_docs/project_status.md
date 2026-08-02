@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-08-01_
+_Last updated: 2026-08-02_
 
 ## Current phase
 
@@ -38,7 +38,18 @@ The dataset subsystem remains frozen except for defects revealed by operational 
 
 ### Exact-mixture calibration
 
-PR #3, merged at `a851242ff121a706ac5041319c27bba6c7e1dbf1`, added resumable full-corpus calibration. The generated report and weight file are not approved yet.
+PR #3, merged at `a851242ff121a706ac5041319c27bba6c7e1dbf1`, added resumable full-corpus calibration. The complete scan finished successfully on 2026-08-01:
+
+- 100 pinned source files and 7,457/7,457 work items;
+- 1,987,970,304,099 source bytes;
+- 553,315,056 records;
+- 356,864,528,972 all-cluster source tokens;
+- 351,792,454,745 accepted source tokens after excluding cluster 11;
+- 5,072,074,227 excluded cluster-11 tokens, or 1.421288% of the released corpus.
+
+All documented integrity checks passed, including exact byte coverage, positive counts for every cluster, report/weight agreement, embedded-hash agreement, production configuration loading, and completed-resume idempotence. The 84 transient first-attempt network warnings all recovered; there were no errors, tracebacks, or exhausted retries.
+
+The exact production weight file is approved at SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`. The work-plan self-hash is `a09e74aea4308528a0035d517d6987a47f7fb0021aa867252f1831a7df82a601`, and the canonical report self-hash is `a8b52650e4001dee957cfd9a13cab2a4daacdb58bf1229a0f8ff38f51b035d47`.
 
 ### Remote durability
 
@@ -117,12 +128,10 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ### Dataset
 
-1. Complete and inspect exact full mixture calibration.
-2. Approve `mixture_report.json` and the weight-file SHA-256.
-3. Run the reproducible authenticated 10M-token acceptance pilot.
-4. Interrupt and resume it with identical semantic arguments.
-5. Pass schema-v2 verification and completed-resume idempotence.
-6. Record throughput, retries, Drive behavior, disk use, and cleanup.
+1. Run the reproducible authenticated 10M-token acceptance pilot.
+2. Interrupt and resume it with identical semantic arguments.
+3. Pass schema-v2 verification and completed-resume idempotence.
+4. Record throughput, retries, Drive behavior, disk use, and cleanup.
 
 ### Model and trainer
 
@@ -139,21 +148,19 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ## Immediate next steps
 
-1. Finish and approve mixture calibration.
-2. Pass the authenticated bounded dataset pilot.
-3. Align the trainer safety gate with the corrected T4 result.
-4. Run integrated smoke training with GDN-2 chunk 32 and normal initialization.
-5. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
-6. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
-7. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
-8. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
-9. Scale only from measured quality, stability, memory, and throughput evidence.
+1. Pass the authenticated bounded dataset pilot using the approved exact weight file.
+2. Align the trainer safety gate with the corrected T4 result.
+3. Run integrated smoke training with GDN-2 chunk 32 and normal initialization.
+4. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
+5. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
+6. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
+7. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
+8. Scale only from measured quality, stability, memory, and throughput evidence.
 
 ## Current open decisions
 
 ### Dataset operations
 
-- approved exact weight-file hash;
 - reader, queue, prefetch, and retry settings after live measurement;
 - final shard and prepared-block sizes;
 - ongoing local cache prefetch/LRU policy;
@@ -182,6 +189,6 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ## Decisions no longer open
 
-Frozen choices include the source revision and cluster policy, GPT-2 token IDs and EOD token, context+1 packing and stride, exact empirical-mixture derivation, Google Drive's durable-mirror role, overlapping first-pass preparation/training strategy after gates pass, PyTorch, the geometry-scalable model family, the GDN-2-dominant 3:1 pattern, the differentiable chunkwise backend, full MHA in attention layers, QK-RMSNorm and output gating, pre-RMSNorm/final RMSNorm, MHA-only RoPE, dense SwiGLU, zero dropout, tied padded embeddings, initial 2,048 context, smoke and substantive reference geometries, fallback ordering, and matched transformer FFN widths.
+Frozen choices include the source revision and cluster policy, GPT-2 token IDs and EOD token, context+1 packing and stride, exact empirical-mixture derivation, the approved exact weight-file SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`, Google Drive's durable-mirror role, overlapping first-pass preparation/training strategy after gates pass, PyTorch, the geometry-scalable model family, the GDN-2-dominant 3:1 pattern, the differentiable chunkwise backend, full MHA in attention layers, QK-RMSNorm and output gating, pre-RMSNorm/final RMSNorm, MHA-only RoPE, dense SwiGLU, zero dropout, tied padded embeddings, initial 2,048 context, smoke and substantive reference geometries, fallback ordering, and matched transformer FFN widths.
 
 The frozen training-system contract remains: schema-v2 prepared blocks are acknowledged only after complete optimizer updates, and joint checkpoints bind the exact consumed block to complete trainer and RNG state. It does not freeze the training-recipe values.

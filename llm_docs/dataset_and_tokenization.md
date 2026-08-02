@@ -1,6 +1,6 @@
 # Dataset and Tokenization
 
-_Last updated: 2026-07-31_
+_Last updated: 2026-08-02_
 
 ## Tokenizer contract
 
@@ -76,7 +76,40 @@ mixture_report.json
 climbmix_code_free_weights.json
 ```
 
-The generated weight file is not approved until `mixture_report.json` and all relevant hashes are reviewed.
+The full scan completed successfully on 2026-08-01 after covering all 100 pinned source files and all 7,457 deterministic work items.
+
+Measured corpus totals:
+
+- source bytes scanned: `1,987,970,304,099`;
+- records: `553,315,056`;
+- all-cluster source tokens: `356,864,528,972`;
+- accepted source tokens after excluding cluster 11: `351,792,454,745`;
+- excluded cluster-11 source tokens: `5,072,074,227` (`1.421288%` of all source tokens);
+- accepted documents: `544,684,421`;
+- excluded cluster-11 documents: `8,630,635`.
+
+The approval review passed all required checks: exact source-byte coverage, positive totals for clusters 1–20, cluster 11 present in the all-cluster report but absent from the accepted weight file, exact agreement between accepted report totals and the weight file, consistent embedded hashes, successful production stream-configuration loading, and byte-identical hashes after a completed `--resume` validation on a copied output directory. The run logged 84 transient first-attempt network warnings, all recovered without exhausted retries, errors, or tracebacks.
+
+Approved calibration identity:
+
+```text
+source revision:
+5eaa64b9c0c85b7f56af01d7dffdb0795816b12b
+
+work-plan self-hash:
+a09e74aea4308528a0035d517d6987a47f7fb0021aa867252f1831a7df82a601
+
+climbmix_code_free_weights.json SHA-256:
+76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7
+
+mixture_report.json raw-file SHA-256:
+52d06f27dd5ed034504a9656cb664d3ded57cd073cc647eca332021cf5bbd07f
+
+mixture_report.json canonical self-hash:
+a8b52650e4001dee957cfd9a13cab2a4daacdb58bf1229a0f8ff38f51b035d47
+```
+
+The exact production weight file is approved under SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`. Despite its historical filename, it guarantees only that the explicit programming cluster is excluded; it is not guaranteed code-free.
 
 ## Production architecture
 
@@ -228,21 +261,17 @@ uv run --env-file .env python -m dataset.production ...
 
 ## Remaining operational gates
 
-1. Complete the exact full mixture calibration.
-2. Review `mixture_report.json` and approve the weight-file SHA-256.
-3. Finalize the reproducible authenticated acceptance-test harness.
-4. Run the bounded 10M-token dataset pilot.
-5. Interrupt and resume it with identical semantic arguments.
-6. Run full schema-v2 verification.
-7. Verify that a second completed resume uploads no duplicate Drive objects.
-8. Confirm that no temporary or finalization-backup artifacts remain.
-9. Record throughput, retries, Drive behavior, disk use, and recovery behavior.
+1. Run the reproducible authenticated bounded 10M-token dataset pilot.
+2. Interrupt and resume it with identical semantic arguments.
+3. Run full schema-v2 verification.
+4. Verify that a second completed resume uploads no duplicate Drive objects.
+5. Confirm that no temporary or finalization-backup artifacts remain.
+6. Record throughput, retries, Drive behavior, disk use, and recovery behavior.
 
-Do not start the complete 90B build until the exact weights, bounded dataset pilot, model/trainer consumer, and small end-to-end training pilot pass.
+Do not start the complete 90B build until the bounded dataset pilot, model/trainer consumer, and small end-to-end training pilot pass.
 
 ## Open dataset decisions
 
-- Final approved exact weight-file hash.
 - Operational reader, queue, prefetch, and retry settings after the live pilot.
 - Final shard and prepared-block sizes after throughput measurements.
 - Local cache prefetch/LRU policy during later presentations.
