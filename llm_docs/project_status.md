@@ -16,6 +16,24 @@ The corrected schema-v2 T4 run has now passed every recurrent-versus-chunkwise m
 
 The complete 90B dataset build and approximately-100M architecture comparison remain unauthorized.
 
+## Authenticated 10M dataset pilot — passed
+
+The authenticated bounded dataset acceptance pilot passed on 2026-08-02 at commit `e4776501d68e39746f8a75dcbb9c49515f215abd`, using the approved weight SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7` and real personal-Google-Drive durability.
+
+- run ID: `climbmix-pilot-001`;
+- target/minimum/maximum: 10,000,000 / 9,000,000 / 11,000,000 accepted source tokens;
+- completed accepted source tokens: 10,000,662;
+- completed source documents consumed: 14,136;
+- seven local immutable shards with seven matching remotely durable Drive entries;
+- intentional interruption after the first durable checkpoint at 2,000,112 accepted source tokens and 2,814 documents;
+- the actual producer process group exited with status 143 before the `--resume` launch;
+- resumed completion, schema-v2 full scan, completed-resume idempotence, current offline-test evidence, calibration evidence, and Drive smoke all passed;
+- fail-closed acceptance report status: `PASS`.
+
+Canonical VPS evidence is under `/data/climbmix-ops`, including `dataset_acceptance_report.json`, `dataset_acceptance_report.md`, `pilot-interrupted.json`, `pilot-before-completed-resume.json`, phase logs, and exit-code files. The JSON acceptance report SHA-256 is `b18decde4aa0e6e7376c3fecd3dda4406dee983f11224537cf73dd22a66bc00b`.
+
+An earlier orchestration attempt was rejected because it terminated only a wrapper shell while the producer continued. Its local and Drive artifacts were archived and excluded from the accepted evidence. The accepted rerun terminated the full producer process group and passed the interruption/resume gate.
+
 ## Completed foundations
 
 ### Dataset implementation
@@ -131,10 +149,7 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ### Dataset
 
-1. Run the reproducible authenticated 10M-token acceptance pilot.
-2. Interrupt and resume it with identical semantic arguments.
-3. Pass schema-v2 verification and completed-resume idempotence.
-4. Record throughput, retries, Drive behavior, disk use, and cleanup.
+The authenticated 10M-token dataset gate is complete. The bounded run, real Drive durability, intentional interruption/resume, schema-v2 full verification, completed-resume idempotence, and fail-closed acceptance report all passed. Remaining dataset work is limited to operational tuning informed by measured production/trainer behavior and defects revealed by later integration.
 
 ### Model and trainer
 
@@ -151,14 +166,13 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ## Immediate next steps
 
-1. Pass the authenticated bounded dataset pilot using the approved exact weight file.
-2. Align the trainer safety gate with the corrected T4 result.
-3. Run integrated smoke training with GDN-2 chunk 32 and normal initialization.
-4. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
-5. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
-6. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
-7. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
-8. Scale only from measured quality, stability, memory, and throughput evidence.
+1. Align the trainer safety gate with the corrected T4 result.
+2. Run integrated smoke training with GDN-2 chunk 32 and normal initialization against schema-v2 data.
+3. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
+4. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
+5. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
+6. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
+7. Scale only from measured quality, stability, memory, and throughput evidence.
 
 ## Current open decisions
 
