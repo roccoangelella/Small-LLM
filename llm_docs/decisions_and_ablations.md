@@ -17,6 +17,7 @@ When replacing a decision, record the old default, the new default, the reason, 
 - Use the GPT-2 byte-level BPE IDs already present in the corpus.
 - Use exact empirical source-token mixture weights conditioned on cluster 11 being excluded.
 - Approve `climbmix_code_free_weights.json` at SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`, derived from the completed full-corpus scan of pinned revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`.
+- Publish the reusable calibration implementation, exact aggregate artifacts, and audit evidence in the public repository `roccoangelella/climbmix-token-mixture`; keep raw records, token arrays, credentials, and unrelated private project code out of that release.
 - Keep mixture accounting continuous across documents, batches, shards, checkpoints, interruptions, and resumes.
 - Use context+1 packing with stride equal to the context length.
 - Use personal Google Drive as the durable dataset mirror, not as the random-access training filesystem.

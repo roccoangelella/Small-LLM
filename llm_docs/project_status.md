@@ -51,6 +51,8 @@ All documented integrity checks passed, including exact byte coverage, positive 
 
 The exact production weight file is approved at SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`. The work-plan self-hash is `a09e74aea4308528a0035d517d6987a47f7fb0021aa867252f1831a7df82a601`, and the canonical report self-hash is `a8b52650e4001dee957cfd9a13cab2a4daacdb58bf1229a0f8ff38f51b035d47`.
 
+The audited calibration implementation and aggregate results are now public at `roccoangelella/climbmix-token-mixture`, commit `5ef5839800f712f773f1f9bde7fe5216829f58da`. The extracted package passed 31 focused tests, an exact pinned-tree metadata recheck, a zero-mismatch 1,000-record token-array sample across all 100 files, public-package completed-resume idempotence, and an all-20-cluster document-count match against `gvlassis/ClimbMix`. The public artifact adds token-weighted totals to the already-public document-weighted ratios.
+
 ### Remote durability
 
 PR #4, merged at `cc8d551b76a0478664d78ccee77414694abdd29b`, added installed-app Google Drive OAuth with the narrow `drive.file` scope. Real upload, metadata-read, download-hash, and cleanup smoke tests passed on 2026-07-28. Joint checkpoints support verified two-phase publication and empty-VPS restoration.

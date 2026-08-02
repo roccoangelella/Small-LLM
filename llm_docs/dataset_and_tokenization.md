@@ -111,6 +111,20 @@ a8b52650e4001dee957cfd9a13cab2a4daacdb58bf1229a0f8ff38f51b035d47
 
 The exact production weight file is approved under SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`. Despite its historical filename, it guarantees only that the explicit programming cluster is excluded; it is not guaranteed code-free.
 
+### Public calibration release
+
+On 2026-08-02 the calibration process, focused tests, exact aggregate artifacts, and verification report were published in the public repository `roccoangelella/climbmix-token-mixture` at commit `5ef5839800f712f773f1f9bde7fe5216829f58da`.
+
+The public release contains no source documents, token arrays, credentials, model code, or private project state. It includes the exact work plan, final progress, report, accepted weights, an offline verifier, and the standalone standard-library calibration package. Publication followed additional checks beyond the original approval:
+
+- the pinned Hugging Face tree was re-resolved and exactly matched all 100 published paths, sizes, and the `1,987,970,304,099`-byte total;
+- 31 focused ownership, work-plan, metadata, retry, and resume tests passed in the extracted public package;
+- 1,000 records, 10 from every source file, were fully JSON-parsed with zero `token_count != len(tokens)` or GPT-2 token-bound mismatches;
+- all 20 per-cluster document counts exactly matched the independently published `gvlassis/ClimbMix` counts;
+- a completed `--resume` through the public package left all calibration artifact hashes byte-identical.
+
+The related `gvlassis/ClimbMix` release already makes the corpus easier to consume and publishes document-count ratios. The new repository is complementary: it publishes source-token totals and conditioned integer weights for token-budgeted scheduling, so other users do not need to repeat the approximately-2-TB metadata scan.
+
 ## Production architecture
 
 Do not wait for the complete 90B-token corpus before training, and do not create one enormous final binary.
