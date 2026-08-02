@@ -13,10 +13,11 @@ Do not start the 90B-token run until all of the following are true:
 
 1. The exact cluster-weight JSON has been generated, reviewed, and approved.
 2. Personal Google Drive OAuth setup has passed its real upload/download smoke test.
-3. The authenticated bounded 10M-token pilot has passed interruption, resume, verification, idempotence, and cleanup checks.
-4. The repository unit tests and GitHub Actions workflow are green.
-5. The output volume passes disk preflight for the intended run.
-6. The trainer consumer and joint-checkpoint integration are ready for the production launch.
+3. The fail-closed acceptance verifier `uv run python -m dataset.acceptance verify ...` and unit tests pass against concrete evidence artifacts.
+4. The authenticated bounded 10M-token pilot has passed interruption, resume, verification, idempotence, and cleanup checks.
+5. The repository unit tests and GitHub Actions workflow are green.
+6. The output volume passes disk preflight for the intended run.
+7. The trainer consumer and joint-checkpoint integration are ready for the production launch.
 
 ## Environment and dependencies
 
@@ -53,12 +54,18 @@ Place the downloaded Desktop App client JSON at:
 .secrets/google-drive-oauth-client.json
 ```
 
-Run:
+Run it with durable log and exit-code evidence for the final acceptance report:
 
 ```bash
+mkdir -p /data/climbmix-ops/logs
+set -o pipefail
 uv run python -m dataset.drive_auth setup \
   --client-secrets .secrets/google-drive-oauth-client.json \
-  --token-file .secrets/google-drive-authorized-user.json
+  --token-file .secrets/google-drive-authorized-user.json \
+  2>&1 | tee /data/climbmix-ops/logs/drive-oauth-smoke.log
+status=${PIPESTATUS[0]}
+echo "$status" > /data/climbmix-ops/drive-oauth-smoke.exit-code
+test "$status" -eq 0
 ```
 
 The command:
@@ -142,6 +149,23 @@ sha256sum /data/climbmix-mixture-calibration/climbmix_code_free_weights.json
 
 Do not use rounded paper percentages as production weights.
 
+## Offline test evidence
+
+Run the current checkout's complete offline suite and persist both the log and exit code. The acceptance verifier rejects missing evidence and does not infer success from an older run:
+
+```bash
+mkdir -p /data/climbmix-ops/logs
+set -o pipefail
+uv run python -m unittest discover -v \
+  2>&1 | tee /data/climbmix-ops/logs/offline-tests.log
+status=${PIPESTATUS[0]}
+echo "$status" > /data/climbmix-ops/offline-tests.exit-code
+if [ "$status" -eq 0 ]; then
+  echo "RESULT=PASS" >> /data/climbmix-ops/logs/offline-tests.log
+fi
+test "$status" -eq 0
+```
+
 ## Authenticated bounded pilot
 
 Use the approved exact weight file and the real Drive folder:
@@ -179,7 +203,13 @@ Never use `--allow-local-only` for production or the authenticated acceptance pi
 
 ## Interruption and resume test
 
-After at least one durable checkpoint has been committed and its referenced shards are remotely durable, terminate the pilot process.
+After at least one durable checkpoint has been committed and its referenced shards are remotely durable, capture the durable interrupted state before terminating the pilot process:
+
+```bash
+uv run python -m dataset.acceptance snapshot \
+  --output-dir /data/climbmix-pilot \
+  --snapshot-file /data/climbmix-ops/pilot-interrupted.json
+```
 
 Resume with identical semantic arguments plus `--resume`:
 
@@ -232,7 +262,29 @@ Acceptance requires:
 
 ## Completed-resume idempotence
 
-Record the final local hashes and Drive file IDs, then run the same completed command again with `--resume`.
+After the pilot completes and the ordinary verifier passes, capture the complete semantic state:
+
+```bash
+uv run python -m dataset.acceptance snapshot \
+  --output-dir /data/climbmix-pilot \
+  --snapshot-file /data/climbmix-ops/pilot-before-completed-resume.json
+```
+
+Run the same completed production command again with `--resume`. Then run the fail-closed acceptance verifier:
+
+```bash
+uv run python -m dataset.acceptance verify \
+  --weights-file /data/climbmix-mixture-calibration/climbmix_code_free_weights.json \
+  --calibration-dir /data/climbmix-mixture-calibration \
+  --output-dir /data/climbmix-pilot \
+  --run-id climbmix-pilot-001 \
+  --interrupted-snapshot /data/climbmix-ops/pilot-interrupted.json \
+  --idempotence-baseline /data/climbmix-ops/pilot-before-completed-resume.json \
+  --ops-dir /data/climbmix-ops \
+  --full-scan
+```
+
+The command exits nonzero unless every environment, calibration, current-test, Drive-smoke, pilot, interruption/resume, and completed-resume evidence gate passes. It writes JSON and Markdown reports under `/data/climbmix-ops`.
 
 Acceptance requires:
 

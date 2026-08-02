@@ -19,6 +19,7 @@ When replacing a decision, record the old default, the new default, the reason, 
 - Approve `climbmix_code_free_weights.json` at SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`, derived from the completed full-corpus scan of pinned revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`.
 - Publish the reusable calibration implementation, exact aggregate artifacts, and audit evidence in the public repository `roccoangelella/climbmix-token-mixture`; keep raw records, token arrays, credentials, and unrelated private project code out of that release.
 - Keep mixture accounting continuous across documents, batches, shards, checkpoints, interruptions, and resumes.
+- Require dataset operational acceptance to fail closed: Drive smoke, bounded pilot, interruption/resume, schema verification, and completed-resume idempotence may pass only from concrete logs, exit codes, durable snapshots, manifests, and hashes; never from hard-coded or dry-run success values.
 - Use context+1 packing with stride equal to the context length.
 - Use personal Google Drive as the durable dataset mirror, not as the random-access training filesystem.
 - Overlap first-pass dataset preparation and model training after the operational gates pass.

@@ -32,9 +32,10 @@ PR #2, merged at `4f7822d128b6b4e563efffd4a197642403a743c3`, added the productio
 - 80B minimum, 90B target, and 100B hard maximum;
 - verified Google Drive mirroring before durable cursor advancement;
 - configuration, schema, policy, weight, and source drift rejection;
-- locking, disk preflight, retry policy, orphan cleanup, and empty-VPS restore primitives.
+- locking, disk preflight, retry policy, orphan cleanup, and empty-VPS restore primitives;
+- a fail-closed acceptance evidence verifier with deterministic interruption and completed-resume snapshots, exact calibration/hash validation, current-test and Drive-smoke evidence checks, schema-v2 pilot verification, and semantic idempotence comparison.
 
-The dataset subsystem remains frozen except for defects revealed by operational acceptance testing and narrow trainer compatibility surfaces.
+The acceptance verifier was promoted from the former `feature/acceptance-harness` branch only after removing hard-coded success states and an incorrect calibration-byte constant. It cannot mark live Drive, pilot, resume, or idempotence gates as passed without concrete evidence artifacts. The dataset subsystem remains frozen except for defects revealed by operational acceptance testing and narrow trainer compatibility surfaces.
 
 ### Exact-mixture calibration
 
