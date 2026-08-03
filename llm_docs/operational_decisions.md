@@ -59,3 +59,40 @@ The pilot also freezes the following interpretation boundaries:
 - current production disk preflight requires about 222.3 GiB for 90B and 247.0 GiB for the 100B hard maximum, while the pilot VPS had about 95 GiB free; full production therefore requires more capacity or a proven bounded-cache eviction lifecycle.
 
 These findings do not revoke the pilot pass. They define new preconditions for the later 90B launch and prevent bounded operational evidence from being overgeneralized.
+
+## 2026-08-03 — Freeze the initial T4 training block at 16 sequences
+
+The user selected `sequences_per_block=16` for the first approximately-20M training-qualification cache on the NVIDIA T4.
+
+Previous state:
+
+- the authenticated dataset pilot inherited the production-cache default of 512 sequences per block;
+- the trainer later defined one durable prepared block as one atomic optimizer update;
+- those independent choices implied approximately 1,048,576 target tokens per update at context 2,048, but no user decision had approved that as training geometry.
+
+New decision:
+
+```text
+context_length: 2,048
+sequences_per_block: 16
+microbatch_size: 1
+effective target tokens per update: approximately 32,768
+```
+
+Reasoning and evidence:
+
+- the corrected T4 benchmark measured approximately 1,291 target tokens/s for the selected FP16 GDN-2 chunk-32 path;
+- a 16-sequence block therefore gives a roughly 25-second update before data/checkpoint overhead;
+- a 10M-train-token cache would provide approximately 305 updates instead of only 9–10;
+- this gives enough cadence to observe loss, scaler behavior, clipping, Muon statistics, checkpointing, interruption, and resume;
+- microbatch size remains 1, so this decision does not increase per-forward activation memory.
+
+Implementation boundary:
+
+- do not modify the global dataset-production default of 512 sequences per block;
+- build a separate bounded training-qualification cache with explicit `--sequences-per-block 16`;
+- launch the trainer with explicit `--sequences-per-block 16`, so the manifest identity check rejects a wrong cache;
+- preserve the accepted 512-block pilot unchanged as operational dataset evidence;
+- consider 32 sequences per block only as a later measured batch-growth comparison after the 16-sequence profile passes.
+
+The bounded source-token target, shard size, queue/head-start settings, learning rates, WSD horizons, checkpoint/evaluation cadence, acceptance thresholds, and number of seeds remain open.
