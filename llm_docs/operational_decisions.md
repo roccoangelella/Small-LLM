@@ -1,6 +1,6 @@
 # Operational Decisions
 
-_Last updated: 2026-08-02_
+_Last updated: 2026-08-03_
 
 ## 2026-08-02 — Launch the authenticated 10M-token dataset pilot
 
@@ -36,3 +36,26 @@ The accepted evidence records:
 The canonical acceptance report is `/data/climbmix-ops/dataset_acceptance_report.json`, SHA-256 `b18decde4aa0e6e7376c3fecd3dda4406dee983f11224537cf73dd22a66bc00b`.
 
 A prior attempt that did not terminate the actual producer was explicitly rejected, archived, and excluded from the accepted evidence. This prevents a wrapper-level signal from being misrepresented as an interruption/resume qualification.
+
+
+## 2026-08-03 — Freeze accepted interruption evidence and pilot interpretation
+
+The 10M pilot exposed a distinction between terminating a wrapper and terminating the dataset producer. The first orchestration attempt signalled only its wrapper shell; the child producer continued, retained the production lock, and completed. That attempt is invalid as interruption evidence, was archived for forensics, and is excluded from all accepted reports.
+
+The operational contract is now:
+
+- run the producer in a dedicated process group or equivalent supervised unit;
+- capture an incomplete snapshot only after every referenced shard is remotely durable;
+- terminate the complete producer group, wait for exit, and confirm no descendant or lock holder remains;
+- launch `--resume` only after those checks;
+- reject wrapper exit codes, snapshots, or lock conflicts as proof by themselves;
+- use `uv run python` or the project interpreter rather than assuming a system `python` executable.
+
+The pilot also freezes the following interpretation boundaries:
+
+- its 10,000,662 accepted tokens, seven local/Drive shards, and 119-second end-to-end acceptance sequence qualify operational correctness, not 90B throughput;
+- only seven of nineteen accepted clusters appeared at 10M tokens, with normalized mixture error `0.08533077992520376` while the accepted command used the permissive production default `maximum_rolling_mixture_error=1.0`, so the pilot is not a representative all-cluster training sample;
+- source-reader resume currently replays prior documents to verify the durable cursor, creating restart work that grows with cursor depth and must be qualified before full production;
+- current production disk preflight requires about 222.3 GiB for 90B and 247.0 GiB for the 100B hard maximum, while the pilot VPS had about 95 GiB free; full production therefore requires more capacity or a proven bounded-cache eviction lifecycle.
+
+These findings do not revoke the pilot pass. They define new preconditions for the later 90B launch and prevent bounded operational evidence from being overgeneralized.

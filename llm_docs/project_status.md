@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-08-02_
+_Last updated: 2026-08-03_
 
 ## Current phase
 
@@ -149,7 +149,15 @@ The trainer CLI still contains a safety gate and message referring to the old T4
 
 ### Dataset
 
-The authenticated 10M-token dataset gate is complete. The bounded run, real Drive durability, intentional interruption/resume, schema-v2 full verification, completed-resume idempotence, and fail-closed acceptance report all passed. Remaining dataset work is limited to operational tuning informed by measured production/trainer behavior and defects revealed by later integration.
+The authenticated 10M-token dataset gate is complete. The bounded run, real Drive durability, intentional interruption/resume, schema-v2 full verification, completed-resume idempotence, and fail-closed acceptance report all passed.
+
+The pilot also exposed three production-scale constraints that remain open:
+
+- the current source reader verifies resume by replaying all previously consumed documents; replay to the 2,814-document pilot cursor materially dominated early resume time, so late-cursor recovery must be measured or redesigned before 90B;
+- production disk preflight requires about 222.3 GiB for the 90B target and 247.0 GiB for the 100B hard maximum, while the pilot VPS had about 95 GiB free; a larger disk or proven trainer-driven bounded eviction lifecycle is required;
+- the 10M operational sample contained training tokens from only seven of nineteen accepted clusters and ended at normalized mixture error `0.08533077992520376`, with the accepted command using the permissive production default `maximum_rolling_mixture_error=1.0`; it is not representative enough for all-cluster model-quality conclusions.
+
+A production orchestrator must also terminate and verify the full producer process group; killing a wrapper shell alone is explicitly invalid evidence.
 
 ### Model and trainer
 
@@ -169,19 +177,23 @@ The authenticated 10M-token dataset gate is complete. The bounded run, real Driv
 1. Align the trainer safety gate with the corrected T4 result.
 2. Run integrated smoke training with GDN-2 chunk 32 and normal initialization against schema-v2 data.
 3. Validate interruption, local resume, empty-VPS migration, validation, and generation from trainer-produced checkpoints.
-4. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
-5. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
-6. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
-7. Scale only from measured quality, stability, memory, and throughput evidence.
+4. Qualify dataset late-cursor resume time and the local-capacity/eviction plan before authorizing 90B production.
+5. Profile or replace the slow ordinary-PyTorch GDN-2 backend.
+6. Screen learning rate, global token batch, clipping, decay, and schedule on bounded runs.
+7. Train the approximately-100M hybrid and matched Plan-B/Plan-C references only after these gates pass.
+8. Scale only from measured quality, stability, memory, and throughput evidence.
 
 ## Current open decisions
 
 ### Dataset operations
 
-- reader, queue, prefetch, and retry settings after live measurement;
+- reader, queue, prefetch, and retry settings after live trainer measurement;
 - final shard and prepared-block sizes;
-- ongoing local cache prefetch/LRU policy;
-- remote checkpoint and dataset retention policy;
+- direct/seekable source cursor versus full replay on resume;
+- local cache capacity, consumption watermark, and safe eviction/LRU policy;
+- final production rolling-mixture-error bound; the current production CLI default is `1.0`;
+- whether bounded comparison datasets require explicit all-cluster bootstrap coverage;
+- remote checkpoint and dataset retention policy, including rejected/superseded runs;
 - automatic `.env` loading.
 
 ### Model operations
