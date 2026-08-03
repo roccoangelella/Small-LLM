@@ -37,7 +37,6 @@ The canonical acceptance report is `/data/climbmix-ops/dataset_acceptance_report
 
 A prior attempt that did not terminate the actual producer was explicitly rejected, archived, and excluded from the accepted evidence. This prevents a wrapper-level signal from being misrepresented as an interruption/resume qualification.
 
-
 ## 2026-08-03 — Freeze accepted interruption evidence and pilot interpretation
 
 The 10M pilot exposed a distinction between terminating a wrapper and terminating the dataset producer. The first orchestration attempt signalled only its wrapper shell; the child producer continued, retained the production lock, and completed. That attempt is invalid as interruption evidence, was archived for forensics, and is excluded from all accepted reports.
@@ -95,4 +94,26 @@ Implementation boundary:
 - preserve the accepted 512-block pilot unchanged as operational dataset evidence;
 - consider 32 sequences per block only as a later measured batch-growth comparison after the 16-sequence profile passes.
 
-The bounded source-token target, shard size, queue/head-start settings, learning rates, WSD horizons, checkpoint/evaluation cadence, acceptance thresholds, and number of seeds remain open.
+The bounded source-token target, shard size, queue/head-start settings, learning rates, schedule, checkpoint/evaluation cadence, acceptance thresholds, and number of seeds remain open.
+
+## 2026-08-03 — Provisionally approve the first T4 checkpoint and evaluation cadence
+
+The user approved the proposed qualification cadence provided that it does not materially slow training:
+
+```text
+local joint checkpoint: every 25 successful optimizer updates
+validation: every 50 successful optimizer updates
+remote joint-checkpoint publication: every 50 successful optimizer updates
+```
+
+This is a conditional operational decision, not yet an unconditional launch constant. Before the longer qualification segment, the preflight must measure checkpoint save time, validation time, remote-publication time, and their aggregate wall-clock fraction.
+
+Implementation and interpretation boundaries:
+
+- local checkpointing remains at 25 updates unless it is itself unexpectedly expensive;
+- validation should initially use a small fixed validation slice so its cost is measurable and comparable;
+- remote publication should not block the training process longer than the accepted overhead budget; asynchronous or deferred publication is preferred when correctness permits it;
+- the numeric definition of “materially slow” remains to be approved after the first timing measurement;
+- if the measured cadence exceeds the approved overhead budget, validation and remote publication may be moved to a wider interval without changing the optimizer, update batch, or local recovery cadence.
+
+The number of validation blocks, exact overhead budget, best-checkpoint metric, and remote prefetch window remain open.
