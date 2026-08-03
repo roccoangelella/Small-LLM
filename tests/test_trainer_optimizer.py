@@ -125,6 +125,30 @@ class HybridOptimizerTests(unittest.TestCase):
         self.assertEqual(rates["adamw_decay"], 2e-3)
         self.assertEqual(rates["adamw_no_decay"], 2e-3)
 
+    def test_fp16_checkpoint_restore_keeps_fp32_optimizer_state(self) -> None:
+        model = _Model().half()
+        config = TrainerConfig(
+            optimizer="hybrid_muon_adamw",
+            precision="fp16",
+        )
+        optimizer = build_hybrid_muon_adamw(model, config)
+        for parameter in model.parameters():
+            parameter.grad = torch.ones_like(parameter)
+        optimizer.step()
+        state = optimizer.state_dict()
+
+        restored_model = _Model().half()
+        restored = build_hybrid_muon_adamw(restored_model, config)
+        restored.load_state_dict(state)
+        tensor_states = [
+            value
+            for parameter_state in restored.state.values()
+            for value in parameter_state.values()
+            if isinstance(value, torch.Tensor)
+        ]
+        self.assertTrue(tensor_states)
+        self.assertTrue(all(value.dtype == torch.float32 for value in tensor_states))
+
     def test_checkpoint_state_binds_recipe_and_routing(self) -> None:
         model = _Model()
         config = TrainerConfig(optimizer="hybrid_muon_adamw", precision="fp32")
