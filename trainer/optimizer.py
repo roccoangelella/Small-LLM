@@ -312,6 +312,16 @@ class HybridMuonAdamW(Optimizer):
         ordinary = dict(state_dict)
         ordinary.pop("small_llm_optimizer", None)
         super().load_state_dict(ordinary)
+        # torch.optim.Optimizer casts floating state to the parameter dtype
+        # during load. Muon and this AdamW branch deliberately keep their
+        # optimizer arithmetic in FP32 even when model parameters are FP16.
+        for parameter, parameter_state in self.state.items():
+            for key in ("momentum_buffer", "exp_avg", "exp_avg_sq"):
+                value = parameter_state.get(key)
+                if isinstance(value, Tensor):
+                    parameter_state[key] = value.to(
+                        device=parameter.device, dtype=torch.float32
+                    )
 
     def _apply_weight_decay(self, parameter: nn.Parameter, *, lr: float, decay: float) -> None:
         factor = 1.0 - lr * decay
