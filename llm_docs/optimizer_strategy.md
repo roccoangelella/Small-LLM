@@ -108,14 +108,15 @@ The first implementation orthogonalizes each complete logical matrix. It does no
 
 ### AdamW
 
-AdamW receives parameters that are not ordinary feature-transform matrices:
+AdamW receives the currently classified non-Muon roles:
 
 - the tied token embedding / LM-head matrix;
 - every RMSNorm scale;
 - every bias;
 - GDN-2 `A_log` and `dt_bias`;
-- GDN-2 depthwise Q/K/V convolution kernels;
-- any scalar, vector, structured temporal filter, or newly added parameter not explicitly admitted to Muon.
+- GDN-2 depthwise Q/K/V convolution kernels.
+
+A future scalar, vector, structured temporal filter, or other parameter is not assigned automatically. It must be admitted explicitly to Muon or AdamW; otherwise optimizer construction fails.
 
 The existing no-weight-decay exclusions remain:
 
@@ -138,7 +139,7 @@ Optimizer construction must prove that:
 4. every named no-decay parameter exists;
 5. any unrecognized trainable parameter aborts construction.
 
-This matters because silently routing a new structured parameter to Muon could change the optimizer architecture without a decision or checkpoint-identity change.
+This matters because silently routing a new structured parameter could change the optimizer architecture without a decision or checkpoint-identity change.
 
 ## Whole-matrix Muon update
 
