@@ -60,16 +60,15 @@ Muon receives complete logical two-dimensional matrices only:
 - MHA Q, K, V, output-gate, and output projections;
 - GDN-2 Q, K, V, erase, write, decay, output-gate, and output projections.
 
-AdamW receives:
+AdamW receives the currently classified exception roles:
 
 - the tied token embedding / prediction matrix;
 - every RMSNorm scale;
 - every bias;
 - GDN-2 `A_log` and `dt_bias`;
-- GDN-2 depthwise Q/K/V convolution kernels;
-- any future parameter not explicitly admitted to Muon.
+- GDN-2 depthwise Q/K/V convolution kernels.
 
-Routing fails closed. Every trainable parameter must be assigned exactly once, and a new unrecognized parameter aborts optimizer construction rather than silently entering a generic group.
+Routing fails closed. Every trainable parameter must be assigned exactly once, and any future parameter requires an explicit Muon or AdamW classification. A new unrecognized parameter aborts optimizer construction rather than silently entering a generic group.
 
 ## Why the accepted 10M cache is not the training cache
 
