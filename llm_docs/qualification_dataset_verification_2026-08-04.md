@@ -32,10 +32,10 @@ validation blocks: 1
 ## Verification gap found
 
 The general `dataset.main verify --full-scan` command selected the schema-v2
-stream-cache verifier.  That path correctly checked local shard existence,
+stream-cache verifier. That path correctly checked local shard existence,
 byte sizes, SHA-256 checksums, block continuity, source-token attribution, and
 Drive durability markers, but it did not forward the `full_scan` request into
-token decoding.  Its schema-v2 report also used zero placeholders for document
+token decoding. Its schema-v2 report also used zero placeholders for document
 and inserted-EOD counters that are not available in the schema-v2 manifest.
 
 The successful earlier output therefore remains valid structural and checksum
@@ -67,19 +67,58 @@ The dedicated verifier:
 Focused offline tests cover a valid complete scan, an out-of-range token whose
 checksum still matches its manifest, and a sequence-geometry mismatch.
 
-## Gate
+## Executed evidence
 
-The qualification dataset is accepted for Kaggle packaging only after the new
-command returns:
+The focused verifier suite was executed on the VPS and passed:
 
-```json
-{
-  "passed": true,
-  "complete": true,
-  "full_scan": true,
-  "problems": []
-}
+```text
+3 passed
 ```
 
-The exact `qualification_plan.json` should then be regenerated once more to
-confirm that the manifest identities and 306-update schedule remain unchanged.
+The dedicated verifier was then executed against the completed qualification
+dataset. It returned exit code `0` and the following acceptance fields:
+
+```text
+passed: true
+complete: true
+full_scan: true
+problems: []
+shards scanned: 7
+stored uint16 tokens scanned: 10,021,659
+train stored tokens: 10,011,414
+validation stored tokens: 10,245
+train sequences: 4,886
+validation sequences: 5
+accepted source tokens: 10,000,662
+```
+
+The full scan aggregated the exact source-token attribution:
+
+```text
+cluster 4:    530,262
+cluster 6:  2,219,982
+cluster 7:  1,991,306
+cluster 12: 2,340,422
+cluster 16: 1,645,691
+cluster 17:   925,329
+cluster 18:   347,670
+total:      10,000,662
+```
+
+`accepted_document_count` and `inserted_eod_count` remain explicitly marked
+unavailable because the schema-v2 manifest does not preserve those exact
+counters. They are not represented as zero measurements.
+
+The exact `qualification_plan.json` was regenerated after the full scan. Its
+manifest SHA-256, Drive manifest SHA-256, seven-shard identity, 306-update
+one-pass schedule, and warmup/stable/decay horizons remained unchanged.
+
+## Gate result
+
+The qualification dataset verification gate is **passed**. The dataset is
+accepted for private Kaggle packaging and exact-commit trainer qualification.
+
+This does not authorize the complete one-pass training segment by itself. The
+remaining gates are the complete exact-commit offline suite, corrected T4
+harness, 20-successful-update W&B preflight and threshold freeze, then local and
+remote recovery qualification.
