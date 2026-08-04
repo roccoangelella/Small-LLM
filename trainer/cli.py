@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -33,12 +34,12 @@ def main(argv: list[str] | None = None) -> int:
         args,
         model_config=model_config,
         trainer_config=trainer_config,
+        engine=engine,
     )
     validation: dict[str, object] | None = None
     saved: set[str] = set()
     remotely_published: set[str] = set()
     completed = 0
-    exit_code = 1
 
     def run_validation() -> dict[str, object]:
         started = time.perf_counter()
@@ -153,11 +154,20 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"checkpoint_id": checkpoint_id}, sort_keys=True), flush=True)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
-        exit_code = 0
-        return 0
-    finally:
+    except BaseException:
         if telemetry is not None:
-            telemetry.finish(exit_code=exit_code)
+            try:
+                telemetry.finish(exit_code=1)
+            except Exception as telemetry_error:  # noqa: BLE001 - preserve the primary failure
+                sys.stderr.write(
+                    "W&B finalization also failed while handling the training error: "
+                    f"{type(telemetry_error).__name__}: {telemetry_error}\n"
+                )
+        raise
+
+    if telemetry is not None:
+        telemetry.finish(exit_code=0)
+    return 0
 
 
 if __name__ == "__main__":
