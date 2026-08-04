@@ -2,9 +2,10 @@
 
 _Last updated: 2026-08-04_
 
-## Decision
+## Fixed profile
 
-The finite dataset used by the first approximately-20M NVIDIA T4 training qualification uses:
+The first approximately-20M NVIDIA T4 qualification uses a separate finite
+dataset with:
 
 ```text
 target accepted source tokens: 10,000,000
@@ -12,87 +13,108 @@ minimum accepted source tokens: 9,000,000
 hard maximum accepted source tokens: 11,000,000
 context length: 2,048
 sequences per prepared block: 16
-microbatch size: 1
+target shard size: 8 MiB = 8,388,608 bytes
+durable checkpoint cadence: 2,000,000 accepted source tokens
+remote durability: required
+trainer microbatch size: 1
+trainer passes: 1
 ```
 
-This is a separate dataset build from the already accepted 10M operational pilot. The operational pilot remains immutable evidence with 512-sequence blocks. The training-qualification dataset must use a new run ID and output directory with explicit `--sequences-per-block 16`.
+The 8 MiB target is specific to this small finite dataset so remote restore can
+exercise multiple shards.  It does not replace the general 1 GiB large-corpus
+default.
 
-## Precise meaning of target, minimum, and maximum
+The 2M durability cadence reuses the cadence that passed the authenticated 10M
+operational pilot.
 
-The phrase **9M-11M envelope** is only shorthand for a target plus two safety bounds. It does not mean that the producer arbitrarily chooses a size between nine and eleven million tokens.
+## Build entry point
 
-Documents are indivisible: the producer either accepts a complete source document or does not accept it. It never cuts a document to hit exactly 10,000,000 tokens.
+Use only the fail-closed qualification wrapper:
+
+```bash
+uv run --env-file .env python -m dataset.qualification_20m \
+  --weights-file <approved-exact-weight-file.json> \
+  --output-dir <new-qualification-dataset-directory> \
+  --run-id 20m-qualification-dataset-001
+```
+
+The wrapper fixes and appends the token bounds, context length, block size,
+shard size, and checkpoint cadence.  It rejects conflicting arguments and
+rejects `--allow-local-only`.
+
+Reader concurrency and bounded operational tuning may still be supplied when
+they do not alter dataset identity.
+
+## Target, minimum, and hard maximum
+
+Documents are indivisible.  The producer never cuts a source document merely
+to land exactly on 10,000,000 tokens.
 
 The stopping contract is:
 
-1. continue accepting whole documents while the incorporated total is below 10,000,000;
-2. normally stop as soon as an accepted whole document takes the total to at least 10,000,000;
+1. continue accepting complete documents while below 10,000,000;
+2. normally stop when a document takes the total to at least 10,000,000;
 3. never accept a document that would take the total above 11,000,000;
-4. if the next indivisible document would exceed 11,000,000, the build may finalize below the 10M target only when at least 9,000,000 tokens have already been accepted;
-5. if the source ends or the hard-maximum guard fires below 9,000,000, the build fails rather than producing an accepted qualification dataset.
+4. if the next indivisible document would exceed 11,000,000, completion below
+   target is permitted only after at least 9,000,000 tokens are incorporated;
+5. below 9,000,000, source exhaustion or the hard-maximum guard is a failure.
 
 Examples:
 
 ```text
-current total 9,980,000 + next document 50,000
-=> accept it and finish at 10,030,000
-
-a current total 9,700,000 + next document 1,400,000
-=> 11,100,000 would breach the hard maximum
-=> refuse the document and permit completion at 9,700,000
-
-a current total 8,800,000 + next document 2,300,000
-=> the document would breach 11,000,000, but 8,800,000 is below the minimum
-=> fail the build
+9,980,000 + 50,000 => accept and finish at 10,030,000
+9,700,000 + 1,400,000 => reject; 11.1M breaches cap; 9.7M may complete
+8,800,000 + 2,300,000 => reject and fail; current total is below minimum
 ```
 
-Therefore, a normal run finishes slightly above 10M. The 9M lower bound exists only as a rare whole-document safety fallback. The verified manifest records the exact final count and whether the 10M target was reached or the hard-maximum guard caused early completion.
+These numbers count distinct accepted source tokens, not EOD markers, padding,
+epochs, or repeated presentations.
 
-These numbers count distinct **accepted source tokens**. They do not count inserted EOD markers, padding, epochs, or repeated presentations.
+## How cluster weights use the target
 
-## Training geometry
+The approximately 10M accepted source tokens form the total material over which
+the exact approved cluster weights are tracked.  For a hypothetical 20% cluster,
+its cumulative target would be approximately 2M accepted source tokens.
 
-At 16 sequences per block and context 2,048, a full training block contains approximately 32,768 target tokens. A roughly 10M-token training split should provide about 305 optimizer updates. The exact count can differ because:
+Documents remain indivisible, so exact final cluster counts may differ slightly
+from their ideal fractional quotas.  The deterministic deficit scheduler tracks
+both cumulative and rolling mixture error.  Individual 32,768-target-token
+optimizer blocks are not required to contain every cluster in exact global
+proportion.
 
-- source-token count is not identical to stored target-token count;
-- documents receive EOD boundaries;
-- final sequences may contain padding;
-- approximately 0.1% of accepted documents are assigned deterministically to validation;
-- final train and validation blocks may contain fewer than 16 sequences.
+## What the completed manifest determines
 
-Exact warmup, stable, decay, checkpoint, and evaluation positions must be derived from the verified manifest rather than the approximate update estimate.
+The source-token profile is fixed now, while the following exact values are
+outputs of the completed build:
 
-## Validation policy
+- accepted source tokens;
+- train and validation source tokens and documents;
+- inserted EODs, stored tokens, and loss-bearing target tokens;
+- complete ordered block-ID lists;
+- number, sizes, and hashes of train and validation shards;
+- exact one-pass optimizer-update count;
+- configuration, schema, source-plan, local-manifest, and Drive-manifest hashes.
 
-The frozen dataset policy assigns documents to validation with a deterministic identity hash at probability 0.1%. The qualification leaves the accepted cluster IDs, cluster weights, and exact mixture scheduler untouched.
+The exact training schedule and fixed validation slice are calculated from
+these verified outputs.  Approximately 305 updates is only a planning estimate.
 
-The project must not rebalance validation with new per-cluster quotas or move documents after the build. After completion it freezes the ordered validation block IDs, dataset and Drive-manifest hashes, token and document counts by cluster, and deterministic generation prompts.
+## Relationship to the accepted operational pilot
 
-At this scale the validation sample may be noisy and is treated primarily as a finite-value, checkpoint-usability, and gross-regression signal rather than a strong model-quality estimate.
+The previously accepted 10M pilot used 512 sequences per block and remains
+immutable operational evidence.  It qualified source reading, exact mixture,
+Drive durability, interruption/resume, verification, and idempotence.
 
-## Dataset lifecycle and pass count
+It is not reused for training because its atomic-block contract would yield
+only about ten optimizer updates.  The new dataset keeps the same pinned source,
+tokenizer, accepted/excluded clusters, exact weights, and schema while changing
+the prepared-block geometry to 16 sequences.
 
-The dataset is completed, remotely durable, and fully verified before the trainer starts. The first qualification performs exactly one pass and forbids silent wraparound. Producer/trainer overlap remains a separate later operational test.
+## Validation and lifecycle
 
-## Still open
+The document-identity validation split remains deterministic.  Accepted cluster
+IDs and exact cluster weights are unchanged; validation is not rebalanced or
+oversampled.
 
-The approved token limits and lifecycle do not yet settle:
-
-- target shard size and durable dataset checkpoint cadence for this build;
-- the exact frozen validation block list, which can only be recorded after completion;
-- deterministic generation prompt contents;
-- measured W&B warning and failure thresholds derived from the T4 preflight.
-
-## Immediate implementation contract
-
-The dataset command must explicitly include:
-
-```text
---target-tokens 10000000
---minimum-tokens 9000000
---maximum-tokens 11000000
---context-length 2048
---sequences-per-block 16
-```
-
-The trainer command must explicitly assert `--sequences-per-block 16`. A manifest geometry mismatch remains a hard failure.
+The complete dataset is built, remotely durable, and verified before training.
+The trainer performs exactly one pass and must stop at manifest exhaustion.
+Producer/trainer overlap is a separate later operational qualification.
