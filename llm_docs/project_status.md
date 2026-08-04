@@ -4,25 +4,22 @@ _Last updated: 2026-08-04_
 
 ## Current phase
 
-The finite approximately-20M engineering qualification dataset is built,
-durably mirrored, fully scanned, and accepted. Exact-commit Kaggle T4 evidence,
-the 20-update integrated preflight, and the two-run 50-update same-T4
-repeatability measurement have passed.
+The finite approximately-20M engineering qualification dataset is built, durably mirrored, fully scanned, and accepted. The exact-commit Kaggle T4 gates, integrated preflight, same-T4 repeatability test, and actual-process local interruption/resume test have passed.
 
-The project is now in **threshold interpretation and recovery qualification**.
-Architecture selection is not being reopened. The complete 306-update one-pass
-segment, approximately-100M architecture comparison, and complete 90B dataset
-build remain unauthorized until checkpoint interpretation, local
-interruption/resume, and remote empty-environment recovery pass.
+The project is now in **final remote empty-environment recovery qualification**.
+
+Architecture selection is not being reopened. The complete 306-update one-pass segment remains unauthorized until the remote recovery test passes and the user explicitly authorizes launch. The approximately-100M architecture comparison and complete 90B dataset build also remain unauthorized until the 20M ladder is complete.
 
 Detailed evidence is recorded in:
 
 ```text
 llm_docs/20m_kaggle_preflight_results.md
 llm_docs/20m_repeatability_results.md
+llm_docs/20m_local_resume_results.md
+llm_docs/20m_remote_recovery_test.md
 ```
 
-## Fixed model and optimizer
+## Frozen model and optimizer
 
 ```text
 parameters: 20,637,592
@@ -33,27 +30,16 @@ GDN-2 backend: ordinary PyTorch chunkwise
 GDN-2 chunk size: 32
 initialization: normal
 seed: 17
-```
-
-Primary optimizer:
-
-```text
-ordinary feature-transform matrices: whole-matrix Muon
-embedding, norms, biases, dynamics, structured filters: AdamW
+optimizer: hybrid whole-matrix Muon + AdamW
 base LR: 3e-4
 AdamW betas: 0.9 / 0.95
-AdamW epsilon: 1e-8
-AdamW weight decay: 0.1
+weight decay: 0.1
 Muon momentum: 0.95
-Muon LR multiplier: 1.0
 Muon target direction RMS: 0.18
-Muon weight decay: 0.1
 global gradient clipping: 1.0
 ```
 
-Pure AdamW remains the later matched control. No optimizer, LR, or clipping
-change is authorized from the qualification evidence without a separately
-recorded one-variable decision.
+The user accepted the observed universal clipping for this frozen 20M engineering qualification. The decision is based on bounded and exactly repeatable gradient norms, decreasing loss, stable optimizer telemetry, and zero FP16 overflows. It does not silently authorize a different LR, clipping threshold, optimizer, or transfer of the decision to later models.
 
 ## Accepted qualification dataset
 
@@ -72,13 +58,7 @@ manifest SHA-256: 1e5ee8f372b77b6728288610dbe7cce74d833be21e53d1538bc5a890229b18
 Drive manifest SHA-256: fbb29ee0d0102658e1274e39d6647cf56a6dcb685e0f566b1736847dcc4fbe84
 ```
 
-Accepted evidence includes schema-v2 structural and per-shard SHA-256
-verification, exact local-to-Drive identity, literal token-by-token scanning of
-all stored tokens, no vocabulary or geometry problems, exact cluster accounting,
-and exact plan regeneration from the private Kaggle mount.
-
-The dataset is engineering qualification data, not strong model-quality or broad
-mixture-coverage evidence.
+The mounted Kaggle dataset has repeatedly passed literal full scans and exact 306-update plan reproduction.
 
 ## Exact one-pass plan
 
@@ -97,179 +77,151 @@ train target tokens: 10,006,528
 
 The final training block is partial. Silent data wraparound remains forbidden.
 
-## Passed exact-commit Kaggle gates
+## Passed gates
 
-The evidence-producing worktree was clean and detached at:
+All evidence-producing trainer work has used a clean detached worktree at:
 
 ```text
 launch commit: 45d1da4a1ac3f18cf6ce02b8439672f10e2c8b4c
-GPU: Tesla T4
+GPU: NVIDIA Tesla T4
 ```
 
-Passed gates:
+Passed:
 
 ```text
 offline suite: 229 passed, 1 expected live-remote skip
 corrected T4 harness: passed
-dataset full scan: passed
-exact qualification plan reproduction: passed
-20-update trainer preflight: passed
-50-update reference segment: passed
-50-update same-T4 A/A segment: passed
+dataset full scan and plan reproduction: passed
+20-update integrated trainer preflight: passed
+50-update uninterrupted reference: passed
+50-update same-T4 A/A repeat: passed
+actual-process SIGTERM at update 25: passed
+fresh-process local resume through update 50: passed
 ```
 
-The corrected T4 harness retained the primary candidate:
+## Repeatability result
 
-```text
-architecture: gdn2_hybrid
-backend: pytorch_chunkwise
-chunk size: 32
-precision: FP16
-FP16 overflows: 0
-```
-
-## Twenty-update preflight summary
-
-```text
-training loss: 10.845867 -> 9.573909
-validation loss: 9.240405 on 10,240 target tokens
-mean throughput: 1,066.12 target tokens/s
-maximum reserved CUDA memory: 2,868 MiB
-GradScaler: stable at 65,536
-overflow events / retries: 0 / 0
-checkpoint: step-00000020
-```
-
-Gradient clipping occurred on all 20 updates, creating the optimizer-stability
-review flag that motivated the longer repeatability measurement.
-
-## Fifty-update repeatability result
-
-The uninterrupted reference and independent A/A repeat each consumed exactly
-50 blocks / 1,638,400 target tokens using the same WSD prefix, seed,
-initialization, model, optimizer, data order, and T4.
-
-Final status:
-
-```text
-status: passed_repeatability_measurement
-authorization: threshold_review_only
-evidence directory: /kaggle/working/small-llm-repeatability-controller/small-llm-repeatability-20260804T145817Z
-summary: /kaggle/working/small_llm_repeatability_summary.json
-```
-
-### Exact metric repeatability
+The two independent 50-update runs produced exact non-runtime telemetry and validation equality:
 
 ```text
 compared numerical values: 10,650
 differing numerical values: 0
 maximum absolute difference: 0.0
 maximum relative difference: 0.0
-numeric trajectory exact: true
 discrete trajectory exact: true
 validation exact: true
 ```
 
-No recorded training-trajectory nondeterministic floor was observed. Loss,
-gradient norms, clipping decisions, LR, FP16 state, optimizer telemetry,
-counters, block order, and validation matched exactly.
-
-Both runs produced:
+Both produced:
 
 ```text
-training loss, update 1: 10.845867
-training loss, update 50: 8.090633
+training loss: 10.845867 -> 8.090633
 validation loss: 7.915478
 GradScaler: 65,536 throughout
-overflow events / retries: 0 / 0
-maximum allocated CUDA memory: 2,510,114,816 bytes
-maximum reserved CUDA memory: 3,007,315,968 bytes
+FP16 overflow events / retries: 0 / 0
+gradient clipping: 50 / 50 updates
 ```
 
-Runtime varied materially between the runs while the math stayed exact:
+The first-10 and last-10 median pre-clip norms were `1.399718` and `1.385033`; the final norm was `1.344303`. Universal clipping was therefore accepted as bounded for this qualification.
+
+## Local interruption and resume result
+
+The actual trainer process group was terminated after the complete step-25 checkpoint:
 
 ```text
-reference mean throughput: 903.77 target tokens/s
-repeat mean throughput: 1,000.97 target tokens/s
+signal: SIGTERM
+exit code: 143
+forced SIGKILL: false
+process group gone: true
+last consumed block: 24
+next resumed block: 25
 ```
 
-Runtime thresholds must therefore use distributions rather than exact equality.
-
-### Clipping interpretation
-
-Gradient clipping occurred on all 50 updates in both runs. The clipping review
-flag remains active because the frequency exceeds the protocol's provisional
-band.
-
-However, the longer evidence does not show runaway norm growth:
+A fresh process resumed updates 26-50. The combined path matched the uninterrupted reference exactly:
 
 ```text
-first-10 median pre-clip norm: 1.399718
-last-10 median pre-clip norm: 1.385033
-final pre-clip norm: 1.344303
-maximum pre-clip norm: 2.680975
+compared numerical values: 10,650
+differing numerical values: 0
+numeric trajectory exact: true
+discrete trajectory exact: true
+validation exact: true
+resume class: exact_local_resume
 ```
 
-The pattern is exactly repeatable, bounded over this window, finite, and
-accompanied by improving loss and stable FP16/optimizer telemetry. The recipe is
-reproducibly clipping-dependent, but the evidence does not justify a silent LR
-or clipping change.
+Decoded checkpoint semantics were exact at both step 25 and step 50:
 
-### Checkpoint byte-level mismatch
+```text
+tensors compared per checkpoint: 383
+tensor elements compared: 54,184,616
+semantic differences: 0
+```
 
-The expected step-25 and step-50 checkpoints existed and passed structural
-verification in both runs, but complete checkpoint-tree hashes were not
-byte-identical.
+Raw checkpoint-tree hashes differed while decoded state was exact. This is accepted as serialization-byte variability rather than state divergence.
 
-Because all compared training and validation telemetry was exactly identical,
-this is currently classified as unresolved serialization or run-metadata
-nondeterminism rather than demonstrated model-state divergence.
+Local-resume evidence:
 
-Before the resume gate, comparison must distinguish:
+```text
+status: passed_local_interruption_resume
+authorization: remote_recovery_only
+evidence directory: /kaggle/working/small-llm-local-resume-controller/small-llm-local-resume-20260804T162921Z
+summary: /kaggle/working/small_llm_local_resume_summary.json
+```
 
-1. semantic model, optimizer, scheduler, scaler, RNG, counter, and cursor state;
-2. expected run-specific metadata;
-3. raw serialization byte differences.
+## Final remaining gate
 
-The resume test must fail closed on semantic state mismatch. Because A/A metric
-trajectories were exact, the default expectation for the post-resume trajectory
-is exact equality unless checkpoint analysis identifies a justified
-serialization-only exception.
+The repository-native launcher is:
 
-## Remaining qualification sequence
+```text
+kaggle/run_20m_remote_recovery_from_clone.py
+```
 
-1. Preserve the preflight and repeatability evidence directories and W&B runs.
-2. Inspect the step-25 and step-50 checkpoint trees and identify the exact source
-   of byte-level differences.
-3. Freeze empirical warning/failure thresholds for loss, gradient norms,
-   clipping, FP16 state, optimizer telemetry, memory, and runtime distributions.
-4. Decide explicitly whether universal but bounded clipping requires a
-   one-variable diagnostic before recovery qualification.
-5. Run an actual-process interruption at the update-25 checkpoint boundary and
-   resume from local state.
-6. Compare resumed semantic state and post-resume trajectory against the
-   uninterrupted reference.
-7. Qualify private remote publication and empty-environment restore, including
-   verified two-shard prefetch and exact next-block continuation.
-8. Authorize and run the complete 306-update one-pass segment only after all
-   preceding gates pass.
-9. Run final validation and deterministic generation, then record the final
-   qualification report before considering the approximately-100M comparison.
+The remote test is deliberately shorter because 50-step stability and exact local recovery are already established:
+
+```text
+publisher training: updates 1-25
+local continuation: updates 26-30
+remote-restored continuation: updates 26-30
+total executed updates: 35
+```
+
+It must prove:
+
+1. verified two-phase private Hugging Face publication of `step-00000025`;
+2. restore into a destination with no prior checkpoint or data cache;
+3. exact checkpoint-manifest and semantic-state verification;
+4. exact two-shard Google Drive prefetch by immutable file ID, size, and SHA-256;
+5. restored next block equal to 25;
+6. exact local-versus-remote continuation for updates 26-30;
+7. exact semantic step-30 checkpoint equality.
+
+Required Kaggle secrets:
+
+```text
+WANDB_API_KEY
+HF_TOKEN
+SMALL_LLM_HF_REPO_ID
+GOOGLE_DRIVE_OAUTH_TOKEN_JSON
+```
+
+Optional: `WANDB_ENTITY`.
+
+A successful result must report:
+
+```text
+status: passed_remote_empty_environment_recovery
+authorization: full_306_run_ready_for_explicit_launch
+```
 
 ## Current readiness verdict
 
 **Dataset gate: passed.**
 
-**Exact-commit offline/T4/mounted-data gates: passed.**
+**Exact-commit offline/T4/integrated preflight: passed.**
 
-**Twenty-update integrated trainer preflight: passed.**
+**Same-T4 50-update repeatability: passed with exact trajectory equality.**
 
-**Fifty-update same-T4 metric repeatability: passed with exact recorded
-trajectory equality.**
+**Actual-process local interruption and resume: passed with exact trajectory and semantic checkpoint equality.**
 
-**Ready next:** checkpoint-difference analysis, empirical threshold freeze, and
-local process-kill/resume qualification.
+**Ready next:** run the bounded private remote publication and empty-environment recovery test.
 
-**Not yet authorized:** the complete 306-update one-pass segment, because
-checkpoint semantic interpretation, clipping policy, local interruption/resume,
-and remote empty-environment recovery remain outstanding.
+**Not yet authorized:** the complete 306-update one-pass segment, because the final remote recovery gate has not yet passed.
