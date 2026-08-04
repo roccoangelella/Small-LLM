@@ -1,353 +1,202 @@
 # Project Status
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-04_
 
 ## Current phase
 
-The dataset software, exact-mixture calibration, model reference package, corrected T4 qualification harness, and first single-device training system are code-complete and CPU-tested.
+The project is preparing the finite dataset and exact-commit Kaggle evidence for
+the first approximately-20M-parameter integrated engineering qualification.
+Architecture selection is not being reopened at this stage.
 
-The authenticated 10M dataset pilot passed. Corrected GDN-2 mathematical parity passed. The first trusted approximately-20M launch path is now aligned with the accepted evidence and recent decisions:
+The qualification remains an engineering test, not a model-quality claim.  It
+must prove the selected model, hybrid optimizer, FP16 path, schema-v2 data,
+checkpoint/resume, validation, W&B telemetry, remote publication, and recovery
+contracts on one NVIDIA T4.
 
-- the obsolete parity-defect trainer gate is removed;
-- trusted T4 FP16 GDN-2 uses chunk 32;
-- non-32 FP16 chunks require an explicit diagnostic override;
-- hybrid whole-matrix Muon + AdamW is implemented and is the default qualification-CLI optimizer;
-- pure AdamW remains the explicit matched control;
-- optimizer routing and recipe identity are checkpointed and fail closed;
-- the initial atomic update contains 16 sequences, approximately 32,768 target tokens;
-- the first run uses a conservative standard hyperparameter baseline rather than a broad sweep;
-- qualification thresholds are derived from controlled T4 evidence and frozen before the longer segment.
+The approximately-100M architecture comparison and complete 90B dataset build
+remain unauthorized until the 20M qualification ladder passes.
 
-The next phase is **integrated operational qualification**, not additional architecture selection.
+## Accepted dataset evidence
 
-The complete 90B dataset build and approximately-100M architecture comparison remain unauthorized.
+The authenticated 10M operational pilot passed on 2026-08-02 using the approved
+exact weight SHA-256:
 
-## Authenticated 10M dataset pilot — passed
-
-The finite dataset acceptance pilot passed on 2026-08-02 at commit `e4776501d68e39746f8a75dcbb9c49515f215abd`, using the approved weight SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7` and real personal-Google-Drive durability.
+```text
+76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7
+```
 
 Accepted evidence includes:
 
-- run ID `climbmix-pilot-001`;
-- target/minimum/maximum of 10,000,000 / 9,000,000 / 11,000,000 accepted source tokens;
-- 10,000,662 completed accepted source tokens;
-- 14,136 consumed source documents;
-- seven immutable local shards and seven matching Drive objects;
-- intentional interruption after the first durable checkpoint at 2,000,112 tokens and 2,814 documents;
-- termination of the actual producer process group with status 143;
-- deterministic resumed completion;
-- schema-v2 full verification;
-- completed-resume idempotence;
-- fail-closed acceptance report status `PASS`.
-
-Canonical evidence is under `/data/climbmix-ops`. The acceptance report SHA-256 is `b18decde4aa0e6e7376c3fecd3dda4406dee983f11224537cf73dd22a66bc00b`.
-
-A previous attempt was rejected because it killed only a wrapper shell while the producer continued. It remains archived and excluded from accepted evidence.
-
-## Dataset implementation
-
-The production dataset system includes:
-
-- deterministic pinned-source work plans and bounded byte-range readers;
-- structural validation and cluster-11 exclusion;
-- exact source-token scheduling and rolling mixture accounting;
-- context+1 packing and provenance;
-- immutable shards with durability-before-consumer semantics;
-- schema-v2 verification;
-- durable interruption and deterministic resume;
-- 80B minimum, 90B target, and 100B hard maximum;
-- verified Google Drive mirroring before durable cursor advancement;
-- configuration, schema, policy, weight, and source drift rejection;
-- locking, disk preflight, retry policy, orphan cleanup, and empty-VPS restore primitives;
-- fail-closed acceptance verification from concrete logs, snapshots, manifests, hashes, and exit codes.
-
-The dataset subsystem remains frozen except for defects revealed by operational use and narrow trainer compatibility work.
-
-## Exact-mixture calibration
-
-The full-corpus scan completed successfully:
-
-- 100 pinned source files;
-- 7,457/7,457 work items;
-- 1,987,970,304,099 source bytes;
-- 553,315,056 records;
-- 356,864,528,972 all-cluster source tokens;
-- 351,792,454,745 accepted source tokens;
-- 5,072,074,227 excluded cluster-11 tokens.
-
-The approved exact production weight file remains:
-
 ```text
-SHA-256 76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7
+run ID: climbmix-pilot-001
+accepted source tokens: 10,000,662
+source documents: 14,136
+immutable local shards: 7
+matching durable Drive objects: 7
 ```
 
-The public calibration implementation and audit artifacts are in `roccoangelella/climbmix-token-mixture`.
+It passed real Drive durability, actual producer-process interruption,
+deterministic resume, schema-v2 full verification, completed-resume
+idempotence, and fail-closed acceptance verification.
 
-## Model architecture
+That dataset used 512 sequences per block and remains immutable operational
+evidence.  It is not the trainer qualification dataset because it would provide
+only about ten optimizer updates.
 
-The initial family remains a dense decoder-only hybrid with:
+## Fixed model and optimizer
 
-- dominant GDN-2;
-- periodic full gated MHA;
-- repeating `[GDN-2, GDN-2, GDN-2, MHA]`;
-- sequential pre-RMSNorm blocks and final RMSNorm;
-- MHA-only RoPE;
-- MHA QK-RMSNorm and output gating;
-- dense SwiGLU;
-- zero dropout;
-- tied padded embeddings with semantic-logit cropping;
-- 2,048-token context.
-
-Implemented geometries:
+The selected approximately-20M model has 20,637,592 parameters and uses:
 
 ```text
-approximately-20M smoke hybrid: 20,637,592 parameters
-approximately-100M hybrid: 101,252,280 parameters
-matched Plan B / Plan C: 101,237,760 parameters
+architecture: [GDN-2, GDN-2, GDN-2, full gated MHA] repeated
+context length: 2,048
+precision: FP16 model execution
+GDN-2 backend: ordinary PyTorch chunkwise
+GDN-2 chunk size: 32
+initialization: normal
+seed: 17
 ```
 
-The 20M model is an engineering qualification model. The 100M scale is the first intended architecture comparison.
+The corrected T4 harness previously passed recurrent/chunkwise parity for
+chunks 16, 32, and 64.  Full-model FP16 passed for chunks 16 and 32; chunk 64
+produced non-finite values.  Chunk 32 remains the trusted T4 FP16 path.
 
-## Corrected T4 GDN-2 qualification
-
-The schema-v2 T4 run passed all recurrent-versus-chunkwise parity cases:
-
-- chunks 16, 32, and 64;
-- FP32 and FP16-quantized recurrence inputs;
-- zero-state training and bounded carried-state profiles;
-- outputs, final state, and named gradients.
-
-Full-model operational results at context 2,048 and microbatch 1 were:
-
-- FP32 chunks 16, 32, and 64 passed;
-- FP16 chunks 16 and 32 passed;
-- FP16 chunk 64 produced non-finite values;
-- FP16 chunk 32 reached approximately 1,291 tokens/s;
-- Plan B reached approximately 17,260 tokens/s in the short ordinary-PyTorch benchmark.
-
-The current trusted candidate is:
+The first integrated optimizer is the implemented fail-closed hybrid:
 
 ```text
-gdn2_hybrid
-ordinary PyTorch chunkwise backend
-FP16
-chunk 32
-normal initialization
-```
-
-Chunk 64 remains the general model default for other modes, but it is not trusted for T4 FP16 training.
-
-## Trainer launch correction
-
-The old trainer CLI still blocked GDN-2 using wording from the invalid schema-v1 parity report. That inconsistency is fixed.
-
-The corrected behavior is:
-
-- no broad parity-defect bypass;
-- trusted `gdn2_hybrid + fp16` resolves to chunk 32;
-- a different FP16 chunk requires `--allow-unqualified-gdn2-chunk`;
-- transformer runs reject GDN chunk arguments;
-- model configuration receives the resolved chunk explicitly.
-
-The trusted CLI can no longer silently construct the known-failing FP16 chunk-64 path.
-
-## Optimizer implementation and standard baseline
-
-The selected first-run optimizer is implemented:
-
-```text
-hybrid whole-matrix Muon + AdamW
-```
-
-Muon handles complete ordinary feature-transform matrices. AdamW handles the tied embedding, norms, biases, GDN dynamics, and structured depthwise filters.
-
-The implementation includes:
-
-- explicit parameter-role routing;
-- rejection of overlap, omission, or unknown parameters;
-- FP32 Nesterov momentum;
-- FP32 ten-step hybrid Newton-Schulz;
-- target update RMS `0.18`;
-- decoupled Muon weight decay;
-- FP32 AdamW moments;
-- shared token-count schedule with a Muon LR multiplier;
-- one atomic optimizer step for both branches;
-- recipe and exact routed-name identity in checkpoint state.
-
-The qualification CLI default is `hybrid_muon_adamw`. Pure AdamW remains available as the control.
-
-The first engineering run now uses:
-
-```text
+ordinary feature-transform matrices: whole-matrix Muon
+embedding, norms, biases, dynamics, structured filters: AdamW
 base LR: 3e-4
 AdamW betas: 0.9 / 0.95
 AdamW epsilon: 1e-8
 AdamW weight decay: 0.1
 Muon momentum: 0.95
 Muon LR multiplier: 1.0
-Muon update RMS: 0.18
+Muon target direction RMS: 0.18
 Muon weight decay: 0.1
 global gradient clipping: 1.0
 ```
 
-The short preflight uses constant LR. The longer run uses token-count warmup/stable/cosine decay with at least 16 warmup updates, final 20% decay, and minimum LR ratio `0.1`. Exact token horizons depend on the selected finite-dataset envelope and are frozen from the verified manifest.
+Pure AdamW remains the later matched control.
 
-The exact optimizer routing and mechanics are in `optimizer_strategy.md`. The qualification recipe and research interpretation are in `20m_qualification_protocol.md`.
+## Fixed finite qualification dataset
 
-## Training-block geometry — fixed
-
-The accepted 10M operational dataset used the dataset default of 512 sequences per block.
-
-At context 2,048:
+The new training dataset is now fixed to:
 
 ```text
-512 × 2,048 = 1,048,576 target tokens per optimizer update
+target accepted source tokens: 10,000,000
+minimum accepted source tokens: 9,000,000
+hard maximum accepted source tokens: 11,000,000
+context length: 2,048
+sequences per block: 16
+target tokens per full optimizer update: approximately 32,768
+target shard size: 8 MiB = 8,388,608 bytes
+durable dataset checkpoint cadence: 2,000,000 source tokens
+remote durability: required
+passes: 1
+silent wraparound: forbidden
 ```
 
-The trainer treats one complete prepared block as one atomic update. Microbatching only changes memory usage; it does not split the durable update unit.
+The dedicated fail-closed entry point is:
 
-The accepted dataset therefore supplies only about ten optimizer updates. It remains valid evidence for dataset operations, but it is not suitable as the first optimizer/stability qualification dataset.
-
-The first T4 training dataset is now fixed to:
-
-```text
-sequences_per_block: 16
-microbatch_size: 1
-approximately 32,768 target tokens per update
+```bash
+uv run --env-file .env python -m dataset.qualification_20m \
+  --weights-file <approved-weight-file.json> \
+  --output-dir <new-output-directory> \
+  --run-id 20m-qualification-dataset-001
 ```
 
-A separate finite qualification dataset must be built with that geometry. The old 512-block pilot remains unchanged.
+It rejects changes to the fixed scientific/storage identity and rejects
+`--allow-local-only`.
 
-The phrase “bounded cache” is deprecated in user-facing decision notes because it was unclear. A **finite qualification dataset** means a tokenized dataset build with an explicit source-token target, minimum, hard maximum, and completion point below the full 90B run. It does not mean batch size, context length, epoch count, or automatic repetition.
+The completed verified manifest, not an approximation, determines the exact
+train/validation target tokens, ordered block IDs, shard identities, one-pass
+update count, and warmup/stable/decay token horizons.
 
-The source-token envelope for the new finite training dataset remains open. The earlier 10M/9M/11M proposal is not yet frozen.
-
-## Training system
+## Trainer and telemetry implementation
 
 The trainer currently provides:
 
-- immutable schema-v2 readers;
-- restored Drive-manifest/cache-window readers;
-- atomic prepared-block updates;
-- internal microbatching;
-- semantic next-token loss;
+- exact schema-v2 shard reading and geometry validation;
+- one prepared block per atomic optimizer update;
+- internal microbatching without mid-block acknowledgement;
 - hybrid Muon + AdamW and pure AdamW;
-- FP32, FP16, and BF16 modes;
-- clipping and bounded overflow retry;
-- constant and WSD-shaped token schedules;
-- validation and generation;
-- complete trainer/RNG state;
-- local joint checkpoint save/load;
-- deterministic CPU interruption/resume tests;
-- a qualification CLI.
+- FP32, FP16, and BF16 execution;
+- bounded GradScaler overflow retry and gradient clipping;
+- constant and token-count warmup/stable/cosine-decay schedules;
+- complete model, optimizer, scheduler, scaler, RNG, counter, and data-cursor
+  checkpoint state;
+- deterministic local resume primitives;
+- validation and deterministic generation primitives;
+- synchronous fail-closed two-phase publication to a private Hugging Face
+  checkpoint repository;
+- W&B telemetry under project `Small-LLM`.
 
-The remote publication and empty-environment restore primitives exist in the repository. The trainer CLI still needs to wire remote checkpoint publication into the live workflow before the complete 20M qualification can pass.
+Successful-step telemetry now includes:
 
-The trainer also needs the additional instrumentation listed in `20m_qualification_protocol.md`, especially scaler state, clipping events, optimizer-branch statistics, reserved CUDA memory, data-wait time, checkpoint timing, validation timing, publication timing, and consolidated run identity.
+- loss, LR, committed tokens, throughput, and block ID;
+- GradScaler scale, retries, and cumulative overflows;
+- global and per-optimizer-role pre-clipping gradient norms;
+- clipping events;
+- CUDA peak allocated and reserved memory;
+- data wait separate from compute time;
+- validation, local checkpoint, and remote publication timing;
+- exact code, model, trainer, optimizer-routing, and manifest identities;
+- Muon and AdamW pre-update weight RMS;
+- optimizer-direction RMS;
+- effective update RMS including LR and decoupled weight decay;
+- effective update-to-weight ratios;
+- named per-Muon-matrix direction RMS and update-to-weight ratios.
 
-## Qualification threshold policy
+The optimizer statistics are runtime evidence only and do not change checkpoint
+identity or state.
 
-The user approved empirical threshold derivation with fail-closed hard correctness gates.
+## Test-evidence policy
 
-Hard gates include finite arithmetic, exact identities, complete optimizer routing, no skipped or duplicate prepared blocks, valid atomic checkpoints, exact next-block/counter restoration, and verified remote objects.
+GitHub Actions is optional and is not required for the first qualification.
+The user chose to run exact-commit evidence manually on Kaggle.
 
-Continuous thresholds are derived from controlled T4 evidence:
+Before any trainer preflight, the Kaggle notebook must:
 
-- short standard preflight;
-- uninterrupted reference segment;
-- same-hardware A/A repeatability control;
-- local interruption/resume comparison;
-- remote publication and empty-environment recovery.
+1. record and check out the exact final commit in detached-HEAD mode;
+2. run the complete offline test suite;
+3. persist the complete log and numeric exit code under `/kaggle/working`;
+4. run the corrected T4 qualification harness;
+5. persist its JSON report and require successful exit.
 
-Provisional targets include 90% of the frozen throughput median, less than 5% data wait, at most 5% recurring operational overhead, at least 10% T4 memory headroom, no exhausted overflow retries, no more than 1% post-warmup skipped candidate updates, warning above 20% clipping, and failure for sustained clipping above 50%.
+This concrete exact-commit evidence replaces, rather than weakens, an automated
+workflow requirement.
 
-Final windows, formulas, robust statistics, optimizer-distribution limits, loss-runaway detector, and numerical resume tolerance must be committed before the longer qualification run. Full details are in `20m_qualification_protocol.md`.
+## Qualification sequence
 
-## Provisionally approved operational cadence
+Current order:
 
-```text
-local joint checkpoint: every 25 successful updates
-validation: every 50 successful updates
-remote publication: every 50 successful updates
-```
+1. run the complete offline suite on the current implementation commit;
+2. build the fixed qualification dataset;
+3. fully verify local shards, manifest, and Drive objects;
+4. freeze the exact manifest-derived schedule and validation block list;
+5. run a 20-successful-update constant-LR T4 preflight with W&B;
+6. run an uninterrupted baseline and same-hardware A/A control;
+7. freeze empirical throughput, memory, overflow, clipping, update-statistic,
+   loss, and resume thresholds before the longer segment;
+8. qualify actual-process local interruption/resume;
+9. qualify remote publication and empty-environment restore with two-shard
+   prefetch;
+10. run the complete one-pass finite-dataset segment;
+11. run validation and deterministic generation from trainer checkpoints;
+12. record the final report and only then authorize the 100M comparison.
 
-The aggregate recurring overhead target is at most 5% of training wall time. If validation and remote publication exceed the frozen budget, they may move to every 100 updates. Local checkpoint cadence does not change automatically.
+## Current readiness verdict
 
-## Immediate next steps
+The code and decisions needed to produce the correct 10M/16-sequence dataset
+and observe the first trainer preflight are now present.
 
-1. Implement the missing qualification instrumentation.
-2. Run the complete offline suite on the exact implementation commit.
-3. Select the finite qualification dataset source-token target, minimum, maximum, shard size, and lifecycle.
-4. Build and fully verify the separate 16-sequence dataset.
-5. Derive exact scheduler token horizons from its verified manifest.
-6. Run the short T4 GDN-2 chunk-32 FP16 hybrid-Muon preflight with the standard baseline.
-7. Run the uninterrupted reference and A/A repeatability segments.
-8. Commit the measured threshold table before the longer segment.
-9. Interrupt the actual trainer process and qualify local resume.
-10. Wire and qualify remote joint-checkpoint publication.
-11. Restore into an empty environment and continue from the prefetched Drive window.
-12. Run the longer one-pass finite-dataset segment.
-13. Validate generation and held-out loss from trainer-produced checkpoints.
-14. Run the matched pure-AdamW control after the primary engineering path passes.
-15. Only then authorize the approximately-100M comparison.
+The longer one-pass run is not yet authorized because runtime evidence remains:
 
-## Remaining engineering choices
+- execute the tests on the final commit;
+- build and verify the new qualification dataset;
+- derive exact schedule values from its manifest;
+- pass the 20-update T4 preflight and freeze empirical thresholds;
+- pass local and remote recovery stages.
 
-The unresolved first-run choices are centralized in `20m_training_readiness.md` and `20m_qualification_protocol.md`:
-
-- finite training-dataset source-token target, minimum, and maximum;
-- shard size, queue/head-start settings, and completed-before-training versus live overlap;
-- exact fixed validation slice;
-- best-checkpoint metric;
-- remote publication implementation and restore prefetch window;
-- final empirical thresholds derived from T4 measurements;
-- whether the first engineering qualification needs more than seed `17`.
-
-Learning rate, optimizer scalar hyperparameters, schedule ratios, clipping norm, update-batch geometry, checkpoint/validation cadence, optimizer architecture, and threshold derivation method are no longer open.
-
-## Dataset-scale constraints before 90B
-
-The 10M pilot exposed three separate production-scale constraints:
-
-- resume currently replays prior documents to verify the cursor, so late-cursor recovery must be measured or redesigned;
-- current disk preflight requires about 222.3 GiB for 90B and 247.0 GiB for 100B, while the pilot VPS had about 95 GiB free;
-- the 10M operational sample represented only seven of nineteen accepted clusters and used a permissive rolling-mixture-error bound.
-
-A production orchestrator must also manage and verify the complete producer process group.
-
-These constraints do not block the finite 20M training dataset. They do block the complete 90B launch.
-
-## Decisions no longer open
-
-Frozen choices include:
-
-- pinned source revision and cluster policy;
-- GPT-2 token IDs and EOD token;
-- context+1 packing;
-- exact empirical mixture and approved weight hash;
-- Google Drive as durable mirror;
-- PyTorch;
-- the geometry-scalable model family;
-- GDN-2-dominant 3:1 pattern;
-- full MHA in attention layers;
-- QK-RMSNorm and attention output gating;
-- pre-RMSNorm/final RMSNorm;
-- MHA-only RoPE;
-- dense SwiGLU;
-- zero dropout;
-- tied padded embeddings;
-- initial 2,048 context;
-- smoke and approximately-100M geometries;
-- Plan B and Plan C ordering;
-- matched transformer FFN widths;
-- schema-v2 atomic-block acknowledgement;
-- joint checkpoint binding of exact consumed block and complete trainer/RNG state;
-- trusted T4 FP16 GDN-2 chunk 32 for the qualification path;
-- hybrid whole-matrix Muon + AdamW as the default first-run optimizer;
-- pure AdamW as the required control;
-- 16 sequences and approximately 32,768 target tokens per initial T4 optimizer update;
-- the conservative standard optimizer hyperparameter baseline;
-- warmup/stable/cosine schedule ratios for the longer qualification;
-- empirical threshold derivation with hard fail-closed correctness gates.
-
-Larger-scale recipe values must still follow measurements rather than parameter labels.
+These are execution gates, not unresolved architecture or dataset-scope choices.
