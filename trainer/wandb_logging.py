@@ -65,6 +65,25 @@ def _file_identity(path: Path | None) -> dict[str, object] | None:
     return result
 
 
+def _optimizer_identity(engine: object | None) -> object:
+    if engine is None:
+        return None
+    optimizer = getattr(engine, "optimizer", None)
+    identity = getattr(optimizer, "identity", None)
+    return _plain(identity()) if callable(identity) else {
+        "type": type(optimizer).__name__ if optimizer is not None else None,
+        "groups": [
+            {
+                "optimizer_role": group.get("optimizer_role"),
+                "lr_scale": group.get("lr_scale"),
+                "weight_decay": group.get("weight_decay"),
+                "parameter_count": len(group.get("params", ())),
+            }
+            for group in getattr(optimizer, "param_groups", ())
+        ],
+    }
+
+
 @dataclass(slots=True)
 class WandbTelemetry:
     """Small adapter that keeps W&B calls out of trainer mechanics."""
@@ -135,6 +154,7 @@ def configure_wandb(
     *,
     model_config: object,
     trainer_config: object,
+    engine: object | None = None,
 ) -> WandbTelemetry | None:
     """Start an opt-in W&B run without ever reading or logging the API key."""
 
@@ -159,13 +179,19 @@ def configure_wandb(
         for key, value in vars(args).items()
         if key not in {"wandb_dir"}
     }
+    dataset_manifest = (
+        Path(args.dataset_manifest)
+        if args.dataset_manifest is not None
+        else Path(args.dataset_dir) / "manifest.json"
+    )
     config = {
         "launch": launch,
         "model": _plain(model_config),
         "trainer": _plain(trainer_config),
+        "optimizer": _optimizer_identity(engine),
         "identity": {
             "git_commit": _git_commit(),
-            "dataset_manifest": _file_identity(args.dataset_manifest),
+            "dataset_manifest": _file_identity(dataset_manifest),
             "remote_drive_manifest": _file_identity(args.remote_drive_manifest),
         },
     }
