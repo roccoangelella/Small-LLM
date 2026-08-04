@@ -104,6 +104,40 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create the configured private Hugging Face repository if missing.",
     )
+    p.add_argument(
+        "--wandb-mode",
+        choices=("disabled", "online", "offline"),
+        default="disabled",
+        help="Weights & Biases telemetry mode. Disabled keeps ordinary tests network-free.",
+    )
+    p.add_argument(
+        "--wandb-project",
+        default="Small-LLM",
+        help="Weights & Biases project name for qualification runs.",
+    )
+    p.add_argument("--wandb-entity", help="Optional W&B user or team entity.")
+    p.add_argument("--wandb-run-name", help="Optional human-readable W&B run name.")
+    p.add_argument(
+        "--wandb-run-id",
+        help="Stable W&B run ID. Reuse it with --wandb-resume when resuming training.",
+    )
+    p.add_argument(
+        "--wandb-resume",
+        choices=("never", "allow", "must", "auto"),
+        default="never",
+        help="W&B resume policy; a non-never value requires --wandb-run-id.",
+    )
+    p.add_argument(
+        "--wandb-tags",
+        nargs="*",
+        default=(),
+        help="Optional W&B tags for grouping qualification segments.",
+    )
+    p.add_argument(
+        "--wandb-dir",
+        type=Path,
+        help="Local W&B files directory; defaults under --checkpoint-dir.",
+    )
     p.add_argument("--seed", type=int, default=17)
     return p
 
@@ -120,6 +154,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit(
             "--remote-drive-manifest is required when remote publication is enabled"
         )
+    if args.wandb_mode == "disabled" and args.wandb_resume != "never":
+        raise SystemExit("--wandb-resume requires W&B telemetry to be enabled")
+    if args.wandb_mode != "disabled" and args.resume:
+        if not args.wandb_run_id:
+            raise SystemExit(
+                "--wandb-run-id is required to keep telemetry continuous when resuming"
+            )
+        if args.wandb_resume == "never":
+            args.wandb_resume = "must"
     if args.gdn_chunk_size is not None and args.gdn_chunk_size <= 0:
         raise SystemExit("--gdn-chunk-size must be positive")
 
