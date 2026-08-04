@@ -1,6 +1,6 @@
 # Dataset and Tokenization
 
-_Last updated: 2026-08-02_
+_Last updated: 2026-08-03_
 
 ## Tokenizer contract
 
@@ -273,21 +273,74 @@ They must never be committed. Until automatic dotenv loading is added, productio
 uv run --env-file .env python -m dataset.production ...
 ```
 
-## Remaining operational gates
+## Authenticated 10M pilot result
 
-1. Run the reproducible authenticated bounded 10M-token dataset pilot.
-2. Interrupt and resume it with identical semantic arguments.
-3. Run full schema-v2 verification.
-4. Verify that a second completed resume uploads no duplicate Drive objects.
-5. Confirm that no temporary or finalization-backup artifacts remain.
-6. Record throughput, retries, Drive behavior, disk use, and recovery behavior.
+The accepted authenticated pilot ran on 2026-08-02 at commit `e4776501d68e39746f8a75dcbb9c49515f215abd` on Linux `aarch64` with Python 3.13.13. It used the approved weight SHA-256 `76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7`, the real personal-Google-Drive backend, and the committed 10M target / 9M minimum / 11M maximum / 2M checkpoint policy.
 
-Do not start the complete 90B build until the bounded dataset pilot, model/trainer consumer, and small end-to-end training pilot pass.
+Accepted evidence:
+
+- the first durable checkpoint contained 2,000,112 accepted source tokens, 2,814 consumed documents, one local immutable shard, and one matching Drive entry;
+- the actual producer process group was terminated with exit status 143, not merely its wrapper shell;
+- `--resume` continued from the identical production identity and completed at 10,000,662 accepted source tokens and 14,136 consumed documents;
+- the final cache contained 10,021,659 stored token IDs: 10,011,414 train tokens and 10,245 validation tokens;
+- seven immutable local shards occupied 20,043,318 bytes and had seven unique, matching, remotely durable Drive file IDs;
+- full schema-v2 verification, a second completed `--resume`, and semantic idempotence all passed;
+- the accepted pilot logs contained no warnings, retries, errors, or tracebacks;
+- the fail-closed acceptance verifier passed environment, calibration, current offline tests, calibration-run evidence, Drive smoke, pilot, interruption/resume, and completed-resume idempotence.
+
+The canonical report is `/data/climbmix-ops/dataset_acceptance_report.json`, SHA-256 `b18decde4aa0e6e7376c3fecd3dda4406dee983f11224537cf73dd22a66bc00b`. The interrupted snapshot hash is `5df9bfe8df148a93848ff30aa4ca52c120abeac3f507c12dca6e99d71e94f610`; the completed-resume baseline hash is `0633255f2ea3e3fab749eb5afea23b84f9e13d49458fa44a91004878c6fe6f5c`.
+
+## Pilot-derived operational findings
+
+### OAuth and environment setup
+
+The Google client must be an OAuth **Desktop app** client. While the consent screen is in Testing, the authorizing account must be a test user in the same Google Cloud project that owns the downloaded client. `dataset.drive_auth setup` should create `.secrets/google-drive-authorized-user.json`, populate `.env`, and finish with a real upload / metadata-read / download-hash / cleanup smoke test; the authorized-user file must not be handcrafted or committed.
+
+The repository's base dependency set does not include the model stack. A fresh VPS that must run the complete offline suite needs `uv sync --locked --extra model` as well as `uv pip install -r dataset/requirements-remote.txt`. Orchestration must use `uv run python` or the project interpreter; this VPS had no bare `python` executable.
+
+### Interruption semantics
+
+Killing only a background wrapper shell is not an interruption test. In the rejected first attempt, the child producer continued, completed the cache, and caused the attempted resume to fail on the production lock. That attempt was archived locally and on Drive and excluded from acceptance.
+
+Future interruption evidence must launch the producer in a dedicated process group, snapshot only after the referenced shard is remotely durable, terminate the whole group, wait for it to exit, confirm no producer descendant or lock holder remains, and only then issue `--resume`. Exit status 143 is meaningful only together with those process and durable-state checks.
+
+### Resume scalability
+
+The current source-reader contract deliberately replays the immutable source plan from the beginning up to `documents_consumed` to verify the durable cursor before emitting new blocks. At the pilot cursor of 2,814 documents, the resumed run took about 44 seconds before reaching the next 4M-token checkpoint, while later 2M-token checkpoint intervals were about 5–7 seconds. This is consistent with replay dominating early resume time.
+
+That auditable replay is acceptable for the bounded pilot but is a production-scale risk because restart cost grows with the consumed document cursor. Before a 90B launch, late-cursor resume must be benchmarked and either bounded by a more direct seekable cursor/checkpoint design or explicitly accepted with measured recovery-time limits.
+
+### Disk and cache capacity
+
+The accepted cache stored exactly two bytes per token ID: 20,043,318 bytes for 10,021,659 stored IDs. The production disk preflight, including configured EOD overhead and safety multiplier, requires about 222.3 GiB for a 90B target and 247.0 GiB for the 100B hard maximum. The pilot VPS had about 95 GiB free.
+
+Therefore the current VPS cannot retain the entire production cache at once. Full production requires a larger local volume or a proven bounded-cache lifecycle in which the trainer consumes durable shards and an explicit retention/LRU policy safely releases local space. `--allow-unsafe-low-disk` remains restricted to bounded tests and must not bypass this production requirement.
+
+### Mixture and throughput interpretation
+
+The 10M pilot was an operational acceptance run, not a representative training-mixture benchmark. Its training scheduler emitted tokens from seven accepted clusters (`4, 6, 7, 12, 16, 17, 18`); the other twelve accepted clusters emitted zero tokens at this small budget. Cumulative and 10M-window normalized mixture error were `0.08533077992520376`, while the accepted command inherited the production CLI default `maximum_rolling_mixture_error=1.0`. The run therefore did not enforce a tight mixture bound and is not evidence that every cluster is represented in a small experiment.
+
+The production phase took about 116 seconds from initial start through resumed completion, averaging roughly 86k accepted source tokens/s including source resolution, replay, Drive durability, checkpointing, and finalization. The complete orchestrated acceptance sequence took 119 seconds. These short-run values are useful for regression detection only; startup/replay costs, tiny checkpoint shards, cache warmth, and the bounded token budget make them unsuitable as a 90B throughput forecast.
+
+## Remaining dataset gates before full production
+
+1. Complete the schema-v2 trainer consumer and a small end-to-end training pilot with joint checkpointing.
+2. Resolve the 90B/100B local-capacity shortfall through a larger disk or a verified bounded eviction/retention design.
+3. Measure and bound late-cursor source replay, or replace it with an equally auditable direct-resume mechanism.
+4. Use a production-grade process-group orchestrator for all interruption evidence and automated operations.
+5. Freeze an explicit production rolling-mixture-error bound; do not inherit the current permissive CLI default of `1.0` without measured justification.
+6. Decide whether bounded model-comparison datasets must explicitly bootstrap all accepted clusters or simply use a larger token budget.
+7. Decide retention and cleanup for the archived rejected attempt and future superseded Drive run folders.
+
+Do not start the complete 90B build until these gates and the model/trainer integration gates pass.
 
 ## Open dataset decisions
 
-- Operational reader, queue, prefetch, and retry settings after the live pilot.
-- Final shard and prepared-block sizes after throughput measurements.
-- Local cache prefetch/LRU policy during later presentations.
+- Operational reader, queue, prefetch, and retry settings after live trainer measurement.
+- Final shard and prepared-block sizes after representative sustained-throughput measurements.
+- Direct/seekable source cursor design versus full replay on resume.
+- Local cache capacity, trainer-consumption watermark, and safe eviction/LRU policy.
+- Final `maximum_rolling_mixture_error` for production and bounded comparison runs; the current production CLI default is `1.0`.
+- Whether bounded comparison datasets require all-cluster bootstrap coverage.
 - Retention and cleanup policy for remote dataset and checkpoint history.
 - Whether to add automatic `.env` loading inside production and acceptance CLIs.

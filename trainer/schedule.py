@@ -42,10 +42,13 @@ class TokenLRScheduler:
 
     def _set_lr(self, value: float) -> None:
         for group in self.optimizer.param_groups:
-            group["lr"] = value
+            scale = group.get("lr_scale", 1.0)
+            if isinstance(scale, bool) or not isinstance(scale, (int, float)) or scale <= 0:
+                raise ValueError("optimizer lr_scale must be a positive number")
+            group["lr"] = value * float(scale)
 
     def prepare_step(self, next_committed_tokens: int) -> float:
-        """Set the LR for a candidate step without committing schedule state."""
+        """Set the base LR for a candidate step without committing schedule state."""
 
         if next_committed_tokens <= self.committed_tokens:
             raise ValueError("next committed token count must advance")
