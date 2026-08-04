@@ -52,6 +52,30 @@ class TrainerCLIArgumentTests(unittest.TestCase):
                 ]
             )
 
+    def test_remote_publication_requires_drive_manifest(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args([*_BASE, "--remote-publish-every-steps", "50"])
+
+    def test_remote_publication_arguments_are_retained(self) -> None:
+        args = parse_args(
+            [
+                *_BASE,
+                "--remote-publish-every-steps",
+                "50",
+                "--remote-drive-manifest",
+                "/tmp/drive_manifest.json",
+                "--remote-checkpoint-repo",
+                "owner/private-checkpoints",
+            ]
+        )
+        self.assertEqual(args.remote_publish_every_steps, 50)
+        self.assertEqual(str(args.remote_drive_manifest), "/tmp/drive_manifest.json")
+        self.assertEqual(args.remote_checkpoint_repo, "owner/private-checkpoints")
+
+    def test_remote_publication_cadence_cannot_be_negative(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args([*_BASE, "--remote-publish-every-steps", "-1"])
+
 
 if __name__ == "__main__":
     unittest.main()
