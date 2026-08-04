@@ -1,314 +1,165 @@
 # Approximately-20M Training Readiness
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-04_
 
 ## Purpose
 
-The approximately-20M model is an end-to-end engineering qualification model. It is meant to prove that the selected architecture, optimizer, schema-v2 data path, checkpoint contract, interruption/resume behavior, validation, generation, and remote recovery all work together on the target NVIDIA T4.
+The approximately-20M model is an end-to-end engineering qualification.  It
+must prove the selected architecture, hybrid optimizer, FP16 execution,
+schema-v2 dataset, telemetry, checkpoint/resume, validation, generation, remote
+publication, and empty-environment recovery on one NVIDIA T4.
 
-It is not large enough to support meaningful architecture-quality claims. Passing this stage authorizes the approximately-100M comparison; it does not validate the final large-run recipe.
+It is not a model-quality or architecture-ranking experiment.
 
-The detailed execution stages, instrumentation, threshold derivation, and pass/fail rules are in `20m_qualification_protocol.md`.
-
-## Decisions now fixed
-
-### Trusted GDN-2 execution
-
-The corrected T4 qualification passed mathematical parity for chunk sizes 16, 32, and 64, but full-model FP16 execution passed only at chunks 16 and 32. Chunk 64 produced non-finite values under autocast.
-
-The trusted approximately-20M T4 path therefore uses:
+## Fixed execution profile
 
 ```text
+model parameters: 20,637,592
 architecture: gdn2_hybrid
-precision: fp16
+context length: 2,048
+precision: FP16
 GDN-2 backend: ordinary PyTorch chunkwise
 GDN-2 chunk size: 32
-initialization candidate: normal
+initialization: normal
+optimizer: hybrid whole-matrix Muon + AdamW
+microbatch size: 1
+sequences per atomic block: 16
+approximate target tokens per full update: 32,768
+seed: 17
 ```
 
-The model family's general default remains chunk 64 for non-FP16 or diagnostic use. The trainer CLI resolves trusted `gdn2_hybrid + fp16` runs to chunk 32 and rejects another chunk unless the operator explicitly marks the run diagnostic.
-
-### Optimizer architecture
-
-The first integrated approximately-20M run uses the documented hybrid optimizer, not pure AdamW:
+The selected scalar baseline is:
 
 ```text
-ordinary feature-transform matrices: whole-matrix Muon
-embeddings, norms, biases, dynamics, and structured temporal filters: AdamW
-```
-
-The selected implementation uses:
-
-```text
-Nesterov momentum: 0.95
-Newton-Schulz arithmetic: FP32
-iterations: 8 aggressive + 2 stabilizing
-aggressive coefficients: (3.4445, -4.7750, 2.0315)
-stabilizing coefficients: (2.0, -1.5, 0.5)
-Muon target update RMS: 0.18
-Muon weight decay: 0.1
-AdamW weight decay: 0.1
-shared token-count schedule
-Muon LR multiplier: 1.0
-```
-
-The pure-AdamW path remains mandatory as the matched control, but it is not the default launch optimizer.
-
-### Parameter routing
-
-Muon receives complete logical two-dimensional matrices only:
-
-- every SwiGLU gate, up, and down projection;
-- MHA Q, K, V, output-gate, and output projections;
-- GDN-2 Q, K, V, erase, write, decay, output-gate, and output projections.
-
-AdamW receives the currently classified exception roles:
-
-- the tied token embedding / prediction matrix;
-- every RMSNorm scale;
-- every bias;
-- GDN-2 `A_log` and `dt_bias`;
-- GDN-2 depthwise Q/K/V convolution kernels.
-
-Routing fails closed. Every trainable parameter must be assigned exactly once, and any future parameter requires an explicit Muon or AdamW classification. A new unrecognized parameter aborts optimizer construction rather than silently entering a generic group.
-
-### Initial T4 update geometry
-
-The first approximately-20M training-qualification dataset uses:
-
-```text
-context_length: 2,048
-sequences_per_block: 16
-microbatch_size: 1
-target tokens per optimizer update: approximately 32,768
-```
-
-This is a project decision, not an example or inherited default.
-
-At the measured short-run GDN-2 throughput of approximately 1,291 target tokens/s, a 32,768-token update is expected to take roughly 25 seconds before data and checkpoint overhead. A 10M-training-token dataset would provide approximately 305 updates. That is enough update cadence to inspect loss, gradient clipping, FP16 scaler behavior, Muon statistics, checkpointing, interruption, and resume while remaining practical on a single T4.
-
-The value `16` is specific to the first T4 qualification profile. It does **not** replace the dataset-production CLI default of 512 sequences per block. Production storage/buffering geometry and training update geometry remain separate decisions.
-
-The finite training dataset must be built with `--sequences-per-block 16`. Its manifest records that geometry as dataset identity. The trainer launch must also pass `--sequences-per-block 16`, causing a dataset built with a different block size to fail closed rather than silently changing the effective batch.
-
-After the initial profile passes, the first batch-growth comparison is 16 versus 32 sequences per block. Growth is not automatic and requires a separate decision based on stability, throughput, and optimizer statistics.
-
-### Standard hyperparameter baseline
-
-The approximately-20M engineering qualification uses a conservative standard baseline rather than a broad hyperparameter search:
-
-```text
-base learning rate: 3e-4
+base LR: 3e-4
 AdamW beta1 / beta2: 0.9 / 0.95
 AdamW epsilon: 1e-8
 AdamW weight decay: 0.1
 Muon momentum: 0.95
 Muon LR multiplier: 1.0
-Muon target update RMS: 0.18
+Muon target direction RMS: 0.18
 Muon weight decay: 0.1
 global gradient clipping norm: 1.0
-seed: 17
 ```
 
-The short failure-detection preflight uses constant `3e-4`.
+The short preflight uses constant LR.  The longer one-pass segment uses the
+implemented token-count warmup/stable/cosine-decay scheduler.
 
-The longer qualification uses the token scheduler already implemented by the trainer:
+## Fixed finite dataset profile
+
+The accepted operational 10M pilot remains immutable evidence with 512
+sequences per block.  The trainer qualification uses a new dataset with:
 
 ```text
-warmup: max(16 updates, 5% of planned updates)
-stable: all remaining updates before final decay
-cosine decay: final 20% of planned updates
+target source tokens: 10,000,000
+minimum source tokens: 9,000,000
+hard maximum source tokens: 11,000,000
+context length: 2,048
+sequences per block: 16
+target shard size: 8 MiB = 8,388,608 bytes
+durable checkpoint cadence: 2,000,000 source tokens
+remote durability: required
+passes: 1
+implicit wraparound: forbidden
+```
+
+Build it only through:
+
+```bash
+uv run --env-file .env python -m dataset.qualification_20m \
+  --weights-file <approved-exact-weight-file.json> \
+  --output-dir <new-output-directory> \
+  --run-id 20m-qualification-dataset-001
+```
+
+The entry point rejects changes to the fixed token bounds, context, block size,
+shard size, durability cadence, and remote-required policy.
+
+## Values intentionally derived from the completed build
+
+The 10M source-token target is known now.  These exact values are not known
+until the producer completes and verifies its manifest:
+
+- accepted source-token total;
+- train and validation source-token totals;
+- train and validation stored/target-token totals;
+- complete ordered train and validation block IDs;
+- number and sizes of immutable shards;
+- exact one-pass optimizer-update count;
+- dataset, schema, source, weight, local-manifest, and Drive-manifest hashes.
+
+The longer-run schedule is calculated from those exact block/token values:
+
+```text
+warmup updates: max(16, 5% of planned updates)
+decay updates: final 20% of planned updates
+stable updates: all remaining updates
 minimum LR ratio: 0.1
 ```
 
-Exact warmup/stable/decay token horizons are derived after the finite dataset source-token envelope is selected and the verified manifest establishes the planned update count. Those exact integers are then frozen in the launch configuration and checkpoint identity.
+Approximate counts such as 305 updates are planning estimates only.
 
-This baseline is structurally consistent with public post-2025 Muon recipes, especially DeepSeek-V4's hybrid optimizer, `0.9/0.95` AdamW betas, `0.1` weight decay, `0.95` Muon momentum, `0.18` update RMS, and warmup/stable/cosine structure. Kimi K3 supports cosine scheduling and Muon-family optimization but does not publish a complete small-model numeric recipe. Kimi K3 per-head Muon is not adopted because it would be a separate optimizer-mechanics experiment.
+## Implemented telemetry
 
-### Checkpoint and evaluation cadence
+W&B project `Small-LLM` receives successful-step metrics using
+`trainer/global_step` as the common axis.
 
-The provisionally approved cadence is:
+Implemented signals include:
 
-```text
-local joint checkpoint: every 25 successful updates
-validation: every 50 successful updates
-remote joint-checkpoint publication: every 50 successful updates
-```
+- loss, LR, block ID, committed tokens, throughput;
+- current GradScaler scale, retries, cumulative overflow events;
+- global and per-role pre-clipping gradient norms;
+- clipping flag;
+- allocated and reserved CUDA memory;
+- data-wait and compute time;
+- validation duration, tokens, loss, and perplexity;
+- local checkpoint duration and size;
+- remote publication duration and final-boundary flag;
+- exact Git, model, trainer, optimizer-routing, and manifest identities;
+- pre-update weight RMS by optimizer role;
+- optimizer-direction RMS by optimizer role;
+- effective update RMS including LR and decoupled decay;
+- effective update-to-weight ratios by optimizer role;
+- named per-Muon-matrix direction RMS and update-to-weight ratios.
 
-This remains conditional on measured overhead. The intended aggregate recurring overhead budget is at most 5% of training wall-clock time, subject to confirmation and freezing on the exact T4 path.
+The update statistics are cleared before each GradScaler candidate and exposed
+only after a successful optimizer update.  They are not checkpoint state.
 
-If validation plus remote publication exceeds the frozen budget, those operations may move to every 100 updates. Local recovery checkpoint cadence does not widen automatically.
+## Test evidence without GitHub Actions
 
-## Terminology: finite qualification dataset
+GitHub Actions is not required for this qualification.  The exact-commit gate
+runs manually in Kaggle:
 
-Earlier notes used the phrase **bounded cache**, which was easy to misread. The preferred term is now **finite qualification dataset**.
+1. check out the exact final commit in detached-HEAD mode;
+2. run the complete offline suite;
+3. save its full log and exit code under `/kaggle/working`;
+4. run the corrected T4 harness;
+5. save its JSON report and require successful exit.
 
-It means:
+A future workflow may automate this, but its absence does not block the current
+manual qualification.
 
-- the dataset producer has an explicit accepted-source-token target, minimum, and hard maximum;
-- it stops at a defined completion point far below the full 90B production target;
-- accepted text is tokenized and packed into immutable schema-v2 shard files;
-- the trainer consumes those prepared files without retokenizing the source.
+## Current readiness
 
-It does not refer to context length, optimizer batch size, epoch count, circular buffering, or automatic repetition.
+### Ready now
 
-Source-token target and number of passes are independent:
+- build the correctly configured finite qualification dataset;
+- run the complete CPU/offline suite on Kaggle against the exact commit;
+- rerun the corrected T4 model harness;
+- inspect W&B during a short trainer preflight once the dataset exists.
 
-```text
-training tokens consumed
-≈ usable target tokens in the finite dataset × trainer passes
-```
+### Not yet authorized
 
-The first qualification should use one pass unless another decision explicitly authorizes repetition. The trainer must not silently wrap to the beginning of the dataset.
+The complete one-pass 10M trainer segment is not authorized until:
 
-The source-token target/minimum/maximum for the new finite training dataset are not fixed yet. The previously discussed 10M/9M/11M envelope remains a proposal.
+1. the new dataset is complete and fully verified locally and on Drive;
+2. exact schedule values and validation block IDs are frozen from its manifest;
+3. the 20-update constant-LR preflight passes;
+4. empirical warning/failure thresholds are frozen from preflight and A/A
+   evidence;
+5. local interruption/resume passes;
+6. remote publication and two-shard empty-environment recovery pass.
 
-## Why the accepted operational 10M dataset is not the training dataset
-
-The accepted authenticated 10M run is valid evidence for source reading, exact mixture scheduling, immutable shards, Drive durability, interruption, resume, schema verification, and idempotence.
-
-It used the dataset CLI default:
-
-```text
-sequences_per_block = 512
-context_length = 2,048
-```
-
-The trainer's atomic contract says that one prepared block is one optimizer update. Microbatching splits the block only to fit memory; it does not change the effective token batch or allow a checkpoint in the middle.
-
-Ignoring the small number of padding tokens:
-
-```text
-target tokens per optimizer update
-= sequences_per_block × context_length
-= 512 × 2,048
-= 1,048,576
-```
-
-The accepted dataset contains about 10M train tokens, so it provides only about ten optimizer updates. At the current ordinary-PyTorch GDN-2 throughput, each update would also be very long. That is poor geometry for debugging scaler behavior, clipping, schedules, checkpoint cadence, and loss trajectory.
-
-The accepted dataset is therefore not defective. It was built for operational dataset acceptance. Training qualification needs a second finite dataset with the same approved source, tokenizer, weights, and schema but `sequences_per_block=16`.
-
-The manifest records block geometry as part of dataset identity. The trainer must not pretend that a 512-sequence block is a set of independently acknowledgeable smaller blocks because that would change the durable update/checkpoint contract after the data was built.
-
-## Update-geometry reference
-
-At context 2,048:
-
-| Sequences per block | Approx. target tokens/update | Approx. updates in 10M train tokens | Status |
-|---:|---:|---:|---|
-| 8 | 16,384 | 610 | smaller debugging candidate |
-| 16 | 32,768 | 305 | **selected initial T4 profile** |
-| 32 | 65,536 | 152 | first later growth comparison |
-| 64 | 131,072 | 76 | not selected initially |
-| 512 | 1,048,576 | 9–10 | operational-dataset default, not training geometry |
-
-## Threshold policy
-
-The user approved an empirical, fail-closed qualification method rather than arbitrary final limits.
-
-### Hard gates
-
-Hard correctness gates are derived from the system contract and are never relaxed by statistics. Examples include:
-
-- finite loss, gradients, updates, parameters, optimizer state, scheduler state, and validation/generation values;
-- complete and exclusive optimizer routing;
-- exact source, tokenizer, schema, dataset, model, optimizer, schedule, and weight-file identities;
-- no skipped, duplicated, reordered, or prematurely acknowledged prepared block;
-- checkpoint integrity and atomic-block boundaries;
-- exact next-block and counter restoration;
-- verified remote checkpoint and shard objects;
-- termination of the real trainer process group during interruption tests.
-
-### Empirical gates
-
-Hardware, overhead, optimizer-distribution, and numerical-resume thresholds are derived from:
-
-1. the standard short T4 preflight;
-2. an uninterrupted reference segment;
-3. an A/A repeatability control on the same T4;
-4. a controlled local interruption/resume comparison;
-5. remote publication and empty-environment recovery.
-
-The baseline run must pass all hard gates before it may define acceptable distributions.
-
-Provisional targets include:
-
-```text
-steady-state throughput: >= 90% of frozen baseline median
-data wait: < 5% of wall-clock training time
-recurring checkpoint/validation/blocking-publication overhead: <= 5%
-memory headroom: >= 10%, preferably >= 1.5 GiB
-post-warmup skipped candidate updates: <= 1%
-clipping frequency > 20%: warning
-sustained clipping frequency > 50%: failure
-```
-
-Final measurement windows, robust statistics, overflow behavior, Muon/AdamW update distributions, loss-runaway detector, and numerical resume tolerance are calculated from the preflight evidence and committed before the longer qualification segment.
-
-The complete protocol is in `20m_qualification_protocol.md`.
-
-## Instrumentation required
-
-The current trainer records loss, base LR, gradient norm, throughput, overflow retries, and peak allocated memory. Before threshold calibration it must also record:
-
-- current GradScaler scale;
-- overflow and skipped-update events;
-- whether clipping occurred;
-- per-optimizer-branch gradient norms;
-- Muon update RMS and update-to-weight statistics;
-- AdamW update-to-weight statistics;
-- CUDA reserved memory;
-- data wait separately from compute time;
-- checkpoint save/load duration and byte size;
-- validation duration and token count;
-- remote publication blocking and completion times;
-- exact git, model, optimizer-routing, dataset, schema, and weight identities in one run summary.
-
-## Engineering choices still open
-
-### Finite dataset scope
-
-- source-token target, minimum, and hard maximum;
-- expected one-pass optimizer-update count;
-- shard size;
-- prepared-block queue and cache head-start settings;
-- whether the first dataset is completed before training or later qualified in live producer/trainer overlap mode.
-
-The initial `sequences_per_block=16` choice is fixed and is no longer open.
-
-### Validation and recovery details
-
-- exact fixed validation slice size and block IDs;
-- definition of the best checkpoint;
-- number of Drive shards prefetched during empty-environment restoration;
-- exact asynchronous/deferred publication implementation.
-
-### Empirical qualification outputs
-
-- final warning/failure values calculated from T4 measurements;
-- exact resume tolerance derived from A/A repeatability;
-- whether the engineering qualification needs more than seed `17`.
-
-The optimizer family, routing, Newton-Schulz recipe, learning rate, AdamW/Muon scalar hyperparameters, schedule ratios, clipping norm, FP16 model execution, FP32 optimizer arithmetic, seed, and 32,768-token update geometry are selected.
-
-## Required launch sequence
-
-The implementation and documentation changes do not themselves constitute a passed training run. The remaining sequence is:
-
-1. complete the missing instrumentation;
-2. run the complete offline suite on the exact launch commit;
-3. select the finite qualification dataset source-token envelope and operational settings;
-4. build and fully verify a separate dataset with `context_length=2048` and `sequences_per_block=16`;
-5. derive exact schedule token horizons from the verified manifest;
-6. launch the trainer with explicit dataset-geometry and recipe identity assertions;
-7. run the short constant-LR GDN-2 chunk-32 FP16 hybrid-Muon preflight;
-8. run the uninterrupted reference and A/A repeatability segments;
-9. freeze the empirical threshold table in project memory;
-10. terminate the actual trainer process and qualify local resume;
-11. publish a verified joint checkpoint and qualify empty-environment recovery;
-12. run the longer one-pass qualification segment;
-13. run validation and deterministic generation checks from trainer-produced checkpoints;
-14. record the complete report and update `project_status.md`.
-
-The approximately-100M architecture comparison and complete 90B dataset production remain unauthorized until this ladder passes.
+These are runtime evidence gates.  Dataset scale, shard size, model profile,
+optimizer, seed, pass count, telemetry, and test-execution venue are no longer
+open decisions.
