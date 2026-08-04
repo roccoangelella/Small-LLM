@@ -31,10 +31,10 @@ class _UpdateRecord:
 class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
     """Hybrid optimizer that exposes non-checkpointed per-step health metrics.
 
-    Statistics are derived from the exact FP32 optimizer direction before the
-    final model-dtype cast.  They include decoupled weight decay and learning
-    rate in the effective update, while retaining the pre-LR Muon matrix RMS so
-    the configured normalization target can be checked directly.
+    The pre-LR optimizer direction is measured in FP32.  Effective-update
+    statistics use the actual parameter delta after learning rate, decoupled
+    weight decay, and the final model-dtype cast.  Only one parameter is cloned
+    at a time; the implementation never keeps a full-model telemetry copy.
     """
 
     def __init__(
@@ -69,35 +69,26 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
         self,
         parameter: nn.Parameter,
         *,
+        before: Tensor,
         role: str,
         direction: Tensor,
-        lr: float,
-        decay: float,
     ) -> None:
         name = self._parameter_names.get(id(parameter))
         if name is None:
             raise RuntimeError("optimizer telemetry found an unnamed parameter")
-        weight = parameter.detach().float()
+        weight = before.detach().float()
         update = direction.detach().float()
-        if weight.shape != update.shape:
+        if weight.shape != update.shape or parameter.shape != update.shape:
             raise RuntimeError("optimizer telemetry update shape does not match parameter")
-        weight_square_sum = weight.square().sum()
-        direction_square_sum = update.square().sum()
-        cross_sum = (weight * update).sum()
-        effective_square_sum = (float(lr) ** 2) * (
-            direction_square_sum
-            + 2.0 * float(decay) * cross_sum
-            + (float(decay) ** 2) * weight_square_sum
-        )
-        effective_square_sum = effective_square_sum.clamp_min(0.0)
+        applied_delta = parameter.detach().float() - weight
         self._pending_update_records.append(
             _UpdateRecord(
                 role=role,
                 name=name,
                 elements=parameter.numel(),
-                weight_square_sum=weight_square_sum,
-                direction_square_sum=direction_square_sum,
-                effective_update_square_sum=effective_square_sum,
+                weight_square_sum=weight.square().sum(),
+                direction_square_sum=update.square().sum(),
+                effective_update_square_sum=applied_delta.square().sum(),
             )
         )
 
@@ -120,7 +111,7 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
         totals: dict[str, dict[str, float | int]] = {}
         matrix_direction_rms: dict[str, float] = {}
         matrix_effective_ratios: dict[str, float] = {}
-        epsilon = torch.finfo(torch.float32).eps
+        epsilon = float(torch.finfo(torch.float32).eps)
 
         for record, (weight_sq, direction_sq, effective_sq) in zip(
             self._pending_update_records, values, strict=True
@@ -150,7 +141,7 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
                 effective_rms = math.sqrt(max(float(effective_sq), 0.0) / record.elements)
                 matrix_direction_rms[record.name] = direction_rms
                 matrix_effective_ratios[record.name] = effective_rms / max(
-                    weight_rms, float(epsilon)
+                    weight_rms, epsilon
                 )
 
         result: dict[str, object] = {}
@@ -172,7 +163,7 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
                 "optimizer_direction_rms": direction_rms,
                 "effective_update_rms": effective_rms,
                 "effective_update_to_weight_ratio": effective_rms
-                / max(weight_rms, float(epsilon)),
+                / max(weight_rms, epsilon),
             }
             if role == "muon":
                 role_result["matrix_optimizer_direction_rms"] = dict(
@@ -212,15 +203,15 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
         )
         lr = float(group["lr"])
         decay = float(group["weight_decay"])
-        self._record_update(
-            parameter,
-            role="muon",
-            direction=update,
-            lr=lr,
-            decay=decay,
-        )
+        before = parameter.detach().clone()
         self._apply_weight_decay(parameter, lr=lr, decay=decay)
         parameter.add_(update.to(dtype=parameter.dtype), alpha=-lr)
+        self._record_update(
+            parameter,
+            before=before,
+            role="muon",
+            direction=update,
+        )
 
     def _adamw_step(self, parameter: nn.Parameter, group: Mapping[str, object]) -> None:
         gradient = parameter.grad
@@ -267,15 +258,15 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
         lr = float(group["lr"])
         decay = float(group["weight_decay"])
         role = str(group["optimizer_role"])
-        self._record_update(
-            parameter,
-            role=role,
-            direction=update,
-            lr=lr,
-            decay=decay,
-        )
+        before = parameter.detach().clone()
         self._apply_weight_decay(parameter, lr=lr, decay=decay)
         parameter.add_(update.to(dtype=parameter.dtype), alpha=-lr)
+        self._record_update(
+            parameter,
+            before=before,
+            role=role,
+            direction=update,
+        )
 
     @torch.no_grad()
     def step(self, closure: Callable[[], Tensor] | None = None) -> Tensor | None:
