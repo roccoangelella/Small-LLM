@@ -76,6 +76,42 @@ class TrainerCLIArgumentTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parse_args([*_BASE, "--remote-publish-every-steps", "-1"])
 
+    def test_wandb_defaults_are_network_free_and_use_project_name(self) -> None:
+        args = parse_args(list(_BASE))
+        self.assertEqual(args.wandb_mode, "disabled")
+        self.assertEqual(args.wandb_project, "Small-LLM")
+        self.assertEqual(args.wandb_resume, "never")
+
+    def test_wandb_resume_requires_run_id(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args(
+                [
+                    *_BASE,
+                    "--resume",
+                    "step-00000025",
+                    "--wandb-mode",
+                    "online",
+                ]
+            )
+
+    def test_training_resume_forces_matching_wandb_resume(self) -> None:
+        args = parse_args(
+            [
+                *_BASE,
+                "--resume",
+                "step-00000025",
+                "--wandb-mode",
+                "online",
+                "--wandb-run-id",
+                "qualification-001",
+            ]
+        )
+        self.assertEqual(args.wandb_resume, "must")
+
+    def test_disabled_wandb_rejects_resume_policy(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse_args([*_BASE, "--wandb-resume", "allow"])
+
 
 if __name__ == "__main__":
     unittest.main()
