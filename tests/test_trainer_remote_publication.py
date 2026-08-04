@@ -127,7 +127,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_publish_every_steps=50,
                 remote_drive_manifest=manifest_path,
                 remote_checkpoint_repo=None,
-                remote_token_env="HF_TOKEN",
+                remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
             )
@@ -169,7 +169,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_publish_every_steps=50,
                 remote_drive_manifest=manifest_path,
                 remote_checkpoint_repo="owner/private",
-                remote_token_env="HF_TOKEN",
+                remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
             )
