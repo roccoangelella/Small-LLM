@@ -23,6 +23,7 @@ class StepMetrics:
     peak_reserved_memory_bytes: int = 0
     data_wait_seconds: float = 0.0
     optimizer_gradient_norms: dict[str, float] = field(default_factory=dict)
+    optimizer_update_statistics: dict[str, object] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
