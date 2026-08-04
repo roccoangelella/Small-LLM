@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from trainer.cli import main
+from trainer.remote_publication import configure_remote_publication
 
 
 class _Metrics:
@@ -109,6 +113,68 @@ class TrainerRemotePublicationTests(unittest.TestCase):
 
         self.assertEqual(session.saved, ["step-00000002"])
         self.assertEqual(coordinator.published, ["step-00000002"])
+
+    def test_configuration_uses_verified_manifest_and_environment_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "drive_manifest.json"
+            manifest = {
+                "version": 1,
+                "run_id": "qualification-run",
+                "shards": [{"filename": "train/a.bin", "remote_durable": True}],
+            }
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            args = SimpleNamespace(
+                remote_publish_every_steps=50,
+                remote_drive_manifest=manifest_path,
+                remote_checkpoint_repo=None,
+                remote_token_env="HF_TOKEN",
+                remote_checkpoint_revision=None,
+                remote_create_repo=False,
+            )
+            store = object()
+            publisher = object()
+            with (
+                patch.dict("os.environ", {"SMALL_LLM_HF_REPO_ID": "owner/private"}, clear=False),
+                patch("trainer.remote_publication.HuggingFaceCheckpointStore", return_value=store) as store_type,
+                patch("trainer.remote_publication.TwoPhaseCheckpointPublisher", return_value=publisher) as publisher_type,
+            ):
+                configured = configure_remote_publication(args)
+
+            self.assertIsNotNone(configured)
+            self.assertEqual(configured.every_steps, 50)
+            self.assertEqual(configured.drive_manifest, manifest)
+            store_type.assert_called_once_with(
+                "owner/private",
+                token=None,
+                private=True,
+                revision=None,
+                create_repo=False,
+            )
+            publisher_type.assert_called_once_with(store, run_id="qualification-run")
+
+    def test_configuration_rejects_non_durable_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "drive_manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "run_id": "qualification-run",
+                        "shards": [{"filename": "train/a.bin", "remote_durable": False}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(
+                remote_publish_every_steps=50,
+                remote_drive_manifest=manifest_path,
+                remote_checkpoint_repo="owner/private",
+                remote_token_env="HF_TOKEN",
+                remote_checkpoint_revision=None,
+                remote_create_repo=False,
+            )
+            with self.assertRaisesRegex(SystemExit, "not verified remote_durable"):
+                configure_remote_publication(args)
 
 
 if __name__ == "__main__":
