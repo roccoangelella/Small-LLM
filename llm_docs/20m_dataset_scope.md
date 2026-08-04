@@ -1,10 +1,10 @@
 # Approximately-20M Qualification Dataset Scope
 
-_Last updated: 2026-08-03_
+_Last updated: 2026-08-04_
 
 ## Decision
 
-The user approved the accepted-source-token envelope for the finite dataset used by the first approximately-20M NVIDIA T4 training qualification:
+The finite dataset used by the first approximately-20M NVIDIA T4 training qualification uses:
 
 ```text
 target accepted source tokens: 10,000,000
@@ -15,55 +15,77 @@ sequences per prepared block: 16
 microbatch size: 1
 ```
 
-This is a separate dataset build from the already accepted 10M operational pilot. The operational pilot remains immutable evidence with 512-sequence blocks. The training-qualification dataset must be built under a new run ID and output directory with explicit `--sequences-per-block 16`.
+This is a separate dataset build from the already accepted 10M operational pilot. The operational pilot remains immutable evidence with 512-sequence blocks. The training-qualification dataset must use a new run ID and output directory with explicit `--sequences-per-block 16`.
 
-## Meaning of the envelope
+## Precise meaning of target, minimum, and maximum
 
-The envelope controls the amount of distinct accepted source material prepared by the dataset producer. It does not specify epoch count or authorize repetition.
+The phrase **9M-11M envelope** is only shorthand for a target plus two safety bounds. It does not mean that the producer arbitrarily chooses a size between nine and eleven million tokens.
 
-The producer aims for 10M accepted source tokens, must complete at or above 9M, and must not pass 11M except according to the existing whole-document stopping contract. The exact completed count and the exact number of training and validation target tokens are taken from the verified manifest.
+Documents are indivisible: the producer either accepts a complete source document or does not accept it. It never cuts a document to hit exactly 10,000,000 tokens.
 
-The trainer's pass count remains a separate launch setting. The current protocol recommends one pass and forbids silent wraparound, but the user has not yet made repetition a separate explicit decision.
+The stopping contract is:
 
-## Expected training geometry
+1. continue accepting whole documents while the incorporated total is below 10,000,000;
+2. normally stop as soon as an accepted whole document takes the total to at least 10,000,000;
+3. never accept a document that would take the total above 11,000,000;
+4. if the next indivisible document would exceed 11,000,000, the build may finalize below the 10M target only when at least 9,000,000 tokens have already been accepted;
+5. if the source ends or the hard-maximum guard fires below 9,000,000, the build fails rather than producing an accepted qualification dataset.
 
-At 16 sequences per block and context 2,048, a full training block contains approximately 32,768 target tokens. A roughly 10M-token training split would therefore provide about 305 optimizer updates. The exact count can differ because:
+Examples:
 
-- the source-token envelope is not identical to stored target-token count;
+```text
+current total 9,980,000 + next document 50,000
+=> accept it and finish at 10,030,000
+
+a current total 9,700,000 + next document 1,400,000
+=> 11,100,000 would breach the hard maximum
+=> refuse the document and permit completion at 9,700,000
+
+a current total 8,800,000 + next document 2,300,000
+=> the document would breach 11,000,000, but 8,800,000 is below the minimum
+=> fail the build
+```
+
+Therefore, a normal run finishes slightly above 10M. The 9M lower bound exists only as a rare whole-document safety fallback. The verified manifest records the exact final count and whether the 10M target was reached or the hard-maximum guard caused early completion.
+
+These numbers count distinct **accepted source tokens**. They do not count inserted EOD markers, padding, epochs, or repeated presentations.
+
+## Training geometry
+
+At 16 sequences per block and context 2,048, a full training block contains approximately 32,768 target tokens. A roughly 10M-token training split should provide about 305 optimizer updates. The exact count can differ because:
+
+- source-token count is not identical to stored target-token count;
 - documents receive EOD boundaries;
 - final sequences may contain padding;
 - approximately 0.1% of accepted documents are assigned deterministically to validation;
-- the final train and validation prepared blocks may contain fewer than 16 sequences.
+- final train and validation blocks may contain fewer than 16 sequences.
 
-Exact warmup, stable, decay, checkpoint, and evaluation positions must be derived from the verified manifest rather than from the approximate 305-update estimate.
+Exact warmup, stable, decay, checkpoint, and evaluation positions must be derived from the verified manifest rather than the approximate update estimate.
 
-## Validation implication
+## Validation policy
 
-The frozen dataset policy assigns approximately 0.1% of accepted documents to validation. At a 10M source-token scale, the held-out split may be only around ten thousand source tokens, subject to document-size variance. The builder can finalize a partial validation block, so the build is not expected to fail merely because validation has fewer than 16 sequences. However, such a small validation sample will be noisy and is suitable primarily for functional qualification, not a strong model-quality estimate.
+The frozen dataset policy assigns documents to validation with a deterministic identity hash at probability 0.1%. The qualification leaves the accepted cluster IDs, cluster weights, and exact mixture scheduler untouched.
 
-Before launch, the project must decide whether to:
+The project must not rebalance validation with new per-cluster quotas or move documents after the build. After completion it freezes the ordered validation block IDs, dataset and Drive-manifest hashes, token and document counts by cluster, and deterministic generation prompts.
 
-1. retain the frozen 0.1% split and explicitly treat validation as a finite-value and checkpoint-usability smoke test; or
-2. create an additional deterministic evaluation dataset or approved qualification-only split policy without changing the production corpus definition.
+At this scale the validation sample may be noisy and is treated primarily as a finite-value, checkpoint-usability, and gross-regression signal rather than a strong model-quality estimate.
 
-The existing production split probability must not be silently changed in the training command.
+## Dataset lifecycle and pass count
+
+The dataset is completed, remotely durable, and fully verified before the trainer starts. The first qualification performs exactly one pass and forbids silent wraparound. Producer/trainer overlap remains a separate later operational test.
 
 ## Still open
 
-The envelope decision does not yet settle:
+The approved token limits and lifecycle do not yet settle:
 
-- whether the trainer performs exactly one pass;
-- whether the dataset is completed and verified before training or producer/trainer overlap is tested immediately;
-- dataset durable checkpoint cadence for this new build;
-- target shard size and remote-mirroring lifecycle;
-- fixed validation slice and generation prompts;
-- best-checkpoint definition;
-- remote restore prefetch window;
-- implementation of the additional metrics required by `20m_qualification_protocol.md`.
+- target shard size and durable dataset checkpoint cadence for this build;
+- the exact frozen validation block list, which can only be recorded after completion;
+- deterministic generation prompt contents;
+- measured W&B warning and failure thresholds derived from the T4 preflight.
 
 ## Immediate implementation contract
 
-The eventual dataset command must explicitly include:
+The dataset command must explicitly include:
 
 ```text
 --target-tokens 10000000
