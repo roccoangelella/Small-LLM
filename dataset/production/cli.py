@@ -12,6 +12,7 @@ from pathlib import Path
 from dataset import config
 from dataset.src.bytesource import list_source_files, make_http_reader
 from dataset.src.remote import GoogleDriveShardStore, RemoteShardStore
+from dataset.src.storage import write_json_atomic
 from dataset.src.streaming import StreamCacheConfig
 from dataset.src.workplan import build_work_plan, load_work_plan, save_work_plan
 
@@ -45,7 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--google-oauth-token",
         "--google-credentials",
         dest="google_credentials",
-        default=os.environ.get("SMALL_LLM_GOOGLE_OAUTH_TOKEN") or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+        default=os.environ.get("SMALL_LLM_GOOGLE_OAUTH_TOKEN")
+        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
         help="Path to Google Drive authorized-user OAuth token JSON file.",
     )
 
@@ -53,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minimum-tokens", type=int, default=config.MINIMUM_ACCEPTED_SOURCE_TOKENS)
     parser.add_argument("--maximum-tokens", type=int, default=config.MAXIMUM_ACCEPTED_SOURCE_TOKENS)
     parser.add_argument(
-        "--checkpoint-source-tokens", type=int,
+        "--checkpoint-source-tokens",
+        type=int,
         default=DEFAULT_CHECKPOINT_SOURCE_TOKENS,
         help="Accepted source tokens between durable checkpoints (default: 1B).",
     )
@@ -73,7 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reader-batch-documents", type=int, default=1000)
     parser.add_argument("--reader-batch-max-bytes", type=int, default=16 * 1024 * 1024)
     parser.add_argument(
-        "--simulate-crash-after-documents", type=int, default=None, help=argparse.SUPPRESS
+        "--simulate-crash-after-documents",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -158,6 +164,13 @@ def main(argv: list[str] | None = None) -> int:
             resume=args.resume,
             simulate_crash_after_documents=args.simulate_crash_after_documents,
         )
+        # Keep the completed manifest directly self-describing for trainer and
+        # launch-report consumers.  These values are already bound by the schema
+        # and configuration hashes; exposing them here avoids relying on operator
+        # memory or an external command transcript.
+        manifest["sequences_per_block"] = stream.sequences_per_block
+        manifest["target_shard_bytes"] = stream.target_shard_bytes
+        write_json_atomic(output_dir / config.MANIFEST_FILENAME, manifest)
         print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as error:  # noqa: BLE001 - concise CLI failure boundary
