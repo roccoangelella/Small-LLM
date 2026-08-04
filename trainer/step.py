@@ -33,6 +33,22 @@ def _optimizer_gradient_norms(optimizer: Optimizer) -> dict[str, float]:
     }
 
 
+def _clear_optimizer_step_statistics(optimizer: Optimizer) -> None:
+    clear = getattr(optimizer, "clear_step_statistics", None)
+    if callable(clear):
+        clear()
+
+
+def _optimizer_step_statistics(optimizer: Optimizer) -> dict[str, object]:
+    inspect = getattr(optimizer, "step_statistics", None)
+    if not callable(inspect):
+        return {}
+    value = inspect()
+    if not isinstance(value, Mapping):
+        raise RuntimeError("optimizer step statistics must be a mapping")
+    return dict(value)
+
+
 def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     if batch.split != "train" or batch.sequence_count <= 0:
         raise ValueError("training requires a non-empty train-split block")
@@ -42,6 +58,7 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     retries, loss_value, grad_value, lr = 0, math.nan, math.nan, math.nan
     scaler_scale = float(engine.scaler.get_scale())
     role_gradient_norms: dict[str, float] = {}
+    update_statistics: dict[str, object] = {}
     gradient_clipped = False
     while True:
         engine.optimizer.zero_grad(set_to_none=True)
@@ -91,6 +108,7 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
         grad_value = float(gradient_norm.detach())
         gradient_clipped = finite_gradient and grad_value > float(engine.config.max_grad_norm)
         scale_before = engine.scaler.get_scale()
+        _clear_optimizer_step_statistics(engine.optimizer)
         engine.scaler.step(engine.optimizer)
         engine.scaler.update()
         scaler_scale = float(engine.scaler.get_scale())
@@ -104,6 +122,7 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
                     "FP16 optimizer step repeatedly overflowed; block remains unacknowledged"
                 )
             continue
+        update_statistics = _optimizer_step_statistics(engine.optimizer)
         loss_value = float(total_loss / batch.target_token_count)
         engine.consumed_tokens, engine.global_step = next_tokens, engine.global_step + 1
         engine.scheduler.commit(engine.consumed_tokens)
@@ -134,4 +153,5 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
         overflow_events_total=engine.overflow_events,
         peak_reserved_memory_bytes=peak_reserved,
         optimizer_gradient_norms=role_gradient_norms,
+        optimizer_update_statistics=update_statistics,
     )
