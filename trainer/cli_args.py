@@ -66,6 +66,44 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
+    p.add_argument(
+        "--remote-publish-every-steps",
+        type=int,
+        default=0,
+        help=(
+            "Publish a verified joint checkpoint to the private Hugging Face "
+            "repository every N successful updates. Zero disables publication."
+        ),
+    )
+    p.add_argument(
+        "--remote-drive-manifest",
+        type=Path,
+        help=(
+            "Verified Drive manifest whose durable shard identities are bound "
+            "into every remotely published checkpoint."
+        ),
+    )
+    p.add_argument(
+        "--remote-checkpoint-repo",
+        help=(
+            "Private Hugging Face repository ID. Falls back to "
+            "SMALL_LLM_HF_REPO_ID."
+        ),
+    )
+    p.add_argument(
+        "--remote-checkpoint-revision",
+        help="Optional Hugging Face revision used for checkpoint objects.",
+    )
+    p.add_argument(
+        "--remote-token-env",
+        default="HF_TOKEN",
+        help="Environment variable containing the Hugging Face access token.",
+    )
+    p.add_argument(
+        "--remote-create-repo",
+        action="store_true",
+        help="Create the configured private Hugging Face repository if missing.",
+    )
     p.add_argument("--seed", type=int, default=17)
     return p
 
@@ -76,6 +114,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--steps must be positive")
     if args.validation_blocks < 0:
         raise SystemExit("--validation-blocks cannot be negative")
+    if args.remote_publish_every_steps < 0:
+        raise SystemExit("--remote-publish-every-steps cannot be negative")
+    if args.remote_publish_every_steps and args.remote_drive_manifest is None:
+        raise SystemExit(
+            "--remote-drive-manifest is required when remote publication is enabled"
+        )
     if args.gdn_chunk_size is not None and args.gdn_chunk_size <= 0:
         raise SystemExit("--gdn-chunk-size must be positive")
 
