@@ -145,7 +145,9 @@ def main(argv: list[str] | None = None) -> int:
                 publish_remote_checkpoint(checkpoint_id, final=False)
 
         if args.validation_blocks and (
-            validation is None or trainer_config.evaluation_every_steps == 0
+            validation is None
+            or trainer_config.evaluation_every_steps == 0
+            or engine.global_step % trainer_config.evaluation_every_steps != 0
         ):
             validation = run_validation()
         checkpoint_id = f"step-{engine.global_step:08d}"
