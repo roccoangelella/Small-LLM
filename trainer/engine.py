@@ -12,7 +12,8 @@ from torch.optim import Optimizer
 from .config import TrainerConfig
 from .evaluation import evaluate_batches, generate_token_ids
 from .metrics import StepMetrics
-from .optimizer import build_adamw, build_optimizer
+from .optimizer import _classify_parameters, build_adamw, build_optimizer
+from .optimizer_telemetry import InstrumentedHybridMuonAdamW
 from .schedule import TokenLRScheduler
 from .session import TrainingSession
 from .state import engine_state_dict, load_engine_state
@@ -25,6 +26,14 @@ def seed_everything(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def _build_training_optimizer(model: nn.Module, config: TrainerConfig) -> Optimizer:
+    """Build the selected optimizer with qualification telemetry when supported."""
+
+    if config.optimizer == "hybrid_muon_adamw":
+        return InstrumentedHybridMuonAdamW(_classify_parameters(model), config)
+    return build_optimizer(model, config)
 
 
 class TrainerEngine:
@@ -49,8 +58,10 @@ class TrainerEngine:
         if config.precision == "bf16" and self.device.type not in {"cuda", "cpu"}:
             raise ValueError("bf16 training requires a CUDA or CPU device")
         self.model = model.to(self.device)
-        self.optimizer = optimizer if optimizer is not None else build_optimizer(
-            self.model, config
+        self.optimizer = (
+            optimizer
+            if optimizer is not None
+            else _build_training_optimizer(self.model, config)
         )
         self.scheduler = TokenLRScheduler(self.optimizer, config)
         self.scaler = torch.amp.GradScaler(
