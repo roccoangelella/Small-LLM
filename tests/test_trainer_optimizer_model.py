@@ -14,7 +14,7 @@ def _config(architecture: str) -> ModelConfig:
     return ModelConfig(
         semantic_vocab_size=257,
         padded_vocab_size=264,
-        max_seq_len=8,
+        max_seq_len=512 if architecture == "swa_hybrid" else 8,
         d_model=64,
         n_layers=4,
         d_ff=128,
