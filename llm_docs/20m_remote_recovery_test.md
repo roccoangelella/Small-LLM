@@ -73,6 +73,15 @@ WANDB_ENTITY
 
 `SMALL_LLM_HF_REPO_ID` must be a private Hugging Face model repository ID such as `owner/small-llm-checkpoints`. The launcher may create it when the token has permission.
 
+The selected repository is:
+
+```text
+repository URL: https://huggingface.co/roccoangelella/small-llm-20m-qualification
+SMALL_LLM_HF_REPO_ID value: roccoangelella/small-llm-20m-qualification
+```
+
+The Kaggle secret must contain only the `owner/repository` identifier, not the full `https://huggingface.co/...` URL. Supplying the full URL is treated as a configuration error and may cause the publication stage to fail.
+
 `GOOGLE_DRIVE_OAUTH_TOKEN_JSON` must contain the full authorized-user OAuth token JSON previously produced by the project's Drive authorization flow, including its refresh token. It is written to a mode-0600 temporary file inside the evidence directory and is never included in the final summary.
 
 ## Pass requirements
