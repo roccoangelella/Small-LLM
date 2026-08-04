@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Mapping
 
@@ -42,6 +43,12 @@ def _sha256(path: Path) -> str:
 
 def _require_integer(value: object, *, name: str, minimum: int = 0) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ValueError(f"manifest has invalid {name}")
+    return value
+
+
+def _require_string(value: object, *, name: str) -> str:
+    if not isinstance(value, str) or not value:
         raise ValueError(f"manifest has invalid {name}")
     return value
 
@@ -86,7 +93,7 @@ def _validate_identity(manifest: Mapping[str, object]) -> None:
     )
     if not MINIMUM_SOURCE_TOKENS <= accepted <= MAXIMUM_SOURCE_TOKENS:
         raise ValueError("accepted source tokens fall outside qualification bounds")
-    if production.get("target_reached") is not (accepted >= TARGET_SOURCE_TOKENS):
+    if production.get("target_reached") != (accepted >= TARGET_SOURCE_TOKENS):
         raise ValueError("production target_reached disagrees with accepted source tokens")
 
 
@@ -98,8 +105,16 @@ def _split_summary(
     raw_shards = manifest.get("shards")
     if not isinstance(raw_shards, list):
         raise ValueError("qualification manifest has no shard list")
-    shards = [item for item in raw_shards if isinstance(item, Mapping) and item.get("split") == split]
-    shards.sort(key=lambda item: _require_integer(item.get("first_block_id"), name="first_block_id"))
+    shards = [
+        item
+        for item in raw_shards
+        if isinstance(item, Mapping) and item.get("split") == split
+    ]
+    shards.sort(
+        key=lambda item: _require_integer(
+            item.get("first_block_id"), name="first_block_id"
+        )
+    )
     if not shards:
         return {
             "shard_count": 0,
@@ -126,18 +141,24 @@ def _split_summary(
         sequences = _require_integer(
             shard.get("sequence_count"), name="sequence_count", minimum=1
         )
-        tokens = _require_integer(shard.get("token_count"), name="token_count", minimum=1)
+        tokens = _require_integer(
+            shard.get("token_count"), name="token_count", minimum=1
+        )
         if tokens != sequences * (CONTEXT_LENGTH + 1):
             raise ValueError(f"{split} shard token count disagrees with sequence count")
+        filename = _require_string(shard.get("filename"), name="filename")
+        checksum = _require_string(shard.get("checksum"), name="checksum")
+        if len(checksum) != 64 or any(character not in "0123456789abcdef" for character in checksum):
+            raise ValueError(f"{split} shard has an invalid checksum")
         sequence_count += sequences
         stored_tokens += tokens
         shard_rows.append(
             {
-                "filename": shard.get("filename"),
+                "filename": filename,
                 "byte_size": _require_integer(
                     shard.get("byte_size"), name="byte_size", minimum=1
                 ),
-                "checksum": shard.get("checksum"),
+                "checksum": checksum,
                 "first_block_id": first,
                 "last_block_id": last,
                 "sequence_count": sequences,
@@ -161,6 +182,71 @@ def _split_summary(
         "block_ids": block_ids,
         "shards": shard_rows,
     }
+
+
+def _verify_drive_manifest(
+    drive_manifest: Mapping[str, object],
+    *,
+    manifest: Mapping[str, object],
+    train: Mapping[str, object],
+    validation: Mapping[str, object],
+) -> tuple[str, int]:
+    production = manifest.get("production")
+    if not isinstance(production, Mapping):
+        raise ValueError("qualification manifest has no production identity")
+    run_id = _require_string(production.get("run_id"), name="production run_id")
+    configuration_hash = _require_string(
+        production.get("configuration_hash"), name="production configuration_hash"
+    )
+    schema_hash = _require_string(
+        production.get("schema_hash"), name="production schema_hash"
+    )
+    if drive_manifest.get("version") != 1:
+        raise ValueError("Drive manifest has an unsupported version")
+    if drive_manifest.get("run_id") != run_id:
+        raise ValueError("Drive manifest run ID disagrees with the dataset manifest")
+    if drive_manifest.get("configuration_hash") != configuration_hash:
+        raise ValueError("Drive manifest configuration hash disagrees with the dataset")
+    if drive_manifest.get("schema_hash") != schema_hash:
+        raise ValueError("Drive manifest schema hash disagrees with the dataset")
+
+    local_rows = list(train.get("shards", [])) + list(validation.get("shards", []))
+    local_by_name = {
+        str(item["filename"]): item
+        for item in local_rows
+        if isinstance(item, Mapping)
+    }
+    drive_shards = drive_manifest.get("shards")
+    if not isinstance(drive_shards, list) or any(
+        not isinstance(item, Mapping) for item in drive_shards
+    ):
+        raise ValueError("Drive manifest has an invalid shard list")
+    drive_by_name: dict[str, Mapping[str, object]] = {}
+    file_ids: set[str] = set()
+    for item in drive_shards:
+        assert isinstance(item, Mapping)
+        filename = _require_string(item.get("filename"), name="Drive filename")
+        file_id = _require_string(item.get("drive_file_id"), name="Drive file ID")
+        if filename in drive_by_name or file_id in file_ids:
+            raise ValueError("Drive manifest contains a duplicate shard or file ID")
+        if item.get("remote_durable") is not True:
+            raise ValueError(f"Drive shard is not remotely durable: {filename}")
+        if item.get("configuration_hash") != configuration_hash:
+            raise ValueError(f"Drive shard has a configuration mismatch: {filename}")
+        if item.get("schema_hash") != schema_hash:
+            raise ValueError(f"Drive shard has a schema mismatch: {filename}")
+        drive_by_name[filename] = item
+        file_ids.add(file_id)
+
+    if set(drive_by_name) != set(local_by_name):
+        raise ValueError("Drive and local manifests reference different shard filenames")
+    for filename, local in local_by_name.items():
+        remote = drive_by_name[filename]
+        if remote.get("byte_size") != local.get("byte_size"):
+            raise ValueError(f"Drive shard byte size mismatch: {filename}")
+        if remote.get("local_sha256") != local.get("checksum"):
+            raise ValueError(f"Drive shard checksum mismatch: {filename}")
+    return run_id, len(drive_by_name)
 
 
 def derive_plan(
@@ -209,16 +295,16 @@ def derive_plan(
         identity["manifest_sha256"] = _sha256(manifest_path)
     if drive_manifest_path is not None:
         drive_manifest = _read_object(drive_manifest_path, label="Drive manifest")
+        drive_run_id, drive_shard_count = _verify_drive_manifest(
+            drive_manifest,
+            manifest=manifest,
+            train=train,
+            validation=validation,
+        )
         identity["drive_manifest_path"] = str(drive_manifest_path)
         identity["drive_manifest_sha256"] = _sha256(drive_manifest_path)
-        identity["drive_run_id"] = drive_manifest.get("run_id")
-        drive_shards = drive_manifest.get("shards")
-        if not isinstance(drive_shards, list) or any(
-            not isinstance(item, Mapping) or item.get("remote_durable") is not True
-            for item in drive_shards
-        ):
-            raise ValueError("Drive manifest contains a non-durable shard")
-        identity["drive_shard_count"] = len(drive_shards)
+        identity["drive_run_id"] = drive_run_id
+        identity["drive_shard_count"] = drive_shard_count
 
     return {
         "version": 1,
@@ -276,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 - concise report boundary
         print(
             f"qualification report error: {type(error).__name__}: {error}",
-            file=__import__("sys").stderr,
+            file=sys.stderr,
         )
         return 1
 
