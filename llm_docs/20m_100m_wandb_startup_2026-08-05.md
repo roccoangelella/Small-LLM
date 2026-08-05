@@ -39,6 +39,10 @@ Revised decision:
 
 Notebook caveat: if the earlier timeout was set with `!export WANDB_INIT_TIMEOUT=300` in a separate Kaggle cell, that export did not persist because each IPython `!` command runs in a separate shell. `%env WANDB_INIT_TIMEOUT=300`, assignment through `os.environ`, or prefixing the same shell command would persist. This caveat does not explain a confirmed timeout that actually reported 300 seconds.
 
+## Delegated diagnostic task
+
+The user decided to delegate root-cause diagnosis and repair to a coding agent with PiLink repository access and SSH access to the active Kaggle notebook. The agent must reproduce the failure in the real Kaggle environment, isolate the failing W&B phase, implement the smallest robust fix, verify prompt online initialization before training, add regression coverage, and commit and push the code and memory updates to `main`.
+
 ## Evidence
 
 Implemented and pushed on `main`:
