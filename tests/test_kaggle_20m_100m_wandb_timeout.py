@@ -15,7 +15,7 @@ ENTRYPOINT = Path(__file__).resolve().parents[1] / "kaggle" / "run_20m_100m.py"
 
 
 class KaggleWandbTimeoutTests(unittest.TestCase):
-    def test_entrypoint_forces_ten_minute_timeout_before_launcher_setup(self) -> None:
+    def test_entrypoint_enforces_healthy_thirty_second_budget_before_launcher_setup(self) -> None:
         observed: dict[str, str | None] = {}
 
         common = types.ModuleType("run_20m_one_click")
@@ -46,10 +46,10 @@ class KaggleWandbTimeoutTests(unittest.TestCase):
             ),
         ):
             namespace = runpy.run_path(str(ENTRYPOINT), run_name="wandb_timeout_test")
-            self.assertEqual(os.environ["WANDB_INIT_TIMEOUT"], "600")
+            self.assertEqual(os.environ["WANDB_INIT_TIMEOUT"], "30")
 
-        self.assertEqual(namespace["WANDB_INIT_TIMEOUT_SECONDS"], "600")
-        self.assertEqual(observed, {"common": "600", "experiment": "600"})
+        self.assertEqual(namespace["WANDB_INIT_TIMEOUT_SECONDS"], "30")
+        self.assertEqual(observed, {"common": "30", "experiment": "30"})
 
 
 if __name__ == "__main__":

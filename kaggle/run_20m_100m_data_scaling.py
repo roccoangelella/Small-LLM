@@ -31,8 +31,9 @@ WORKTREE = ROOT / "launch-worktree"
 EVIDENCE = ROOT / ("evidence-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 CHECKPOINTS = ROOT / "checkpoints"
 SUMMARY = common.WORK / "small_llm_20m_100m_data_scaling_summary.json"
-WANDB_RUN_ID = "20m-100m-data-001"
-WANDB_INIT_TIMEOUT_SECONDS = "600"
+WANDB_RUN_ID = "20m-100m-data-003"
+WANDB_INIT_TIMEOUT_SECONDS = "30"
+WANDB_PREFLIGHT = REPO / "kaggle" / "wandb_preflight.py"
 MICROBATCH_BASELINE, MICROBATCH_CANDIDATE = 1, 4
 PROBE_STEPS, PROBE_WARMUP = 8, 2
 MIN_SPEEDUP = 1.05
@@ -56,6 +57,132 @@ def read_object(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise LaunchFailure(f"{label} is not a JSON object: {path}")
     return dict(value)
+
+
+def wandb_preflight_command(
+    uv: str,
+    evidence: Path,
+    entity: str | None = None,
+) -> tuple[list[str], Path, Path]:
+    root = evidence / "wandb-preflight"
+    result = root / "result.json"
+    command = [
+        uv,
+        "run",
+        "--python",
+        "3.13",
+        "--with",
+        "wandb==0.26.1",
+        "python",
+        str(WANDB_PREFLIGHT),
+        "--project",
+        "Small-LLM",
+        "--run-id",
+        WANDB_RUN_ID,
+        "--run-name",
+        "20M model on 100M tokens",
+        "--dir",
+        str(root),
+        "--result",
+        str(result),
+        "--init-timeout",
+        WANDB_INIT_TIMEOUT_SECONDS,
+    ]
+    if entity:
+        command += ["--entity", entity]
+    return command, root, result
+
+
+def validate_wandb_preflight_result(path: Path) -> dict[str, Any]:
+    result = read_object(path, "W&B preflight result")
+    if result.get("status") != "passed":
+        classification = result.get("failure_classification") or "unclassified"
+        raise LaunchFailure(
+            f"W&B preflight failed ({classification}); see {path.parent}"
+        )
+    if result.get("run_id") != WANDB_RUN_ID:
+        raise LaunchFailure("W&B preflight used the wrong run ID")
+    if float(result.get("init_timeout_seconds", 0)) > float(WANDB_INIT_TIMEOUT_SECONDS):
+        raise LaunchFailure("W&B preflight exceeded the healthy initialization budget")
+    phases = result.get("phases")
+    required = {
+        "secret_propagation",
+        "dns",
+        "tls",
+        "api_key_authentication",
+        "local_wandb_core",
+        "project_run_resume",
+    }
+    if not isinstance(phases, list):
+        raise LaunchFailure("W&B preflight has no phase evidence")
+    observed = {
+        str(row.get("name")): row
+        for row in phases
+        if isinstance(row, Mapping)
+    }
+    if set(observed) != required or any(
+        row.get("status") != "passed" for row in observed.values()
+    ):
+        raise LaunchFailure("W&B preflight did not pass every startup phase")
+    online_elapsed = observed["project_run_resume"].get("elapsed_seconds")
+    if not isinstance(online_elapsed, (int, float)) or float(online_elapsed) > float(
+        WANDB_INIT_TIMEOUT_SECONDS
+    ):
+        raise LaunchFailure("W&B online initialization was not healthy")
+    debug_logs = result.get("debug_logs")
+    if not isinstance(debug_logs, Mapping):
+        raise LaunchFailure("W&B preflight did not preserve debug logs")
+    for name in ("debug.log", "debug-internal.log", "debug-core.log"):
+        row = debug_logs.get(name)
+        if not isinstance(row, Mapping):
+            raise LaunchFailure(f"W&B preflight did not preserve {name}")
+        debug_path = Path(str(row.get("path", "")))
+        if not debug_path.is_file():
+            raise LaunchFailure(f"Preserved W&B log is missing: {debug_path}")
+    return result
+
+
+def run_wandb_preflight(
+    uv: str,
+    wandb_key: str,
+    entity: str | None,
+) -> dict[str, Any]:
+    command, root, result_path = wandb_preflight_command(uv, EVIDENCE, entity)
+    environment = {
+        "WANDB_API_KEY": wandb_key,
+        "WANDB_INIT_TIMEOUT": WANDB_INIT_TIMEOUT_SECONDS,
+        "WANDB_CONFIG_DIR": str(root / "config"),
+        "WANDB_CACHE_DIR": str(root / "cache"),
+        "PYTHONUNBUFFERED": "1",
+        "UV_LINK_MODE": "copy",
+    }
+    if entity:
+        environment["WANDB_ENTITY"] = entity
+    try:
+        common.run(
+            command,
+            name="wandb-preflight",
+            evidence=EVIDENCE,
+            cwd=REPO,
+            env=environment,
+        )
+    except common.GateFailure as error:
+        if result_path.is_file():
+            result = read_object(result_path, "failed W&B preflight result")
+            classification = result.get("failure_classification") or "unclassified"
+            if classification == "deleted_run_id":
+                raise LaunchFailure(
+                    f"W&B run ID {WANDB_RUN_ID!r} is tombstoned; choose a new stable "
+                    f"run ID before training. Debug logs: {root / 'preserved'}"
+                ) from error
+            raise LaunchFailure(
+                f"W&B preflight failed ({classification}); debug logs: "
+                f"{root / 'preserved'}"
+            ) from error
+        raise LaunchFailure(
+            f"W&B preflight failed before producing diagnostics; see {root}"
+        ) from error
+    return validate_wandb_preflight_result(result_path)
 
 
 def arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -464,6 +591,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         uv = common.find_uv()
         common.run([uv, "python", "install", "3.13"],
                    name="install-python-3.13", evidence=EVIDENCE, cwd=WORKTREE)
+        state["wandb_preflight"] = run_wandb_preflight(uv, wandb_key, entity)
+        common.write_json(SUMMARY, state)
         base = [uv, "run", "--python", "3.13"]
         common.run(base + ["--with-requirements", "dataset/requirements-remote.txt",
                    "python", "-m", "dataset.main", "verify", "--output-dir", str(dataset), "--full-scan"],
@@ -476,14 +605,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         state["plan"] = plan
         env = {
             "WANDB_API_KEY": wandb_key,
-            "WANDB_INIT_TIMEOUT": os.environ.get(
-                "WANDB_INIT_TIMEOUT", WANDB_INIT_TIMEOUT_SECONDS
-            ),
+            "WANDB_INIT_TIMEOUT": WANDB_INIT_TIMEOUT_SECONDS,
             "HF_TOKEN": hf_token,
             "SMALL_LLM_HF_REPO_ID": hf_repo,
             "UV_LINK_MODE": "copy",
             "PYTHONUNBUFFERED": "1",
         }
+        if entity:
+            env["WANDB_ENTITY"] = entity
         restored = restore_latest(uv, dataset, hf_repo, env)
         state["remote_restore"] = restored or {"status": "fresh"}
         total = int(plan["trainer"]["steps"])

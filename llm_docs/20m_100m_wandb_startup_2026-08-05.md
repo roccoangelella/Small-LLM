@@ -1,64 +1,105 @@
-# 20M/100M W&B startup handling — 2026-08-05
+# 20M/100M W&B startup diagnosis and fix — 2026-08-05
 
-Repeated Kaggle launches reached the real-training boundary but failed before the first optimizer update because `wandb.init()` exhausted its initialization window.
+## Root cause
 
-## Verification result
-
-The first timeout patch was incomplete:
-
-- it used `os.environ.setdefault("WANDB_INIT_TIMEOUT", "300")`, so an existing Kaggle or notebook value such as `90` was preserved instead of overridden;
-- its regression test failed under the project Python 3.13 runtime because it attempted `ast.literal_eval()` on every top-level assignment, including non-literal assignments;
-- a timed-out first `wandb.init()` can create the fixed run on the W&B server before the client gives up, while the next fresh launcher attempt previously used the effective `resume="never"` policy and could reject that existing run.
-
-## Operational implementation
-
-- keep W&B in online mode for the 20M-model/100M-token run;
-- force `WANDB_INIT_TIMEOUT=600` in the one-click entrypoint before launcher imports;
-- copy the timeout explicitly into the trainer subprocess environment;
-- use `wandb-resume=allow` when no training checkpoint exists, so a run created immediately before an initialization timeout can be recovered;
-- continue using `wandb-resume=must` when resuming from a verified training checkpoint;
-- preserve the pinned scientific training commit, optimizer configuration, microbatch-4 selection, 16-sequence optimizer block, dataset order, checkpoint cadence, and fixed W&B run identity;
-- treat the PyTorch message about unavailable NumPy as a non-fatal warning separate from the W&B communication timeout;
-- do not claim that a failed W&B initialization completed any optimizer update or produced a resumable training checkpoint.
-
-The change is operational only and does not modify training mathematics.
-
-## User correction and revised diagnosis
-
-The user reported that Kaggle had already been allowed to wait approximately 300 seconds for `wandb.init()` on multiple attempts. Therefore increasing the initialization timeout is not accepted as the root-cause solution. A healthy W&B initialization should complete in seconds, not minutes.
-
-Revised decision:
-
-- retain a long timeout only as a final safety ceiling;
-- treat any initialization taking more than roughly 30 seconds as abnormal;
-- diagnose W&B startup before launching expensive training;
-- separate four phases: notebook environment propagation, local `wandb-core` startup, API-key/entity/project authentication, and online run creation/resume;
-- capture and surface `debug.log`, `debug-internal.log`, and `debug-core.log` when the online probe fails;
-- require an explicit verified W&B entity rather than relying silently on default-entity resolution for the fixed run identity;
-- do not launch model training until a minimal online W&B probe succeeds promptly under the exact pinned Python and SDK environment.
-
-Notebook caveat: if the earlier timeout was set with `!export WANDB_INIT_TIMEOUT=300` in a separate Kaggle cell, that export did not persist because each IPython `!` command runs in a separate shell. `%env WANDB_INIT_TIMEOUT=300`, assignment through `os.environ`, or prefixing the same shell command would persist. This caveat does not explain a confirmed timeout that actually reported 300 seconds.
-
-## Delegated diagnostic task
-
-The user decided to delegate root-cause diagnosis and repair to a coding agent with PiLink repository access and SSH access to the active Kaggle notebook. The agent must reproduce the failure in the real Kaggle environment, isolate the failing W&B phase, implement the smallest robust fix, verify prompt online initialization before training, add regression coverage, and commit and push the code and memory updates to `main`.
-
-## Evidence
-
-Implemented and pushed on `main`:
+The repeated Kaggle `wandb.init()` timeout was not caused by slow healthy initialization. The fixed production W&B run ID `20m-100m-data-001` had previously been created and deleted. With `wandb==0.26.1`, the W&B backend returned HTTP 409 from the GraphQL `upsertBucket` request:
 
 ```text
-commit: 877718d
-message: Fix Kaggle W&B startup retries
+run 20m-100m-data-001 was previously created and deleted; try a new run id
 ```
 
-Verification completed locally:
+The SDK classified that permanent conflict as retryable, retried with backoff, and eventually surfaced only the generic initialization-timeout exception. Increasing `WANDB_INIT_TIMEOUT` therefore delayed the same deterministic failure and was not a solution. This explains why earlier attempts also failed after being allowed to wait approximately 300 seconds.
+
+## Isolated phases in the real Kaggle runtime
+
+The diagnosis used the exact required runtime: Python 3.13.14 and `wandb==0.26.1`.
+
+A minimal independent run established that the Kaggle environment itself was healthy:
+
+| Phase | Result | Representative elapsed time |
+|---|---:|---:|
+| Kaggle `WANDB_API_KEY` propagation | passed | <0.001 s |
+| DNS resolution for `api.wandb.ai` | passed | 0.003 s |
+| TLS connection to `api.wandb.ai` | passed, TLS 1.3 | 0.011 s |
+| API-key validation | passed | 0.22 s |
+| local `wandb-core` startup via offline init | passed | 0.39 s |
+| online project/run initialization with a valid ID | passed | 1.26 s |
+
+`WANDB_ENTITY` was not configured as a Kaggle Secret. Authentication still resolved the key to entity `rocchissimo936-none`, so absence of an explicit entity was not the failure.
+
+The exact production trainer command reproduced the failure with run ID `20m-100m-data-001` and a 30-second budget. Its `debug-internal.log` recorded repeated HTTP 409 responses containing the deleted-run message. `debug-core.log` showed that the local service started and accepted its Unix-socket connection normally before the client cancelled the request at timeout.
+
+The same exact trainer integration, dataset, model configuration, Python version, W&B version, and optimizer settings initialized promptly with a clean run ID and reached optimizer update 1. This confirmed that project/run creation and resume identity were the only failing phase.
+
+## Fix
+
+The operational fix is deliberately narrow:
+
+1. Replace the tombstoned W&B identity with the new stable run ID `20m-100m-data-003`.
+2. Restore a 30-second initialization budget. Healthy initialization is expected to complete far below that limit.
+3. Add `kaggle/wandb_preflight.py`, invoked before dataset scanning, microbatch qualification, or training. It verifies:
+   - exact Python and W&B versions;
+   - secret propagation;
+   - DNS and TLS connectivity;
+   - API-key authentication and resolved entity;
+   - local `wandb-core` startup;
+   - creation/resume of the exact production project and run ID.
+4. Preserve the newest online `debug.log`, `debug-internal.log`, and `debug-core.log` under the launch evidence directory with SHA-256 hashes.
+5. Detect the deleted-run 409 marker and fail with an actionable tombstoned-ID error instead of starting expensive work or recommending a longer timeout.
+6. Reuse the preflight-created production run with `resume="allow"` for a fresh training launch and `resume="must"` only when a verified training checkpoint is restored.
+
+## Scientific invariants
+
+The fix does not modify:
+
+- pinned scientific launch commit `43190cb72443a2de290dc8e6f2c54f29d8dff501`;
+- model architecture or initialization;
+- dataset contents or ordering;
+- one-pass token schedule;
+- optimizer type or hyperparameters;
+- effective 16-sequence optimizer batch;
+- microbatch-4 qualification thresholds;
+- checkpoint schema, directory, cadence, or remote identity.
+
+Only W&B startup validation and the unusable W&B run identity changed.
+
+## Regression coverage
+
+The regression tests cover:
+
+- the 30-second launcher budget;
+- exact Python 3.13 and `wandb==0.26.1` preflight command construction;
+- use of the clean stable production run ID;
+- all six required preflight phases;
+- rejection of an online initialization exceeding the healthy budget;
+- classification of the W&B deleted-run HTTP 409;
+- deterministic preservation of all three online W&B debug logs;
+- unchanged W&B resume semantics for fresh and checkpoint-resumed training;
+- existing W&B telemetry behavior and API-key non-disclosure.
+
+## Verification record
+
+Before-fix reproduction in Kaggle:
 
 ```text
-10 Kaggle launcher/console tests: passed
-4 W&B telemetry tests: passed
-wandb SDK pin: 0.26.1
-resolved init_timeout with WANDB_INIT_TIMEOUT=600: 600.0 seconds
+runtime: Python 3.13.14, wandb 0.26.1
+run ID: 20m-100m-data-001
+result: wandb.init timed out at 30 seconds
+root evidence: repeated HTTP 409 "previously created and deleted"
 ```
 
-The implementation above verifies timeout propagation and retry semantics only. It does not prove that Kaggle can establish a healthy online W&B run; the revised diagnostic gate remains required.
+Fixed preflight in Kaggle:
+
+```text
+run ID: 20m-100m-data-003
+status: passed
+all phases: passed
+total elapsed: 2.396 seconds
+online project/run phase: 1.261 seconds
+resolved entity: rocchissimo936-none
+debug.log: preserved from online run
+debug-internal.log: preserved from online run
+debug-core.log: preserved from online run
+```
+
+The final full-launch verification and commit SHA are recorded after the pushed launcher is executed in the real Kaggle notebook.

@@ -107,6 +107,72 @@ class Kaggle20M100MLauncherTests(unittest.TestCase):
             launcher.WANDB_RUN_ID,
         )
 
+    def test_preflight_pins_exact_runtime_and_clean_production_run_id(self) -> None:
+        command, root, result = launcher.wandb_preflight_command(
+            "uv", Path("/evidence"), "explicit-entity"
+        )
+        self.assertEqual(launcher.WANDB_RUN_ID, "20m-100m-data-003")
+        self.assertEqual(command[command.index("--python") + 1], "3.13")
+        self.assertEqual(command[command.index("--with") + 1], "wandb==0.26.1")
+        self.assertEqual(command[command.index("--run-id") + 1], launcher.WANDB_RUN_ID)
+        self.assertEqual(command[command.index("--init-timeout") + 1], "30")
+        self.assertEqual(command[command.index("--entity") + 1], "explicit-entity")
+        self.assertEqual(root, Path("/evidence/wandb-preflight"))
+        self.assertEqual(result, root / "result.json")
+
+    def test_preflight_result_requires_all_phases_and_preserved_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            preserved = root / "preserved"
+            preserved.mkdir()
+            debug_logs: dict[str, object] = {}
+            for name in ("debug.log", "debug-internal.log", "debug-core.log"):
+                path = preserved / name
+                path.write_text(name, encoding="utf-8")
+                debug_logs[name] = {"path": str(path)}
+            phases = [
+                {"name": name, "status": "passed", "elapsed_seconds": 0.1}
+                for name in (
+                    "secret_propagation",
+                    "dns",
+                    "tls",
+                    "api_key_authentication",
+                    "local_wandb_core",
+                    "project_run_resume",
+                )
+            ]
+            result_path = root / "result.json"
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "run_id": launcher.WANDB_RUN_ID,
+                        "init_timeout_seconds": 30,
+                        "phases": phases,
+                        "debug_logs": debug_logs,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            validated = launcher.validate_wandb_preflight_result(result_path)
+            self.assertEqual(validated["status"], "passed")
+
+            phases[-1]["elapsed_seconds"] = 30.1
+            result_path.write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "run_id": launcher.WANDB_RUN_ID,
+                        "init_timeout_seconds": 30,
+                        "phases": phases,
+                        "debug_logs": debug_logs,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(launcher.LaunchFailure, "not healthy"):
+                launcher.validate_wandb_preflight_result(result_path)
+
     def test_microbatch_gate_accepts_safe_speedup(self) -> None:
         verdict = launcher.compare_probes(
             _rows(100.0),

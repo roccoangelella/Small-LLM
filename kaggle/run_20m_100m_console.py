@@ -65,6 +65,7 @@ def _stage(name: str) -> tuple[str, str]:
         "git-launch-worktree": ("setup", "load frozen experiment code"),
         "install-uv": ("setup", "install uv"),
         "install-python-3.13": ("setup", "prepare Python 3.13"),
+        "wandb-preflight": ("wandb", "verify online startup and run identity"),
         "dataset-full-scan": ("dataset", "verify every attached shard"),
         "qualification-plan": ("dataset", "derive the exact one-pass schedule"),
         "restore-latest-checkpoint": ("resume", "check the latest remote checkpoint"),

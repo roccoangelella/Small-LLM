@@ -7,7 +7,7 @@ import os
 import sys
 
 PINNED_LAUNCH_COMMIT = "43190cb72443a2de290dc8e6f2c54f29d8dff501"
-WANDB_INIT_TIMEOUT_SECONDS = "600"
+WANDB_INIT_TIMEOUT_SECONDS = "30"
 
 if any(argument == "--launch-commit" or argument.startswith("--launch-commit=") for argument in sys.argv[1:]):
     raise SystemExit("this entry point fixes the launch commit; do not pass --launch-commit")
