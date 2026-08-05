@@ -148,15 +148,36 @@ def main(argv: list[str] | None = None) -> int:
             remote.publisher,
             checkpoint_id=checkpoint_id,
             drive_manifest=remote.drive_manifest,
-            metric=metric,
-            best_metric=best_remote_metric,
+            metric=None,
+            best_metric=None,
         )
-        elapsed = time.perf_counter() - started
-        best_updated = bool(result.get("best_updated", False))
-        if best_updated:
-            if metric is None:
-                raise RuntimeError("remote publisher updated best without a validation metric")
+        best_updated = False
+        if metric is not None and (best_remote_metric is None or metric > best_remote_metric):
+            latest = result.get("latest")
+            if not isinstance(latest, Mapping):
+                raise RuntimeError("remote publisher returned no verified latest pointer")
+            run_id = remote.drive_manifest.get("run_id")
+            store = getattr(remote.publisher, "store", None)
+            write_json = getattr(store, "write_json", None)
+            if not isinstance(run_id, str) or not run_id or not callable(write_json):
+                raise RuntimeError("remote publication cannot write the best pointer")
+            checkpoint_manifest = latest.get("checkpoint_manifest")
+            last_prefix = latest.get("last_prefix")
+            if not isinstance(checkpoint_manifest, Mapping) or not isinstance(last_prefix, str):
+                raise RuntimeError("verified latest pointer is missing its manifest or prefix")
+            write_json(
+                f"run/{run_id}/best.json",
+                {
+                    "checkpoint_id": checkpoint_id,
+                    "best_prefix": last_prefix,
+                    "checkpoint_manifest": dict(checkpoint_manifest),
+                    "metric": metric,
+                    "source_checkpoint_id": checkpoint_id,
+                },
+            )
             best_remote_metric = metric
+            best_updated = True
+        elapsed = time.perf_counter() - started
         event = {
             "checkpoint_id": checkpoint_id,
             "elapsed_seconds": elapsed,
