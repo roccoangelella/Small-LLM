@@ -11,6 +11,9 @@ The files in this directory are the sole source of truth for the Small LLM proje
 - [`dataset_and_tokenization.md`](dataset_and_tokenization.md): tokenizer, pinned source, content policy, exact mixture, scheduler, packing, cache, durability, Drive integration, and model-facing data contract.
 - [`training_and_evaluation.md`](training_and_evaluation.md): trainer constraints, experiment ladder, joint checkpoint contract, instrumentation, and unresolved training/evaluation choices.
 - [`decisions_and_ablations.md`](decisions_and_ablations.md): frozen defaults, planned controlled ablations, replaced decisions, and decision standards.
+- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md): repository-native qualitative generation procedure for verified remote base checkpoints.
+- [`20m_post_pretraining_checkpoint_selection.md`](20m_post_pretraining_checkpoint_selection.md): legacy final-checkpoint selection rule for the completed 20M run.
+- [`20m_post_pretraining_qualitative_results.md`](20m_post_pretraining_qualitative_results.md): first prompt-suite outputs, measured summary, interpretation, and accepted smoke-scale learning-signal verdict.
 
 ## Maintenance rule
 
