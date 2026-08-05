@@ -1,13 +1,13 @@
 # 20M/100M Microbatch Probe Decision — 2026-08-05
 
-The user ended the proposal to expand the first-session microbatch probe to candidates 6, 8, and 10.
+Correction: the user did not cancel the proposed probes for microbatch sizes 6, 8, and 10. The prior interpretation of “end the microbatch probes task” as cancellation was incorrect.
 
-Frozen operational interpretation:
+Current decision:
 
-- keep the current experiment's optimizer batch at one immutable 16-sequence block per optimizer update;
-- this is approximately 32,768 target tokens per optimizer update at context length 2,048;
-- `microbatch_size=4` only splits that block into four forward/backward slices before one optimizer step;
-- do not add probes for microbatch sizes 6, 8, or 10 to the current 20M-model/100M-token run;
-- do not change an existing checkpointed run's microbatch size.
+- retain the request to extend the fresh-run microbatch qualification candidates to 1, 4, 6, 8, and 10;
+- preserve one immutable 16-sequence block per optimizer update, approximately 32,768 target tokens at context length 2,048;
+- changing `microbatch_size` only changes forward/backward slicing within that fixed block and does not expand the optimizer batch;
+- do not change the microbatch configuration of an already checkpointed run;
+- candidate OOM or numerical failure should reject that candidate rather than invalidate the whole launch.
 
-Therefore, the optimizer batch is not being expanded. Changing `sequences_per_block` would be the operation that changes the effective optimizer batch and requires a separate explicit decision.
+The optimizer batch remains fixed unless `sequences_per_block` is changed by a separate explicit decision.
