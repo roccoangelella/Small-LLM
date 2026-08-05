@@ -10,6 +10,11 @@ dependencies = []
 model = [
     "torch>=2.7.0",
 ]
+post-training = [
+    "torch>=2.7.0",
+    "huggingface-hub>=0.34.0",
+    "tiktoken>=0.9.0",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -21,4 +26,4 @@ exclude = ["tests*"]
 
 [tool.uv]
 # Dataset production remains standard-library-only. Model and trainer code use
-# the explicit `model` extra so dataset-only installations stay lightweight.
+# explicit extras so dataset-only installations stay lightweight.
