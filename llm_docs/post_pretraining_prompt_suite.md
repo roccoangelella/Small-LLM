@@ -10,7 +10,7 @@ The suite is repository-native because Hugging Face stores the project's verifie
 
 1. resolves `run/<run_id>/best.json` from the configured private Hugging Face repository;
 2. downloads the referenced custom checkpoint tree;
-3. verifies `local_manifest.json` and the complete embedded publication manifest before loading state;
+3. verifies `local_manifest.json` and the complete pointer-bound publication manifest before loading state;
 4. reconstructs `SmallLLM` from the model configuration embedded in new trainer checkpoints;
 5. loads the native model weights;
 6. tokenizes prompts with the GPT-2 byte-level BPE identity used by the project;
@@ -24,17 +24,21 @@ python -m trainer.post_pretraining_prompt_suite
 
 ## Best-checkpoint definition
 
-For remote publication, **best** now means the published checkpoint with the lowest held-out validation loss.
+For remote publication, **best** means the published checkpoint with the lowest held-out validation loss.
 
-`TwoPhaseCheckpointPublisher` uses a higher-is-better metric contract, so the trainer publishes:
+The stored higher-is-better comparison metric is:
 
 ```text
-remote metric = -validation_loss
+best metric = -validation_loss
 ```
+
+After a checkpoint tree and `latest.json` have been uploaded and verified, the trainer may move `best.json` to that same immutable `.../last` snapshot. It includes the checkpoint manifest in the best pointer. The best selection therefore adds only a small pointer write and does not upload a duplicate checkpoint tree under a second prefix.
 
 A resumed run reads the existing remote `best.json` metric before publishing further checkpoints. It therefore cannot silently replace an earlier best checkpoint merely because the trainer process restarted.
 
 A checkpoint without a validation result can still update `latest.json`, but it cannot update `best.json`.
+
+Legacy best pointers produced directly by `TwoPhaseCheckpointPublisher` and pointing to an immutable `.../best` tree remain accepted by the prompt suite.
 
 ## Self-describing checkpoints
 
