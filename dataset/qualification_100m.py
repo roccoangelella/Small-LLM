@@ -13,7 +13,7 @@ MAXIMUM_SOURCE_TOKENS = 110_000_000
 CONTEXT_LENGTH = 2_048
 SEQUENCES_PER_BLOCK = 16
 TARGET_SHARD_BYTES = 8 * 1024 * 1024
-CHECKPOINT_SOURCE_TOKENS = 2_000_000
+CHECKPOINT_SOURCE_TOKENS = 20_000_000
 RUN_ID = "20m-100m-dataset-001"
 
 _LOCKED_FLAGS = frozenset(
@@ -26,6 +26,7 @@ _LOCKED_FLAGS = frozenset(
         "--target-shard-bytes",
         "--checkpoint-source-tokens",
         "--allow-local-only",
+        "--run-id",
     }
 )
 
@@ -43,10 +44,6 @@ def qualification_arguments(argv: Sequence[str]) -> list[str]:
         raise SystemExit(
             "the 20M-model/100M-token dataset fixes these arguments: "
             + ", ".join(conflicts)
-        )
-    if "--run-id" in supplied:
-        raise SystemExit(
-            "the 20M-model/100M-token dataset fixes --run-id to " + RUN_ID
         )
     return [
         *argv,
