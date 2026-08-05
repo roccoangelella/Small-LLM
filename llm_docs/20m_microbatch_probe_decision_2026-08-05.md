@@ -1,13 +1,15 @@
 # 20M/100M Microbatch Probe Decision — 2026-08-05
 
-Correction: the user did not cancel the proposed probes for microbatch sizes 6, 8, and 10. The prior interpretation of “end the microbatch probes task” as cancellation was incorrect.
+The user requested that the expanded 1/4/6/8/10 probe implementation be rolled back after the Kaggle run reached microbatch 10 OOM rejection, selected microbatch 4, and then stalled during W&B initialization timeout.
 
-Current decision:
+Current operational decision:
 
-- retain the request to extend the fresh-run microbatch qualification candidates to 1, 4, 6, 8, and 10;
+- restore the repository code to the state before the expanded microbatch runtime was introduced;
+- use the original first-session qualification of microbatch 1 versus microbatch 4;
+- keep actual training fixed at `microbatch_size=4` when that gate passes;
 - preserve one immutable 16-sequence block per optimizer update, approximately 32,768 target tokens at context length 2,048;
-- changing `microbatch_size` only changes forward/backward slicing within that fixed block and does not expand the optimizer batch;
-- do not change the microbatch configuration of an already checkpointed run;
-- candidate OOM or numerical failure should reject that candidate rather than invalidate the whole launch.
+- do not use the 6, 8, or 10 probes in the current launcher;
+- preserve the informative console formatter added before the expanded-probe implementation;
+- do not interpret this rollback as changing `sequences_per_block` or expanding the optimizer batch.
 
-The optimizer batch remains fixed unless `sequences_per_block` is changed by a separate explicit decision.
+The rollback restores code behavior equivalent to repository commit `f116890ab60462e43398fdc87943f0fc0ed1ec8a`, apart from this decision record.
