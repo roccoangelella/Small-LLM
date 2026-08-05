@@ -1,62 +1,73 @@
 # 20M Model / 100M-Token Experiment Runbook
 
-_Last updated: 2026-08-05 15:24 Europe/Rome_
+_Last updated: 2026-08-05 15:34 Europe/Rome_
 
-This runbook builds the fixed 100M-token finite dataset on the VPS, attaches the completed immutable shards to Kaggle, and repeatedly invokes one pinned Kaggle entry point until the exact one-pass training plan is complete.
+This runbook uses one VPS command to build, verify, and privately publish the fixed 100M-token dataset, followed by one repeated Kaggle command for segmented exact training.
 
-## Part A — Produce the 100M dataset on the VPS
+## Part A — Configure the VPS once
 
-### 1. Prepare a clean checkout
+From the Small-LLM repository, copy the template values into the ignored `.env` file:
+
+```env
+KAGGLE_API_TOKEN=<token from Kaggle settings>
+KAGGLE_USERNAME=<your Kaggle owner slug>
+SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
+SMALL_LLM_DRIVE_FOLDER_ID=<existing qualified Drive folder ID>
+```
+
+Instead of `KAGGLE_USERNAME`, an exact handle may be used:
+
+```env
+SMALL_LLM_KAGGLE_DATASET_HANDLE=owner/small-llm-20m-100m-dataset-001
+```
+
+Reference template:
+
+```text
+kaggle/100m-publish.env.example
+```
+
+Default paths:
+
+```text
+mixture weights: /data/climbmix-mixture-calibration/climbmix_code_free_weights.json
+producer output: /data/small-llm/20m-100m-dataset-001
+operations/evidence: /data/small-llm/20m-100m-ops
+```
+
+Optional path overrides are documented in the environment template.
+
+## Part B — Build and privately publish with one command
 
 ```bash
 cd /path/to/Small-LLM
 git switch main
 git pull --ff-only
-git status --short
-git rev-parse HEAD
+bash kaggle/build_and_push_100m.sh
 ```
 
-The working tree must be clean.
+The command:
 
-### 2. Prepare the existing Drive credentials
+1. loads `.env` without printing secrets;
+2. pins Python 3.13 and `kagglehub==1.0.2`;
+3. starts `dataset.qualification_100m` when no producer output exists;
+4. automatically resumes an interrupted producer directory;
+5. skips production when the fixed completed manifest already exists;
+6. runs a literal full local shard scan;
+7. derives and verifies `qualification_plan.json`;
+8. stages exactly:
+   - `manifest.json`
+   - `drive_manifest.json`
+   - `qualification_plan.json`
+   - `train/`
+   - `validation/`
+9. refuses a Kaggle handle already readable anonymously;
+10. uploads with `kagglehub.dataset_upload` as a private dataset;
+11. downloads the complete Kaggle dataset back to the VPS;
+12. requires a byte-identical tree, another full scan, and denied anonymous access;
+13. records a verified receipt and avoids duplicate versions on identical reruns.
 
-The ignored `.env` file must contain the already-qualified values:
-
-```env
-SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
-SMALL_LLM_DRIVE_FOLDER_ID=<existing-dataset-shards-folder-id>
-```
-
-### 3. Select new output and evidence directories
-
-```bash
-export SMALL_LLM_REPO=/path/to/Small-LLM
-export WEIGHTS_FILE=/data/climbmix-mixture-calibration/climbmix_code_free_weights.json
-export DATASET_DIR=/data/small-llm-20m-100m-dataset-001
-export OPS_DIR=/data/small-llm-20m-100m-ops
-mkdir -p "$OPS_DIR/logs"
-```
-
-`DATASET_DIR` must be new for the first invocation. Do not reuse or mutate the 10M qualification directory.
-
-### 4. Run the fixed fail-closed producer
-
-```bash
-cd "$SMALL_LLM_REPO"
-set -o pipefail
-uv run \
-  --env-file .env \
-  --with-requirements dataset/requirements-remote.txt \
-  python -m dataset.qualification_100m \
-  --weights-file "$WEIGHTS_FILE" \
-  --output-dir "$DATASET_DIR" \
-  2>&1 | tee "$OPS_DIR/logs/dataset-build.log"
-status=${PIPESTATUS[0]}
-echo "$status" > "$OPS_DIR/dataset-build.exit-code"
-test "$status" -eq 0
-```
-
-The wrapper fixes and refuses overrides for:
+The producer remains fixed at:
 
 ```text
 run ID: 20m-100m-dataset-001
@@ -64,75 +75,32 @@ accepted-source-token target: 100,000,000
 minimum: 90,000,000
 hard maximum: 110,000,000
 context length: 2,048
-sequences per block: 16
+sequences per optimizer block: 16
 target shard size: 8 MiB
 producer durable checkpoint cadence: 20,000,000 source tokens
 remote durability: required
 ```
 
-Resume an interrupted producer with the same command plus `--resume`.
-
-### 5. Run a literal full scan
-
-```bash
-set -o pipefail
-uv run \
-  --with-requirements dataset/requirements-remote.txt \
-  python -m dataset.main verify \
-  --output-dir "$DATASET_DIR" \
-  --full-scan \
-  2>&1 | tee "$OPS_DIR/logs/dataset-verify.log"
-status=${PIPESTATUS[0]}
-echo "$status" > "$OPS_DIR/dataset-verify.exit-code"
-test "$status" -eq 0
-```
-
-### 6. Derive and bind the exact one-pass trainer plan
-
-```bash
-set -o pipefail
-uv run python -m dataset.qualification_100m_report \
-  --dataset-dir "$DATASET_DIR" \
-  --drive-manifest "$DATASET_DIR/drive_manifest.json" \
-  --output "$DATASET_DIR/qualification_plan.json" \
-  2>&1 | tee "$OPS_DIR/logs/qualification-plan.log"
-status=${PIPESTATUS[0]}
-echo "$status" > "$OPS_DIR/qualification-plan.exit-code"
-test "$status" -eq 0
-```
-
-Record at least:
-
-```bash
-sha256sum \
-  "$DATASET_DIR/manifest.json" \
-  "$DATASET_DIR/drive_manifest.json" \
-  "$DATASET_DIR/qualification_plan.json" \
-  | tee "$OPS_DIR/dataset-identities.sha256"
-```
-
-## Part B — Publish the completed directory as a private Kaggle Dataset
-
-Create a private Kaggle Dataset containing the complete `DATASET_DIR` without changing names, bytes, or layout. It must contain at least:
+Successful publication requires:
 
 ```text
-manifest.json
-drive_manifest.json
-qualification_plan.json
-train/
-validation/
+/data/small-llm/20m-100m-ops/build-and-push-summary.json
+  status: completed or already_published
+
+/data/small-llm/20m-100m-ops/kaggle-publish-state.json
+  status: verified
 ```
 
-Training uses these attached local shards. It does not download the training dataset from Drive or Hugging Face during optimizer steps.
+Rerun the same command after an interruption. The producer and publisher are idempotent. Use `--force-upload` only when an intentional new Kaggle version is required.
 
-## Part C — Configure Kaggle
+## Part C — Configure each Kaggle account
 
 Notebook settings:
 
 ```text
 Accelerator: NVIDIA T4
 Internet: On
-Attached input: private 20m-100m-dataset-001 dataset
+Attached input: the private small-llm-20m-100m-dataset-001 dataset
 ```
 
 Required Kaggle secrets:
@@ -150,11 +118,9 @@ Optional:
 WANDB_ENTITY
 ```
 
-The checkpoint repository may be the same private Hugging Face repository used previously because checkpoint objects are namespaced under the new dataset run ID.
+Every account must attach the same private Kaggle Dataset version. Training reads the attached immutable shards locally; it does not stream the dataset from Drive or Hugging Face.
 
-## Part D — Run the single pinned Kaggle entry point
-
-Clone or update the repository using the existing private-repository procedure, then run:
+## Part D — Run or resume training
 
 ```bash
 cd /kaggle/working/Small-LLM
@@ -171,33 +137,11 @@ The wrapper pins the evidence-producing worktree to:
 
 Do not pass `--launch-commit`.
 
-### First invocation
+The first invocation performs the microbatch-1 versus microbatch-4 T4 gate and starts from seed 17 only if microbatch 4 passes. Each invocation executes at most 749 additional optimizer updates and requires an explicit final remote checkpoint.
 
-The launcher:
+After a successful segment, run the identical command on the next Kaggle account. It restores the verified private Hugging Face checkpoint, checks the attached Drive-manifest identity, and resumes the same model, optimizer, scheduler, scaler, RNG, data cursor, and W&B run.
 
-1. requires a T4;
-2. finds exactly one attached dataset matching the fixed profile;
-3. performs a full scan and regenerates the exact plan;
-4. confirms no remote checkpoint already exists;
-5. runs the microbatch-1 versus microbatch-4 qualification;
-6. starts from seed 17 with microbatch 4 only if every gate passes;
-7. executes at most 749 optimizer updates;
-8. validates, saves, and publishes an explicit final segment checkpoint.
-
-### Later invocations
-
-Run the identical command again:
-
-```bash
-cd /kaggle/working/Small-LLM
-git switch main
-git pull --ff-only
-python kaggle/run_20m_100m.py
-```
-
-The launcher restores the private remote `latest` checkpoint, verifies its complete tree and embedded Drive-manifest identity, resumes the same W&B run, and continues from the next unconsumed block. It never repeats the microbatch probe after a verified training checkpoint exists.
-
-Continue until the summary reports:
+Continue until:
 
 ```text
 status: completed
@@ -206,42 +150,34 @@ remaining_steps: 0
 
 ## Evidence locations
 
-Per-session evidence:
+VPS dataset publication:
+
+```text
+/data/small-llm/20m-100m-ops/logs/
+/data/small-llm/20m-100m-ops/kaggle-dataset/
+/data/small-llm/20m-100m-ops/kaggle-roundtrip/
+/data/small-llm/20m-100m-ops/kaggle-publish-state.json
+/data/small-llm/20m-100m-ops/build-and-push-summary.json
+```
+
+Kaggle training:
 
 ```text
 /kaggle/working/small-llm-20m-100m-data-scaling/evidence-<UTC timestamp>/
-```
-
-Latest summary:
-
-```text
 /kaggle/working/small_llm_20m_100m_data_scaling_summary.json
-```
-
-W&B run identity:
-
-```text
-project: Small-LLM
-run ID: 20m-100m-data-001
-```
-
-Remote checkpoint namespace:
-
-```text
-run/20m-100m-dataset-001/
 ```
 
 ## Stop conditions
 
-Do not proceed if any of the following occurs:
+Do not proceed if:
 
-- the producer or full scan exits nonzero;
+- dataset production, local verification, upload, round-trip verification, or privacy verification fails;
 - the local and Drive manifests disagree;
-- Kaggle finds zero or multiple matching datasets;
+- the uploaded tree differs from the staged tree;
+- Kaggle training finds zero or multiple matching datasets;
 - microbatch 4 fails throughput, numerical, overflow, or memory gates;
-- a remote checkpoint disagrees with the attached dataset identity;
-- the checkpoint step and consumed-block cursor disagree;
+- a restored checkpoint disagrees with the attached dataset;
 - W&B refuses exact resume;
-- a segment exits without an explicit final verified remote publication.
+- a segment exits without a verified final remote publication.
 
-A failed microbatch gate is evidence to review, not permission to silently alter the experiment.
+A failed gate is evidence to review, not permission to silently change the experiment.
