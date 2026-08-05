@@ -18,4 +18,4 @@ exec uv run \
   --python 3.13 \
   --env-file .env \
   --with-requirements kaggle/requirements-100m-publish.txt \
-  python kaggle/build_and_push_100m.py "$@"
+  python kaggle/build_and_push_100m_entry.py "$@"
