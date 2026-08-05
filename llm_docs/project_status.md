@@ -1,21 +1,28 @@
 # Project Status
 
-_Last updated: 2026-08-05_
+_Last updated: 2026-08-05 11:50 Europe/Rome_
 
 ## Current phase
 
-The frozen approximately-20M engineering qualification ladder is complete, and the user has explicitly authorized the complete run on Kaggle.
+The frozen approximately-20M engineering qualification ladder is complete, the full run was authorized, and the user has now confirmed that the complete Kaggle run is live and has reached at least optimizer step 150.
 
 ```text
-status: launch_authorized
+status: running
 qualification: passed_remote_empty_environment_recovery
 authorization: full_306_run_authorized
 execution venue: Kaggle
 accelerator target: NVIDIA Tesla T4
-run state: authorized_not_yet_started
+run state: running_user_reported_step_150
+W&B run ID: 20m-one-pass-001
+latest reported optimizer step: 150 / 306
+latest reported validation perplexity: approximately 576
+corresponding validation loss: approximately 6.356108
+reported at: 2026-08-05 11:50 Europe/Rome
 ```
 
-The authorization was given at 2026-08-05 10:04 Europe/Rome. The next operational action is to start the frozen complete 306-update one-pass segment on Kaggle. Architecture selection is not being reopened, and authorization does not permit silent recipe changes.
+The live-state record above is based on the user's direct observation of the active run. Completion, final checkpoint publication, and the final metric set remain unverified until the run terminates successfully and its artifacts are inspected.
+
+The authorization was given at 2026-08-05 10:04 Europe/Rome. Architecture selection and the frozen recipe are not being reopened.
 
 Detailed evidence and the launch decision are recorded in:
 
@@ -26,6 +33,33 @@ llm_docs/20m_local_resume_results.md
 llm_docs/20m_remote_recovery_results.md
 llm_docs/20m_kaggle_launch_authorization.md
 ```
+
+## Live complete-run observations
+
+The user reported the following validation trajectory from the active 306-update one-pass run:
+
+```text
+step 50 validation perplexity: approximately 2,739.35
+step 50 validation loss: approximately 7.915476
+step 150 validation perplexity: approximately 576
+step 150 validation loss: approximately 6.356108
+perplexity reduction from step 50 to 150: approximately 4.756x
+validation-loss reduction from step 50 to 150: approximately 1.559 nats
+nominal full-block target tokens committed by step 150: 4,915,200
+fraction of planned train target tokens: approximately 49.12%
+```
+
+This is strong midpoint evidence of continued learning on the fixed validation block. It is not yet a final model-quality result because the validation set is very small and the current metric includes every stored target position, including any synthetic padding positions in the final partial validation sequence.
+
+The run's configured persistence cadence remains:
+
+```text
+local joint checkpoint: every 25 successful optimizer updates
+validation: every 50 successful optimizer updates
+remote Hugging Face publication: every 50 successful optimizer updates
+```
+
+No statement about the success of the live run's step-50, step-100, or step-150 remote publications is recorded here without direct artifact or log verification.
 
 ## Frozen model and optimizer
 
@@ -235,6 +269,6 @@ entity observed in Kaggle logs: rocchissimo936-none
 
 **Private remote publication and empty-environment recovery: passed with exact trajectory and semantic state.**
 
-**Launch authorized:** the frozen complete 306-update one-pass segment on Kaggle using an NVIDIA T4.
+**Complete run state: running.** The user has confirmed progress through step 150 of 306 with validation perplexity approximately 576.
 
-**Not yet started:** runtime state must remain `authorized_not_yet_started` until the trainer actually begins and produces a W&B identity and evidence directory. After startup, record the actual run identity and first successful checkpoint boundary without changing the frozen recipe.
+**Not yet completed:** final validation, final local checkpoint, final remote publication, W&B finalization, and complete-run acceptance still require direct artifact and log verification.
