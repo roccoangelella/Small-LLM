@@ -55,3 +55,22 @@ Any such change would define a different run and would require a new explicit de
 Kaggle is the selected venue for this run. The run becomes `running` only after the trainer process starts and produces verifiable evidence, such as its W&B identity and local evidence directory. The authorization decision alone must not be recorded as a completed launch.
 
 The current manual launch procedure remains the exact complete one-pass construction in `llm_docs/20m_kaggle_runbook.md`, using the accepted private dataset and required Kaggle secrets. After startup, record the actual W&B run ID, evidence path, Kaggle environment identity, and first successful checkpoint boundary in the project documentation.
+
+## One-command Kaggle launcher
+
+The authorized full-run construction is implemented by:
+
+```text
+20M_training.py
+kaggle/run_20m_full_training.py
+```
+
+After the Kaggle clone is synchronized to `main`, launch from one notebook cell:
+
+```python
+!python /kaggle/working/Small-LLM/20M_training.py
+```
+
+The launcher does not assume that an arbitrary mounted dataset is correct. It auto-detects the accepted dataset by the frozen local- and Drive-manifest SHA-256 values, runs a literal full scan, regenerates and validates the exact 306-update plan, creates a clean detached worktree at the frozen launch commit, and only then starts training. It requires the existing Kaggle Secrets `WANDB_API_KEY`, `HF_TOKEN`, and `SMALL_LLM_HF_REPO_ID`; `WANDB_ENTITY` remains optional.
+
+The launcher refuses to start a second fresh run when `/kaggle/working/checkpoints-one-pass` already exists. An interrupted run must use an explicit resume procedure rather than silently restarting from random initialization.
