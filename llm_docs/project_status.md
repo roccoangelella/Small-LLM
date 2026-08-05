@@ -4,22 +4,27 @@ _Last updated: 2026-08-05_
 
 ## Current phase
 
-The frozen approximately-20M engineering qualification ladder is complete.
+The frozen approximately-20M engineering qualification ladder is complete, and the user has explicitly authorized the complete run on Kaggle.
 
 ```text
-status: passed_remote_empty_environment_recovery
-authorization: full_306_run_ready_for_explicit_launch
+status: launch_authorized
+qualification: passed_remote_empty_environment_recovery
+authorization: full_306_run_authorized
+execution venue: Kaggle
+accelerator target: NVIDIA Tesla T4
+run state: authorized_not_yet_started
 ```
 
-The complete 306-update one-pass run is now technically ready, but it has not been launched. Launch still requires the user's explicit decision. Architecture selection is not being reopened.
+The authorization was given at 2026-08-05 10:04 Europe/Rome. The next operational action is to start the frozen complete 306-update one-pass segment on Kaggle. Architecture selection is not being reopened, and authorization does not permit silent recipe changes.
 
-Detailed evidence is recorded in:
+Detailed evidence and the launch decision are recorded in:
 
 ```text
 llm_docs/20m_kaggle_preflight_results.md
 llm_docs/20m_repeatability_results.md
 llm_docs/20m_local_resume_results.md
 llm_docs/20m_remote_recovery_results.md
+llm_docs/20m_kaggle_launch_authorization.md
 ```
 
 ## Frozen model and optimizer
@@ -88,6 +93,7 @@ The final training block is partial. Silent data wraparound remains forbidden.
 ```text
 launch commit: 45d1da4a1ac3f18cf6ce02b8439672f10e2c8b4c
 GPU qualification target: NVIDIA Tesla T4
+selected execution venue: Kaggle
 ```
 
 Evidence-producing trainer work used clean detached worktrees at the frozen launch commit.
@@ -229,6 +235,6 @@ entity observed in Kaggle logs: rocchissimo936-none
 
 **Private remote publication and empty-environment recovery: passed with exact trajectory and semantic state.**
 
-**Ready for explicit launch:** the frozen complete 306-update one-pass segment.
+**Launch authorized:** the frozen complete 306-update one-pass segment on Kaggle using an NVIDIA T4.
 
-**Not yet started:** the 306-update run. The next project decision is whether to launch it now and preserve the frozen recipe unchanged.
+**Not yet started:** runtime state must remain `authorized_not_yet_started` until the trainer actually begins and produces a W&B identity and evidence directory. After startup, record the actual run identity and first successful checkpoint boundary without changing the frozen recipe.
