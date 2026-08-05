@@ -43,7 +43,7 @@ def _manifest(*, final_train_sequences: int = 16) -> dict[str, object]:
             "target_source_tokens": 100_000_000,
             "minimum_source_tokens": 90_000_000,
             "maximum_source_tokens": 110_000_000,
-            "checkpoint_source_tokens": 2_000_000,
+            "checkpoint_source_tokens": 20_000_000,
             "target_reached": True,
             "remote_required": True,
         },
@@ -90,12 +90,17 @@ class Qualification100MTests(unittest.TestCase):
                 "--target-tokens", "100000000",
                 "--minimum-tokens", "90000000",
                 "--maximum-tokens", "110000000",
-                "--checkpoint-source-tokens", "2000000",
+                "--checkpoint-source-tokens", "20000000",
                 "--context-length", "2048",
                 "--sequences-per-block", "16",
                 "--target-shard-bytes", "8388608",
             ],
         )
+
+    def test_entry_point_rejects_identity_overrides(self) -> None:
+        for flag in ("--run-id", "--target-tokens", "--checkpoint-source-tokens"):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit):
+                qualification_arguments([flag, "wrong"])
 
     def test_full_profile_derives_exact_wsd_schedule(self) -> None:
         plan = derive_plan(_manifest())
