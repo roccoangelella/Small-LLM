@@ -145,9 +145,13 @@ def _checkpoint_prefix(
     prefix = pointer.get(key)
     if not isinstance(prefix, str):
         raise RuntimeError(f"run/{run_id}/{pointer_name}.json has no valid {key}")
-    suffix = "best" if pointer_name == "best" else "last"
-    expected = f"run/{run_id}/checkpoints/{checkpoint_id}/{suffix}"
-    if prefix != expected:
+    expected_last = f"run/{run_id}/checkpoints/{checkpoint_id}/last"
+    expected = (
+        {expected_last, f"run/{run_id}/checkpoints/{checkpoint_id}/best"}
+        if pointer_name == "best"
+        else {expected_last}
+    )
+    if prefix not in expected:
         raise RuntimeError(f"run/{run_id}/{pointer_name}.json prefix does not match its checkpoint ID")
     return checkpoint_id, prefix
 
@@ -187,7 +191,11 @@ def download_verified_checkpoint(
         checkpoint_root / "checkpoint_manifest.json",
         label="checkpoint_manifest.json",
     )
-    _verify_published_checkpoint_manifest(checkpoint_root, embedded_manifest)
+    pointer_manifest = pointer.get("checkpoint_manifest")
+    supplied_manifest = (
+        pointer_manifest if isinstance(pointer_manifest, Mapping) else embedded_manifest
+    )
+    _verify_published_checkpoint_manifest(checkpoint_root, supplied_manifest)
     return checkpoint_root, {
         "repo_id": repo_id,
         "run_id": selected_run_id,
