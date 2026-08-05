@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import time
 from pathlib import Path
+from typing import Mapping
 
 import torch
 
@@ -26,10 +28,53 @@ def _tree_byte_size(value: object) -> int | None:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
+def _validation_metric(validation: Mapping[str, object] | None) -> float | None:
+    """Return a higher-is-better remote metric from held-out loss."""
+
+    if validation is None:
+        return None
+    loss = validation.get("loss")
+    if isinstance(loss, bool) or not isinstance(loss, (int, float)):
+        raise RuntimeError("validation result has no numeric loss for best-checkpoint selection")
+    loss_value = float(loss)
+    if loss_value < 0 or not math.isfinite(loss_value):
+        raise RuntimeError("validation loss for best-checkpoint selection is invalid")
+    return -loss_value
+
+
+def _existing_remote_best_metric(remote: object | None) -> float | None:
+    """Read the persisted best metric so resumed runs cannot overwrite it blindly."""
+
+    if remote is None:
+        return None
+    publisher = getattr(remote, "publisher", None)
+    store = getattr(publisher, "store", None)
+    read_json = getattr(store, "read_json", None)
+    drive_manifest = getattr(remote, "drive_manifest", None)
+    if not callable(read_json) or not isinstance(drive_manifest, Mapping):
+        return None
+    run_id = drive_manifest.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise RuntimeError("remote publication has no valid run_id")
+    pointer = read_json(f"run/{run_id}/best.json")
+    if pointer is None:
+        return None
+    if not isinstance(pointer, Mapping):
+        raise RuntimeError("remote best.json is not a JSON object")
+    metric = pointer.get("metric")
+    if isinstance(metric, bool) or not isinstance(metric, (int, float)):
+        raise RuntimeError("remote best.json has no numeric metric")
+    value = float(metric)
+    if not math.isfinite(value):
+        raise RuntimeError("remote best.json metric is non-finite")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     model_config, trainer_config, engine, session, coordinator = setup(args)
     remote = configure_remote_publication(args)
+    best_remote_metric = _existing_remote_best_metric(remote)
     telemetry = configure_wandb(
         args,
         model_config=model_config,
@@ -93,21 +138,31 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     def publish_remote_checkpoint(checkpoint_id: str, *, final: bool) -> None:
+        nonlocal best_remote_metric
         if remote is None or checkpoint_id in remotely_published:
             return
         ensure_local_checkpoint(checkpoint_id)
+        metric = _validation_metric(validation)
         started = time.perf_counter()
         result = coordinator.publish(
             remote.publisher,
             checkpoint_id=checkpoint_id,
             drive_manifest=remote.drive_manifest,
+            metric=metric,
+            best_metric=best_remote_metric,
         )
         elapsed = time.perf_counter() - started
+        best_updated = bool(result.get("best_updated", False))
+        if best_updated:
+            if metric is None:
+                raise RuntimeError("remote publisher updated best without a validation metric")
+            best_remote_metric = metric
         event = {
             "checkpoint_id": checkpoint_id,
             "elapsed_seconds": elapsed,
             "final": final,
-            "best_updated": bool(result.get("best_updated", False)),
+            "best_updated": best_updated,
+            "validation_loss": None if metric is None else -metric,
         }
         print(json.dumps({"remote_publication": event}, sort_keys=True), flush=True)
         if telemetry is not None:
