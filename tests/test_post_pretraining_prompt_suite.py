@@ -53,6 +53,18 @@ class PostPretrainingPromptSuiteTests(unittest.TestCase):
                 "run/pretrain/checkpoints/step-00000100/best",
             ),
         )
+        alias_pointer = dict(
+            pointer,
+            best_prefix="run/pretrain/checkpoints/step-00000100/last",
+            checkpoint_manifest={"version": 1, "files": []},
+        )
+        self.assertEqual(
+            _checkpoint_prefix(alias_pointer, run_id="pretrain", pointer_name="best"),
+            (
+                "step-00000100",
+                "run/pretrain/checkpoints/step-00000100/last",
+            ),
+        )
         broken = dict(
             pointer,
             best_prefix="run/other/checkpoints/step-00000100/best",
