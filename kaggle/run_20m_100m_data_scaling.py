@@ -1,26 +1,10 @@
 #!/usr/bin/env python3
-"""One-entry Kaggle launcher for the 20M-model/100M-token scaling run.
+"""Fail-closed Kaggle launcher for the 20M-model/100M-token scaling run.
 
-The 100M finite dataset is built and mirrored separately, then attached to the
-Kaggle notebook as immutable schema-v2 shards. This launcher never downloads or
-rebuilds the source corpus. It:
-
-1. checks the controlling repository and creates a clean detached launch worktree;
-2. identifies exactly one attached dataset matching the fixed 100M profile;
-3. performs a literal full shard scan and derives the exact one-pass WSD plan;
-4. compares microbatch 1 with the fixed candidate microbatch 4 on the same first
-   eight blocks from the same seed and fails closed unless microbatch 4 is safe
-   and measurably faster;
-5. starts the complete from-scratch run with the frozen 20M model and one
-   optimizer update per 16-sequence block.
-
-Run from a clean clone:
-
-    %cd /kaggle/working/Small-LLM
-    !git pull --ff-only
-    !python kaggle/run_20m_100m_data_scaling.py
+Run the same command in every Kaggle session. The first session qualifies
+microbatch 4 against microbatch 1 and starts from seed 17. Later sessions restore
+the latest verified remote checkpoint and continue the exact one-pass schedule.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -39,167 +23,120 @@ from typing import Any, Mapping, Sequence
 import run_20m_one_click as common
 
 REPO = Path(__file__).resolve().parents[1]
-# Updated in a follow-up commit after all implementation files are present.
 DEFAULT_COMMIT = "__PIN_20M_100M_LAUNCH_COMMIT__"
 DATASET_RUN_ID = "20m-100m-dataset-001"
 PROFILE = "20m-100m-data-scaling-v1"
 ROOT = common.WORK / "small-llm-20m-100m-data-scaling"
 WORKTREE = ROOT / "launch-worktree"
 EVIDENCE = ROOT / ("evidence-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-CHECKPOINTS = common.WORK / "checkpoints-20m-100m-data-scaling"
+CHECKPOINTS = ROOT / "checkpoints"
 SUMMARY = common.WORK / "small_llm_20m_100m_data_scaling_summary.json"
 WANDB_RUN_ID = "20m-100m-data-001"
-MICROBATCH_BASELINE = 1
-MICROBATCH_CANDIDATE = 4
-MICROBATCH_PROBE_STEPS = 8
-MICROBATCH_WARMUP_DISCARD = 2
-MICROBATCH_MIN_SPEEDUP = 1.05
-MICROBATCH_MAX_LOSS_DELTA = 0.05
+MICROBATCH_BASELINE, MICROBATCH_CANDIDATE = 1, 4
+PROBE_STEPS, PROBE_WARMUP = 8, 2
+MIN_SPEEDUP = 1.05
+MAX_LOSS_DELTA = 0.05
+MAX_GRADIENT_RELATIVE_DELTA = 0.05
 MAX_RESERVED_MEMORY_FRACTION = 0.90
-LOCAL_CHECKPOINT_EVERY = 250
-EVALUATION_EVERY = 500
-REMOTE_PUBLISH_EVERY = 500
+LOCAL_EVERY, EVAL_EVERY, REMOTE_EVERY = 250, 500, 500
+MAX_STEPS_PER_SESSION = 749
+_CHECKPOINT_ID = re.compile(r"^step-(\d{8})$")
 
 
 class LaunchFailure(common.GateFailure):
     pass
 
 
-def read_object(path: Path, *, label: str) -> dict[str, Any]:
+def read_object(path: Path, label: str) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError, TypeError) as error:
         raise LaunchFailure(f"Cannot read {label}: {path}") from error
-    if not isinstance(payload, Mapping):
-        raise LaunchFailure(f"{label} must contain a JSON object: {path}")
-    return dict(payload)
+    if not isinstance(value, Mapping):
+        raise LaunchFailure(f"{label} is not a JSON object: {path}")
+    return dict(value)
 
 
-def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Launch the fixed 20M-model/100M-token data-scaling run."
-    )
+def arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
     parser.add_argument(
         "--launch-commit",
         default=os.environ.get("SMALL_LLM_100M_LAUNCH_COMMIT", DEFAULT_COMMIT),
     )
     parser.add_argument("--dataset-dir", type=Path)
+    parser.add_argument("--max-steps-this-session", type=int, default=MAX_STEPS_PER_SESSION)
     return parser.parse_args(argv)
 
 
 def repo_head(commit: str) -> str:
     try:
-        top = Path(
-            subprocess.check_output(
-                ["git", "rev-parse", "--show-toplevel"], cwd=REPO, text=True
-            ).strip()
-        ).resolve()
+        root = Path(subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=REPO, text=True
+        ).strip()).resolve()
     except (OSError, subprocess.CalledProcessError) as error:
         raise LaunchFailure("Run from the cloned Small-LLM repository") from error
-    if top != REPO.resolve():
-        raise LaunchFailure(f"Repository root mismatch: {top}")
-    dirty = subprocess.check_output(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
-        cwd=REPO,
-        text=True,
-    ).strip()
-    if dirty:
+    if root != REPO.resolve():
+        raise LaunchFailure(f"Repository root mismatch: {root}")
+    if subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True
+    ).strip():
         raise LaunchFailure("The controlling clone has tracked modifications")
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
-        raise LaunchFailure(
-            "The 100M launch commit is not pinned. Pull the commit that freezes "
-            "this launcher or set SMALL_LLM_100M_LAUNCH_COMMIT explicitly."
-        )
+        raise LaunchFailure("The 100M launch commit is not pinned")
     if subprocess.run(
-        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-        cwd=REPO,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"], cwd=REPO,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ).returncode:
         raise LaunchFailure(f"Frozen launch commit {commit} is missing")
-    return subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
-    ).strip()
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
 
 
 def prepare_worktree(commit: str) -> None:
     ROOT.mkdir(parents=True, exist_ok=True)
     if WORKTREE.exists():
         subprocess.run(
-            ["git", "worktree", "remove", "--force", str(WORKTREE)],
-            cwd=REPO,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            ["git", "worktree", "remove", "--force", str(WORKTREE)], cwd=REPO,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        if WORKTREE.exists():
-            shutil.rmtree(WORKTREE)
+        shutil.rmtree(WORKTREE, ignore_errors=True)
     subprocess.run(["git", "worktree", "prune"], cwd=REPO, check=False)
     common.run(
         ["git", "worktree", "add", "--detach", str(WORKTREE), commit],
-        name="git-launch-worktree",
-        evidence=EVIDENCE,
-        cwd=REPO,
+        name="git-launch-worktree", evidence=EVIDENCE, cwd=REPO,
     )
-    actual = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=WORKTREE, text=True
-    ).strip()
-    dirty = subprocess.check_output(
-        ["git", "status", "--porcelain"], cwd=WORKTREE, text=True
-    ).strip()
+    actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=WORKTREE, text=True).strip()
+    dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=WORKTREE, text=True).strip()
     if actual != commit or dirty:
-        raise LaunchFailure(
-            f"Frozen worktree mismatch: actual={actual}, dirty={bool(dirty)}"
-        )
+        raise LaunchFailure(f"Frozen worktree mismatch: {actual}, dirty={bool(dirty)}")
 
 
-def dataset_profile_matches(root: Path) -> tuple[bool, dict[str, Any]]:
-    manifest_path = root / "manifest.json"
-    drive_path = root / "drive_manifest.json"
+def profile_match(root: Path) -> tuple[bool, dict[str, Any]]:
+    manifest_path, drive_path = root / "manifest.json", root / "drive_manifest.json"
     row: dict[str, Any] = {
-        "root": str(root),
-        "manifest": manifest_path.is_file(),
-        "drive_manifest": drive_path.is_file(),
-        "train": (root / "train").is_dir(),
+        "root": str(root), "manifest": manifest_path.is_file(),
+        "drive_manifest": drive_path.is_file(), "train": (root / "train").is_dir(),
         "validation": (root / "validation").is_dir(),
     }
     if not all(row[key] for key in ("manifest", "drive_manifest", "train", "validation")):
         return False, row
-    try:
-        manifest = read_object(manifest_path, label="dataset manifest")
-    except LaunchFailure as error:
-        row["error"] = str(error)
-        return False, row
+    manifest = read_object(manifest_path, "dataset manifest")
     production = manifest.get("production")
-    row.update(
-        schema_version=manifest.get("schema_version"),
-        context_length=manifest.get("context_length"),
-        sequences_per_block=manifest.get("sequences_per_block"),
-        target_shard_bytes=manifest.get("target_shard_bytes"),
-        run_id=production.get("run_id") if isinstance(production, Mapping) else None,
-    )
-    expected_top = {
-        "schema_version": 2,
-        "sequence_format": "context_plus_one",
-        "context_length": 2_048,
-        "stored_tokens_per_sequence": 2_049,
-        "sequences_per_block": 16,
-        "target_shard_bytes": 8 * 1024 * 1024,
+    top = {
+        "schema_version": 2, "sequence_format": "context_plus_one",
+        "context_length": 2048, "stored_tokens_per_sequence": 2049,
+        "sequences_per_block": 16, "target_shard_bytes": 8 * 1024 * 1024,
     }
-    expected_production = {
-        "run_id": DATASET_RUN_ID,
-        "target_source_tokens": 100_000_000,
-        "minimum_source_tokens": 90_000_000,
-        "maximum_source_tokens": 110_000_000,
-        "checkpoint_source_tokens": 2_000_000,
-        "target_reached": True,
+    prod = {
+        "run_id": DATASET_RUN_ID, "target_source_tokens": 100_000_000,
+        "minimum_source_tokens": 90_000_000, "maximum_source_tokens": 110_000_000,
+        "checkpoint_source_tokens": 20_000_000, "target_reached": True,
         "remote_required": True,
     }
-    matched = all(manifest.get(key) == value for key, value in expected_top.items())
+    matched = all(manifest.get(k) == v for k, v in top.items())
     matched = matched and isinstance(production, Mapping)
     if isinstance(production, Mapping):
-        matched = matched and all(
-            production.get(key) == value for key, value in expected_production.items()
-        )
+        matched = matched and all(production.get(k) == v for k, v in prod.items())
+    row["run_id"] = production.get("run_id") if isinstance(production, Mapping) else None
     if matched:
         row["manifest_sha256"] = common.sha256(manifest_path)
         row["drive_manifest_sha256"] = common.sha256(drive_path)
@@ -207,208 +144,282 @@ def dataset_profile_matches(root: Path) -> tuple[bool, dict[str, Any]]:
 
 
 def find_dataset(explicit: Path | None) -> tuple[Path, list[dict[str, Any]]]:
-    if explicit is not None:
-        roots = [explicit.resolve()]
-    else:
-        roots = sorted({path.parent for path in common.INPUT.rglob("manifest.json")})
-    inspected: list[dict[str, Any]] = []
-    matches: list[Path] = []
+    roots = [explicit.resolve()] if explicit else sorted({p.parent for p in common.INPUT.rglob("manifest.json")})
+    inspected, matches = [], []
     for root in roots:
-        matched, row = dataset_profile_matches(root)
+        matched, row = profile_match(root)
         inspected.append(row)
         if matched:
             matches.append(root)
     if len(matches) != 1:
         raise LaunchFailure(
-            "Expected exactly one attached 100M qualification dataset; "
-            f"found {len(matches)}. Inspected:\n" + json.dumps(inspected, indent=2)
+            f"Expected exactly one attached 100M dataset; found {len(matches)}.\n"
+            + json.dumps(inspected, indent=2)
         )
     return matches[0], inspected
 
 
 def validate_plan(path: Path) -> dict[str, Any]:
-    plan = read_object(path, label="100M qualification plan")
-    trainer = plan.get("trainer")
-    identity = plan.get("identity")
-    train = plan.get("train")
-    validation = plan.get("validation")
+    plan = read_object(path, "100M trainer plan")
+    trainer, train, identity = plan.get("trainer"), plan.get("train"), plan.get("identity")
     if plan.get("version") != 1 or plan.get("qualification_profile") != PROFILE:
-        raise LaunchFailure("Generated plan has the wrong profile identity")
-    if plan.get("context_length") != 2_048 or plan.get("sequences_per_block") != 16:
-        raise LaunchFailure("Generated plan changed the frozen block geometry")
+        raise LaunchFailure("Trainer plan profile mismatch")
+    if plan.get("context_length") != 2048 or plan.get("sequences_per_block") != 16:
+        raise LaunchFailure("Trainer plan block geometry mismatch")
     if plan.get("target_shard_bytes") != 8 * 1024 * 1024:
-        raise LaunchFailure("Generated plan changed the frozen shard size")
-    accepted = plan.get("accepted_source_tokens")
-    if not isinstance(accepted, int) or not 100_000_000 <= accepted <= 110_000_000:
-        raise LaunchFailure("Generated plan has an invalid accepted-source-token count")
-    if not all(isinstance(value, Mapping) for value in (trainer, identity, train, validation)):
-        raise LaunchFailure("Generated plan is missing required sections")
-    assert isinstance(trainer, Mapping)
-    assert isinstance(identity, Mapping)
-    assert isinstance(train, Mapping)
-    assert isinstance(validation, Mapping)
+        raise LaunchFailure("Trainer plan shard geometry mismatch")
+    if not all(isinstance(x, Mapping) for x in (trainer, train, identity)):
+        raise LaunchFailure("Trainer plan is missing required sections")
+    assert isinstance(trainer, Mapping) and isinstance(train, Mapping) and isinstance(identity, Mapping)
     steps = trainer.get("steps")
-    warmup = trainer.get("warmup_updates")
-    stable = trainer.get("stable_updates")
-    decay = trainer.get("decay_updates")
-    if not all(isinstance(value, int) and value > 0 for value in (steps, warmup, stable, decay)):
-        raise LaunchFailure("Generated plan has invalid WSD update counts")
-    assert isinstance(steps, int)
-    assert isinstance(warmup, int)
-    assert isinstance(stable, int)
-    assert isinstance(decay, int)
-    if warmup + stable + decay != steps:
-        raise LaunchFailure("Generated WSD phases do not sum to the planned updates")
+    phases = [trainer.get("warmup_updates"), trainer.get("stable_updates"), trainer.get("decay_updates")]
+    if not isinstance(steps, int) or steps <= 0 or not all(isinstance(v, int) and v > 0 for v in phases):
+        raise LaunchFailure("Trainer plan has invalid update counts")
+    if sum(int(v) for v in phases) != steps:
+        raise LaunchFailure("Trainer plan phases do not sum to total steps")
     if trainer.get("passes") != 1 or trainer.get("schedule") != "wsd":
-        raise LaunchFailure("Generated plan changed the one-pass WSD policy")
-    if trainer.get("full_block_target_tokens") != 32_768:
-        raise LaunchFailure("Generated plan changed the effective optimizer batch")
-    if trainer.get("minimum_lr_ratio") != 0.1:
-        raise LaunchFailure("Generated plan changed the minimum LR ratio")
-    block_ids = train.get("block_ids")
-    if not isinstance(block_ids, list) or block_ids != list(range(steps)):
-        raise LaunchFailure("Training block IDs are not exactly contiguous")
-    validation_blocks = trainer.get("validation_blocks")
-    if not isinstance(validation_blocks, int) or validation_blocks <= 0:
-        raise LaunchFailure("Generated plan has no validation blocks")
+        raise LaunchFailure("Trainer plan is not one-pass WSD")
+    if trainer.get("full_block_target_tokens") != 32768 or trainer.get("minimum_lr_ratio") != 0.1:
+        raise LaunchFailure("Trainer plan changed optimization geometry")
+    if train.get("block_ids") != list(range(steps)):
+        raise LaunchFailure("Trainer plan block IDs are not contiguous")
+    if not isinstance(trainer.get("validation_blocks"), int) or trainer["validation_blocks"] <= 0:
+        raise LaunchFailure("Trainer plan has no validation blocks")
     if identity.get("drive_run_id") != DATASET_RUN_ID:
-        raise LaunchFailure("Generated plan has the wrong Drive run ID")
+        raise LaunchFailure("Trainer plan Drive identity mismatch")
     for key in ("manifest_sha256", "drive_manifest_sha256"):
-        value = identity.get(key)
-        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
-            raise LaunchFailure(f"Generated plan has an invalid {key}")
+        if not isinstance(identity.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", identity[key]):
+            raise LaunchFailure(f"Trainer plan has invalid {key}")
     return plan
 
 
+def checkpoint_step(checkpoint_id: str) -> int:
+    match = _CHECKPOINT_ID.fullmatch(checkpoint_id)
+    if match is None:
+        raise LaunchFailure(f"Invalid checkpoint ID: {checkpoint_id!r}")
+    return int(match.group(1))
+
+
 def trainer_command(
-    uv: str,
-    dataset: Path,
-    plan: Mapping[str, Any],
-    *,
-    checkpoint_dir: Path,
-    steps: int,
-    microbatch_size: int,
-    wandb: bool,
-    entity: str | None = None,
+    uv: str, dataset: Path, plan: Mapping[str, Any], checkpoint_dir: Path,
+    *, additional_steps: int, microbatch: int, online: bool,
+    entity: str | None = None, resume: str | None = None,
 ) -> list[str]:
-    trainer = plan["trainer"]
-    assert isinstance(trainer, Mapping)
-    command = [
-        uv,
-        "run",
-        "--python",
-        "3.13",
-        "--extra",
-        "model",
-        "--with",
-        "wandb==0.26.1",
-        "--with-requirements",
-        "dataset/requirements-remote.txt",
-        "python",
-        "-m",
-        "trainer",
-        "--dataset-dir",
-        str(dataset),
-        "--dataset-manifest",
-        str(dataset / "manifest.json"),
-        "--checkpoint-dir",
-        str(checkpoint_dir),
-        "--steps",
-        str(steps),
-        "--sequences-per-block",
-        "16",
-        "--model-size",
-        "smoke",
-        "--architecture",
-        "gdn2_hybrid",
-        "--gdn-chunk-size",
-        "32",
-        "--initialization",
-        "normal",
-        "--optimizer",
-        "hybrid_muon_adamw",
-        "--device",
-        "cuda",
-        "--precision",
-        "fp16",
-        "--microbatch-size",
-        str(microbatch_size),
-        "--learning-rate",
-        "3e-4",
-        "--weight-decay",
-        "0.1",
-        "--muon-momentum",
-        "0.95",
-        "--muon-lr-multiplier",
-        "1.0",
-        "--muon-update-rms",
-        "0.18",
-        "--muon-weight-decay",
-        "0.1",
-        "--max-grad-norm",
-        "1.0",
-        "--schedule",
-        "wsd",
-        "--warmup-tokens",
-        str(trainer["warmup_tokens"]),
-        "--stable-tokens",
-        str(trainer["stable_tokens"]),
-        "--decay-tokens",
-        str(trainer["decay_tokens"]),
-        "--minimum-lr-ratio",
-        "0.1",
-        "--seed",
-        "17",
+    p = plan["trainer"]
+    assert isinstance(p, Mapping)
+    cmd = [
+        uv, "run", "--python", "3.13", "--extra", "model",
+        "--with", "wandb==0.26.1", "--with-requirements", "dataset/requirements-remote.txt",
+        "python", "-m", "trainer", "--dataset-dir", str(dataset),
+        "--dataset-manifest", str(dataset / "manifest.json"),
+        "--checkpoint-dir", str(checkpoint_dir), "--steps", str(additional_steps),
+        "--sequences-per-block", "16", "--model-size", "smoke",
+        "--architecture", "gdn2_hybrid", "--gdn-chunk-size", "32",
+        "--initialization", "normal", "--optimizer", "hybrid_muon_adamw",
+        "--device", "cuda", "--precision", "fp16", "--microbatch-size", str(microbatch),
+        "--learning-rate", "3e-4", "--weight-decay", "0.1",
+        "--muon-momentum", "0.95", "--muon-lr-multiplier", "1.0",
+        "--muon-update-rms", "0.18", "--muon-weight-decay", "0.1",
+        "--max-grad-norm", "1.0", "--schedule", "wsd",
+        "--warmup-tokens", str(p["warmup_tokens"]),
+        "--stable-tokens", str(p["stable_tokens"]),
+        "--decay-tokens", str(p["decay_tokens"]),
+        "--minimum-lr-ratio", "0.1", "--seed", "17",
     ]
-    if not wandb:
-        return command + [
-            "--checkpoint-every-steps",
-            "0",
-            "--evaluation-every-steps",
-            "0",
-            "--validation-blocks",
-            "0",
-            "--remote-publish-every-steps",
-            "0",
-            "--wandb-mode",
-            "disabled",
+    if resume:
+        cmd += ["--resume", resume]
+    if not online:
+        return cmd + [
+            "--checkpoint-every-steps", "0", "--evaluation-every-steps", "0",
+            "--validation-blocks", "0", "--remote-publish-every-steps", "0",
+            "--wandb-mode", "disabled",
         ]
-    command += [
-        "--checkpoint-every-steps",
-        str(LOCAL_CHECKPOINT_EVERY),
-        "--evaluation-every-steps",
-        str(EVALUATION_EVERY),
-        "--validation-blocks",
-        str(trainer["validation_blocks"]),
-        "--remote-publish-every-steps",
-        str(REMOTE_PUBLISH_EVERY),
-        "--remote-drive-manifest",
-        str(dataset / "drive_manifest.json"),
-        "--remote-token-env",
-        "HF_TOKEN",
-        "--wandb-mode",
-        "online",
-        "--wandb-project",
-        "Small-LLM",
-        "--wandb-run-id",
-        WANDB_RUN_ID,
-        "--wandb-run-name",
-        "20M model on 100M tokens",
-        "--wandb-tags",
-        "20m",
-        "100m-tokens",
-        "t4",
-        "data-scaling",
-        "microbatch-4",
-        "one-pass",
+    cmd += [
+        "--checkpoint-every-steps", str(LOCAL_EVERY),
+        "--evaluation-every-steps", str(EVAL_EVERY),
+        "--validation-blocks", str(p["validation_blocks"]),
+        "--remote-publish-every-steps", str(REMOTE_EVERY),
+        "--remote-drive-manifest", str(dataset / "drive_manifest.json"),
+        "--remote-token-env", "HF_TOKEN", "--wandb-mode", "online",
+        "--wandb-project", "Small-LLM", "--wandb-run-id", WANDB_RUN_ID,
+        "--wandb-run-name", "20M model on 100M tokens", "--wandb-tags",
+        "20m", "100m-tokens", "t4", "data-scaling", "microbatch-4",
+        "one-pass", "segmented-exact-resume",
     ]
+    if resume:
+        cmd += ["--wandb-resume", "must"]
     if entity:
-        command += ["--wandb-entity", entity]
-    return command
+        cmd += ["--wandb-entity", entity]
+    return cmd
 
 
-def parse_training_metrics(path: Path, *, expected_steps: int) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+def training_rows(path: Path, expected_steps: int) -> list[dict[str, Any]]:
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            item = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, Mapping) and all(k in item for k in ("step", "block_id", "loss", "tokens_per_second")):
+            rows.append(dict(item))
+    if len(rows) != expected_steps:
+        raise LaunchFailure(f"Expected {expected_steps} probe rows, found {len(rows)}")
+    for index, row in enumerate(rows, start=1):
+        if row.get("step") != index or row.get("block_id") != index - 1:
+            raise LaunchFailure("Probe step/block cursor mismatch")
+        if row.get("sequences") != 16 or row.get("target_tokens") != 32768:
+            raise LaunchFailure("Probe changed effective optimizer batch")
+        if row.get("consumed_tokens") != index * 32768:
+            raise LaunchFailure("Probe consumed-token cursor mismatch")
+        for key in ("loss", "gradient_norm", "tokens_per_second", "grad_scaler_scale", "learning_rate"):
+            value = row.get(key)
+            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                raise LaunchFailure(f"Probe emitted non-finite {key}")
+        if row.get("overflow_retries") != 0 or row.get("overflow_events_total") != 0:
+            raise LaunchFailure("Probe encountered an FP16 overflow")
+    return rows
+
+
+def probe_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    measured = rows[PROBE_WARMUP:]
+    tps = [float(row["tokens_per_second"]) for row in measured]
+    return {
+        "median_tokens_per_second": statistics.median(tps),
+        "mean_tokens_per_second": statistics.fmean(tps),
+        "maximum_peak_allocated_bytes": max(int(row["peak_memory_bytes"]) for row in rows),
+        "maximum_peak_reserved_bytes": max(int(row["peak_reserved_memory_bytes"]) for row in rows),
+        "final_loss": float(rows[-1]["loss"]),
+        "clipped_updates": sum(bool(row.get("gradient_clipped")) for row in rows),
+    }
+
+
+def compare_probes(baseline: list[dict[str, Any]], candidate: list[dict[str, Any]], gpu_bytes: int) -> dict[str, Any]:
+    left, right = probe_summary(baseline), probe_summary(candidate)
+    loss_delta, grad_delta = [], []
+    for a, b in zip(baseline, candidate):
+        if any(a[k] != b[k] for k in ("block_id", "target_tokens", "consumed_tokens", "learning_rate")):
+            raise LaunchFailure("Probes did not execute the same token schedule")
+        loss_delta.append(abs(float(a["loss"]) - float(b["loss"])))
+        ag, bg = abs(float(a["gradient_norm"])), abs(float(b["gradient_norm"]))
+        grad_delta.append(abs(ag - bg) / max(ag, bg, 1e-12))
+    speedup = float(right["median_tokens_per_second"]) / float(left["median_tokens_per_second"])
+    memory_fraction = float(right["maximum_peak_reserved_bytes"]) / gpu_bytes
+    verdict = {
+        "status": "pending", "baseline_microbatch": 1, "selected_microbatch": 4,
+        "observed_median_speedup": speedup, "minimum_required_speedup": MIN_SPEEDUP,
+        "maximum_step_loss_delta": max(loss_delta), "maximum_allowed_step_loss_delta": MAX_LOSS_DELTA,
+        "maximum_gradient_relative_delta": max(grad_delta),
+        "maximum_allowed_gradient_relative_delta": MAX_GRADIENT_RELATIVE_DELTA,
+        "candidate_reserved_memory_fraction": memory_fraction,
+        "maximum_allowed_reserved_memory_fraction": MAX_RESERVED_MEMORY_FRACTION,
+        "results": {"1": left, "4": right},
+    }
+    if speedup < MIN_SPEEDUP:
+        raise LaunchFailure("Microbatch 4 did not improve throughput by at least 5%: " + json.dumps(verdict, indent=2))
+    if max(loss_delta) > MAX_LOSS_DELTA:
+        raise LaunchFailure("Microbatch 4 loss trajectory exceeded tolerance: " + json.dumps(verdict, indent=2))
+    if max(grad_delta) > MAX_GRADIENT_RELATIVE_DELTA:
+        raise LaunchFailure("Microbatch 4 gradient trajectory exceeded tolerance: " + json.dumps(verdict, indent=2))
+    if memory_fraction > MAX_RESERVED_MEMORY_FRACTION:
+        raise LaunchFailure("Microbatch 4 memory headroom failed: " + json.dumps(verdict, indent=2))
+    verdict["status"] = "passed"
+    return verdict
+
+
+def qualify_microbatch(uv: str, dataset: Path, plan: Mapping[str, Any], env: Mapping[str, str]) -> dict[str, Any]:
+    histories = {}
+    for microbatch in (MICROBATCH_BASELINE, MICROBATCH_CANDIDATE):
+        checkpoints = EVIDENCE / f"probe-{microbatch}-checkpoints"
+        stage = common.run(
+            trainer_command(
+                uv, dataset, plan, checkpoints, additional_steps=PROBE_STEPS,
+                microbatch=microbatch, online=False,
+            ),
+            name=f"microbatch-{microbatch}-probe", evidence=EVIDENCE,
+            cwd=WORKTREE, env=env,
+        )
+        histories[microbatch] = training_rows(Path(stage["log"]), PROBE_STEPS)
+        shutil.rmtree(checkpoints, ignore_errors=True)
+    total_mib = int(subprocess.check_output(
+        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"], text=True
+    ).splitlines()[0].strip().replace(",", ""))
+    return compare_probes(histories[1], histories[4], total_mib * 1024 * 1024)
+
+
+RESTORE_SCRIPT = r'''
+import json, os, sys
+from pathlib import Path
+from dataset.src.joint_checkpoint import restore_on_empty_vps
+from dataset.src.remote import HuggingFaceCheckpointStore, TwoPhaseCheckpointPublisher, sha256_path
+repo_id, run_id, destination, attached_manifest, output = sys.argv[1:6]
+destination, attached_manifest, output = Path(destination), Path(attached_manifest), Path(output)
+store = HuggingFaceCheckpointStore(repo_id, token=os.environ["HF_TOKEN"], private=True)
+pointer_path = f"run/{run_id}/latest.json"
+pointer = store.read_json(pointer_path)
+if pointer is None:
+    output.write_text(json.dumps({"status": "missing", "pointer_path": pointer_path}) + "\n")
+    raise SystemExit(0)
+root = restore_on_empty_vps(
+    publisher=TwoPhaseCheckpointPublisher(store, run_id=run_id), store=None,
+    run_id=run_id, destination=destination, checkpoint_pointer=pointer, prefetch_shards=0,
+)
+if sha256_path(root / "drive_manifest.json") != sha256_path(attached_manifest):
+    raise RuntimeError("remote checkpoint Drive manifest differs from attached dataset")
+checkpoint = json.loads((root / "checkpoint.json").read_text())
+last = checkpoint.get("pipeline_state", {}).get("last_consumed_block_id")
+if not isinstance(last, int):
+    raise RuntimeError("restored checkpoint has no integer block cursor")
+result = {"status": "restored", "checkpoint_id": pointer["checkpoint_id"],
+          "checkpoint_root": str(root), "last_consumed_block_id": last}
+output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+print(json.dumps(result, sort_keys=True))
+'''
+
+
+def restore_latest(uv: str, dataset: Path, repo_id: str, env: Mapping[str, str]) -> dict[str, Any] | None:
+    script, output = EVIDENCE / "restore.py", EVIDENCE / "restore.json"
+    script.write_text(RESTORE_SCRIPT, encoding="utf-8")
+    if CHECKPOINTS.exists():
+        shutil.rmtree(CHECKPOINTS)
+    common.run(
+        [uv, "run", "--python", "3.13", "--extra", "model",
+         "--with-requirements", "dataset/requirements-remote.txt", "python", str(script),
+         repo_id, DATASET_RUN_ID, str(ROOT), str(dataset / "drive_manifest.json"), str(output)],
+        name="restore-latest-checkpoint", evidence=EVIDENCE, cwd=WORKTREE, env=env,
+    )
+    result = read_object(output, "remote restore result")
+    if result.get("status") == "missing":
+        return None
+    if result.get("status") != "restored" or not isinstance(result.get("checkpoint_id"), str):
+        raise LaunchFailure("Unexpected remote restore result")
+    step = checkpoint_step(result["checkpoint_id"])
+    if result.get("last_consumed_block_id") != step - 1:
+        raise LaunchFailure("Restored checkpoint and block cursor disagree")
+    if Path(str(result.get("checkpoint_root"))) != CHECKPOINTS / result["checkpoint_id"]:
+        raise LaunchFailure("Restored checkpoint path mismatch")
+    result["step"] = step
+    return result
+
+
+def segment_plan(completed: int, total: int, maximum: int) -> dict[str, int | bool]:
+    if maximum <= 0 or completed < 0 or completed > total:
+        raise LaunchFailure("Invalid session bound or restored step")
+    remaining = total - completed
+    additional = min(remaining, maximum)
+    if additional < remaining and (completed + additional) % REMOTE_EVERY == 0:
+        additional -= 1
+    if remaining and additional <= 0:
+        raise LaunchFailure("Session cannot make forward progress")
+    return {
+        "completed_steps": completed, "remaining_steps_before_session": remaining,
+        "additional_steps_this_session": additional, "expected_final_step": completed + additional,
+        "complete_before_session": remaining == 0, "complete_after_session": additional == remaining,
+    }
+
+
+def verify_segment_log(path: Path, expected_step: int) -> str:
+    checkpoint_id = f"step-{expected_step:08d}"
+    final_line = remote_final = False
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             item = json.loads(line)
@@ -416,304 +427,102 @@ def parse_training_metrics(path: Path, *, expected_steps: int) -> list[dict[str,
             continue
         if not isinstance(item, Mapping):
             continue
-        if all(key in item for key in ("step", "block_id", "loss", "tokens_per_second")):
-            rows.append(dict(item))
-    if len(rows) != expected_steps:
-        raise LaunchFailure(
-            f"Expected {expected_steps} training metrics in {path}, found {len(rows)}"
-        )
-    expected = list(range(expected_steps))
-    if [row.get("block_id") for row in rows] != expected:
-        raise LaunchFailure(f"Microbatch probe block IDs are not {expected}")
-    if [row.get("step") for row in rows] != list(range(1, expected_steps + 1)):
-        raise LaunchFailure("Microbatch probe optimizer steps are not contiguous")
-    for row in rows:
-        for key in ("loss", "gradient_norm", "tokens_per_second", "grad_scaler_scale"):
-            value = row.get(key)
-            if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-                raise LaunchFailure(f"Microbatch probe emitted non-finite {key}: {row}")
-        if row.get("overflow_retries") != 0 or row.get("overflow_events_total") != 0:
-            raise LaunchFailure(f"Microbatch probe encountered an FP16 overflow: {row}")
-    return rows
-
-
-def gpu_total_memory_bytes() -> int:
-    output = subprocess.check_output(
-        [
-            "nvidia-smi",
-            "--query-gpu=memory.total",
-            "--format=csv,noheader,nounits",
-        ],
-        text=True,
-    ).splitlines()[0]
-    mib = int(output.strip().replace(",", ""))
-    return mib * 1024 * 1024
-
-
-def summarize_probe(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    measured = rows[MICROBATCH_WARMUP_DISCARD:]
-    throughputs = [float(row["tokens_per_second"]) for row in measured]
-    return {
-        "steps": len(rows),
-        "measured_steps": len(measured),
-        "median_tokens_per_second": statistics.median(throughputs),
-        "mean_tokens_per_second": statistics.fmean(throughputs),
-        "minimum_tokens_per_second": min(throughputs),
-        "maximum_peak_allocated_bytes": max(int(row["peak_memory_bytes"]) for row in rows),
-        "maximum_peak_reserved_bytes": max(
-            int(row["peak_reserved_memory_bytes"]) for row in rows
-        ),
-        "final_loss": float(rows[-1]["loss"]),
-        "maximum_gradient_norm": max(float(row["gradient_norm"]) for row in rows),
-        "clipped_updates": sum(bool(row.get("gradient_clipped")) for row in rows),
-        "grad_scaler_minimum": min(float(row["grad_scaler_scale"]) for row in rows),
-        "grad_scaler_maximum": max(float(row["grad_scaler_scale"]) for row in rows),
-    }
-
-
-def qualify_microbatch(
-    uv: str,
-    dataset: Path,
-    plan: Mapping[str, Any],
-    env: Mapping[str, str],
-) -> dict[str, Any]:
-    results: dict[str, Any] = {}
-    histories: dict[int, list[dict[str, Any]]] = {}
-    for microbatch in (MICROBATCH_BASELINE, MICROBATCH_CANDIDATE):
-        checkpoint_dir = EVIDENCE / f"microbatch-{microbatch}-checkpoints"
-        stage = common.run(
-            trainer_command(
-                uv,
-                dataset,
-                plan,
-                checkpoint_dir=checkpoint_dir,
-                steps=MICROBATCH_PROBE_STEPS,
-                microbatch_size=microbatch,
-                wandb=False,
-            ),
-            name=f"microbatch-{microbatch}-probe",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-            env=env,
-        )
-        rows = parse_training_metrics(
-            Path(stage["log"]), expected_steps=MICROBATCH_PROBE_STEPS
-        )
-        histories[microbatch] = rows
-        results[str(microbatch)] = summarize_probe(rows)
-        shutil.rmtree(checkpoint_dir, ignore_errors=True)
-
-    baseline = results[str(MICROBATCH_BASELINE)]
-    candidate = results[str(MICROBATCH_CANDIDATE)]
-    speedup = (
-        float(candidate["median_tokens_per_second"])
-        / float(baseline["median_tokens_per_second"])
-    )
-    loss_deltas = [
-        abs(float(left["loss"]) - float(right["loss"]))
-        for left, right in zip(
-            histories[MICROBATCH_BASELINE], histories[MICROBATCH_CANDIDATE]
-        )
-    ]
-    total_memory = gpu_total_memory_bytes()
-    reserved_fraction = float(candidate["maximum_peak_reserved_bytes"]) / total_memory
-    verdict = {
-        "baseline_microbatch": MICROBATCH_BASELINE,
-        "selected_microbatch": MICROBATCH_CANDIDATE,
-        "minimum_required_speedup": MICROBATCH_MIN_SPEEDUP,
-        "observed_median_speedup": speedup,
-        "maximum_step_loss_delta": max(loss_deltas),
-        "maximum_allowed_step_loss_delta": MICROBATCH_MAX_LOSS_DELTA,
-        "candidate_reserved_memory_fraction": reserved_fraction,
-        "maximum_allowed_reserved_memory_fraction": MAX_RESERVED_MEMORY_FRACTION,
-        "gpu_total_memory_bytes": total_memory,
-        "results": results,
-    }
-    if speedup < MICROBATCH_MIN_SPEEDUP:
-        raise LaunchFailure(
-            "Microbatch 4 did not deliver the required 5% median throughput gain: "
-            + json.dumps(verdict, indent=2)
-        )
-    if max(loss_deltas) > MICROBATCH_MAX_LOSS_DELTA:
-        raise LaunchFailure(
-            "Microbatch 4 changed the eight-step loss trajectory beyond the "
-            "bounded execution-grouping tolerance: " + json.dumps(verdict, indent=2)
-        )
-    if reserved_fraction > MAX_RESERVED_MEMORY_FRACTION:
-        raise LaunchFailure(
-            "Microbatch 4 leaves insufficient T4 memory headroom: "
-            + json.dumps(verdict, indent=2)
-        )
-    verdict["status"] = "passed"
-    return verdict
+        final_line |= item.get("checkpoint_id") == checkpoint_id
+        event = item.get("remote_publication")
+        remote_final |= isinstance(event, Mapping) and event.get("checkpoint_id") == checkpoint_id and event.get("final") is True
+    if not final_line or not remote_final:
+        raise LaunchFailure(f"Missing final verified remote publication {checkpoint_id}")
+    return checkpoint_id
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_arguments(argv)
+    args = arguments(argv)
     state: dict[str, Any] = {
-        "schema_version": 1,
-        "started_utc": common.now(),
-        "status": "initializing",
-        "authorization": "20m_100m_data_scaling_setup",
-        "launch_commit": args.launch_commit,
-        "dataset_run_id": DATASET_RUN_ID,
-        "profile": PROFILE,
-        "model_parameters": 20_637_592,
-        "effective_sequences_per_update": 16,
-        "selected_microbatch_size": MICROBATCH_CANDIDATE,
-        "checkpoint_dir": str(CHECKPOINTS),
-        "evidence_dir": str(EVIDENCE),
-        "wandb_run_id": WANDB_RUN_ID,
-        "cadence": {
-            "local_checkpoint_every_steps": LOCAL_CHECKPOINT_EVERY,
-            "evaluation_every_steps": EVALUATION_EVERY,
-            "remote_publish_every_steps": REMOTE_PUBLISH_EVERY,
-            "reason": "10x step scaling preserves approximately the 10M run's relative dataset-progress cadence",
-        },
+        "schema_version": 2, "started_utc": common.now(), "status": "initializing",
+        "authorization": "20m_100m_data_scaling_authorized", "launch_commit": args.launch_commit,
+        "dataset_run_id": DATASET_RUN_ID, "profile": PROFILE, "model_parameters": 20_637_592,
+        "effective_sequences_per_update": 16, "selected_microbatch_size": 4,
+        "checkpoint_dir": str(CHECKPOINTS), "evidence_dir": str(EVIDENCE),
+        "wandb_run_id": WANDB_RUN_ID, "maximum_steps_this_session": args.max_steps_this_session,
     }
     try:
-        if CHECKPOINTS.exists():
-            raise LaunchFailure(
-                f"{CHECKPOINTS} already exists; this entry point starts from scratch"
-            )
-        environment = common.check_environment()
-        controller_head = repo_head(args.launch_commit)
-        wandb_key = common.secret("WANDB_API_KEY")
-        hf_token = common.secret("HF_TOKEN")
+        state["environment"] = common.check_environment()
+        state["controller_head"] = repo_head(args.launch_commit)
+        wandb_key, hf_token = common.secret("WANDB_API_KEY"), common.secret("HF_TOKEN")
         hf_repo = common.secret("SMALL_LLM_HF_REPO_ID")
         entity = common.secret("WANDB_ENTITY", required=False)
         assert wandb_key and hf_token and hf_repo
-
         EVIDENCE.mkdir(parents=True, exist_ok=False)
-        state.update(
-            status="preparing",
-            environment=environment,
-            controller_head=controller_head,
-            remote_checkpoint_repo=hf_repo,
-        )
         common.write_json(SUMMARY, state)
         prepare_worktree(args.launch_commit)
         dataset, inspected = find_dataset(args.dataset_dir)
-        state.update(dataset_dir=str(dataset), datasets_inspected=inspected)
+        state.update(dataset_dir=str(dataset), datasets_inspected=inspected, remote_checkpoint_repo=hf_repo)
 
-        common.run(
-            [sys.executable, "-m", "pip", "install", "-q", "uv"],
-            name="install-uv",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-        )
+        common.run([sys.executable, "-m", "pip", "install", "-q", "uv"],
+                   name="install-uv", evidence=EVIDENCE, cwd=WORKTREE)
         uv = common.find_uv()
-        common.run(
-            [uv, "python", "install", "3.13"],
-            name="install-python-3.13",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-        )
-        common.run(
-            [uv, "run", "--python", "3.13", "python", "--version"],
-            name="python-version",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-        )
+        common.run([uv, "python", "install", "3.13"],
+                   name="install-python-3.13", evidence=EVIDENCE, cwd=WORKTREE)
         base = [uv, "run", "--python", "3.13"]
-        common.run(
-            base
-            + [
-                "--with-requirements",
-                "dataset/requirements-remote.txt",
-                "python",
-                "-m",
-                "dataset.main",
-                "verify",
-                "--output-dir",
-                str(dataset),
-                "--full-scan",
-            ],
-            name="dataset-full-scan",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-        )
+        common.run(base + ["--with-requirements", "dataset/requirements-remote.txt",
+                   "python", "-m", "dataset.main", "verify", "--output-dir", str(dataset), "--full-scan"],
+                   name="dataset-full-scan", evidence=EVIDENCE, cwd=WORKTREE)
         plan_path = EVIDENCE / "qualification_plan.json"
-        common.run(
-            base
-            + [
-                "python",
-                "-m",
-                "dataset.qualification_100m_report",
-                "--dataset-dir",
-                str(dataset),
-                "--drive-manifest",
-                str(dataset / "drive_manifest.json"),
-                "--output",
-                str(plan_path),
-            ],
-            name="qualification-plan",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-        )
+        common.run(base + ["python", "-m", "dataset.qualification_100m_report",
+                   "--dataset-dir", str(dataset), "--drive-manifest", str(dataset / "drive_manifest.json"),
+                   "--output", str(plan_path)], name="qualification-plan", evidence=EVIDENCE, cwd=WORKTREE)
         plan = validate_plan(plan_path)
         state["plan"] = plan
-        common.write_json(SUMMARY, state)
-
-        runtime_env = {
-            "WANDB_API_KEY": wandb_key,
-            "HF_TOKEN": hf_token,
-            "SMALL_LLM_HF_REPO_ID": hf_repo,
-            "UV_LINK_MODE": "copy",
-            "PYTHONUNBUFFERED": "1",
-        }
-        state["microbatch_qualification"] = qualify_microbatch(
-            uv, dataset, plan, runtime_env
+        env = {"WANDB_API_KEY": wandb_key, "HF_TOKEN": hf_token,
+               "SMALL_LLM_HF_REPO_ID": hf_repo, "UV_LINK_MODE": "copy", "PYTHONUNBUFFERED": "1"}
+        restored = restore_latest(uv, dataset, hf_repo, env)
+        state["remote_restore"] = restored or {"status": "fresh"}
+        total = int(plan["trainer"]["steps"])
+        completed = int(restored["step"]) if restored else 0
+        segment = segment_plan(completed, total, args.max_steps_this_session)
+        state["session_plan"] = segment
+        if segment["complete_before_session"]:
+            state.update(status="already_completed", completed_utc=common.now())
+            common.write_json(SUMMARY, state)
+            print(f"Run already complete at {completed}/{total}. Summary: {SUMMARY}")
+            return 0
+        state["microbatch_qualification"] = (
+            qualify_microbatch(uv, dataset, plan, env) if restored is None
+            else {"status": "inherited_from_verified_checkpoint", "selected_microbatch": 4}
         )
-        common.write_json(SUMMARY, state)
-
-        trainer = plan["trainer"]
-        assert isinstance(trainer, Mapping)
+        resume = str(restored["checkpoint_id"]) if restored else None
         command = trainer_command(
-            uv,
-            dataset,
-            plan,
-            checkpoint_dir=CHECKPOINTS,
-            steps=int(trainer["steps"]),
-            microbatch_size=MICROBATCH_CANDIDATE,
-            wandb=True,
-            entity=entity,
+            uv, dataset, plan, CHECKPOINTS,
+            additional_steps=int(segment["additional_steps_this_session"]), microbatch=4,
+            online=True, entity=entity, resume=resume,
         )
-        state.update(
-            status="running",
-            trainer_started_utc=common.now(),
-            trainer_command=command,
-        )
+        state.update(status="running", trainer_started_utc=common.now(), trainer_command=command)
         common.write_json(SUMMARY, state)
-        print(
-            "\nSTARTING 20M-MODEL / 100M-TOKEN DATA-SCALING RUN\n"
-            f"dataset: {dataset}\n"
-            f"updates: {trainer['steps']}\n"
-            f"microbatch: {MICROBATCH_CANDIDATE}\n"
-            f"W&B: {WANDB_RUN_ID}\n",
-            flush=True,
-        )
-        common.run(
+        stage = common.run(
             command,
-            name=f"trainer-{trainer['steps']}-updates",
-            evidence=EVIDENCE,
-            cwd=WORKTREE,
-            env=runtime_env,
+            name=f"trainer-{completed + 1:08d}-{int(segment['expected_final_step']):08d}",
+            evidence=EVIDENCE, cwd=WORKTREE, env=env,
         )
-        state.update(status="completed", completed_utc=common.now())
+        final_step = int(segment["expected_final_step"])
+        checkpoint = verify_segment_log(Path(stage["log"]), final_step)
+        remaining = total - final_step
+        state.update(
+            status="completed" if segment["complete_after_session"] else "segment_completed",
+            segment_completed_utc=common.now(), final_step=final_step,
+            final_checkpoint_id=checkpoint, remaining_steps=remaining,
+        )
         common.write_json(SUMMARY, state)
-        print(f"100M-token run completed. Summary: {SUMMARY}")
+        if remaining:
+            print(f"Segment published at {checkpoint}; rerun the same entry point. Summary: {SUMMARY}")
+        else:
+            print(f"100M-token run completed. Summary: {SUMMARY}")
         return 0
     except KeyboardInterrupt:
         state.update(status="interrupted", finished_utc=common.now())
         common.write_json(SUMMARY, state)
         return 130
-    except Exception as error:  # noqa: BLE001 - launcher failure boundary
-        state.update(
-            status="failed",
-            finished_utc=common.now(),
-            error=f"{type(error).__name__}: {error}",
-        )
+    except Exception as error:
+        state.update(status="failed", finished_utc=common.now(), error=f"{type(error).__name__}: {error}")
         common.write_json(SUMMARY, state)
         print(f"LAUNCH FAILED CLOSED: {error}", file=sys.stderr)
         return 1
