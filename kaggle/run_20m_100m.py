@@ -13,7 +13,15 @@ if any(argument == "--launch-commit" or argument.startswith("--launch-commit=") 
 
 os.environ["SMALL_LLM_100M_LAUNCH_COMMIT"] = PINNED_LAUNCH_COMMIT
 
-from run_20m_100m_data_scaling import main  # noqa: E402
+import run_20m_one_click as common  # noqa: E402
+from run_20m_100m_console import install_common_console, install_experiment_console  # noqa: E402
+
+install_common_console(common)
+
+import run_20m_100m_data_scaling as experiment  # noqa: E402
+
+install_experiment_console(experiment)
+main = experiment.main
 
 
 if __name__ == "__main__":
