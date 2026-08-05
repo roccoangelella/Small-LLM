@@ -1,14 +1,17 @@
 # Project Status
 
-_Last updated: 2026-08-04_
+_Last updated: 2026-08-05_
 
 ## Current phase
 
-The finite approximately-20M engineering qualification dataset is built, durably mirrored, fully scanned, and accepted. The exact-commit Kaggle T4 gates, integrated preflight, same-T4 repeatability test, and actual-process local interruption/resume test have passed.
+The frozen approximately-20M engineering qualification ladder is complete.
 
-The project is now in **final remote empty-environment recovery qualification**.
+```text
+status: passed_remote_empty_environment_recovery
+authorization: full_306_run_ready_for_explicit_launch
+```
 
-Architecture selection is not being reopened. The complete 306-update one-pass segment remains unauthorized until the remote recovery test passes and the user explicitly authorizes launch. The approximately-100M architecture comparison and complete 90B dataset build also remain unauthorized until the 20M ladder is complete.
+The complete 306-update one-pass run is now technically ready, but it has not been launched. Launch still requires the user's explicit decision. Architecture selection is not being reopened.
 
 Detailed evidence is recorded in:
 
@@ -16,7 +19,7 @@ Detailed evidence is recorded in:
 llm_docs/20m_kaggle_preflight_results.md
 llm_docs/20m_repeatability_results.md
 llm_docs/20m_local_resume_results.md
-llm_docs/20m_remote_recovery_test.md
+llm_docs/20m_remote_recovery_results.md
 ```
 
 ## Frozen model and optimizer
@@ -33,13 +36,16 @@ seed: 17
 optimizer: hybrid whole-matrix Muon + AdamW
 base LR: 3e-4
 AdamW betas: 0.9 / 0.95
+AdamW epsilon: 1e-8
 weight decay: 0.1
 Muon momentum: 0.95
+Muon LR multiplier: 1.0
 Muon target direction RMS: 0.18
+Muon weight decay: 0.1
 global gradient clipping: 1.0
 ```
 
-The user accepted the observed universal clipping for this frozen 20M engineering qualification. The decision is based on bounded and exactly repeatable gradient norms, decreasing loss, stable optimizer telemetry, and zero FP16 overflows. It does not silently authorize a different LR, clipping threshold, optimizer, or transfer of the decision to later models.
+The user accepted universal clipping for this frozen 20M qualification because it was bounded, exactly repeatable, accompanied by improving loss, and produced no FP16 overflows. This does not transfer automatically to later models or authorize silent hyperparameter changes.
 
 ## Accepted qualification dataset
 
@@ -58,7 +64,7 @@ manifest SHA-256: 1e5ee8f372b77b6728288610dbe7cce74d833be21e53d1538bc5a890229b18
 Drive manifest SHA-256: fbb29ee0d0102658e1274e39d6647cf56a6dcb685e0f566b1736847dcc4fbe84
 ```
 
-The mounted Kaggle dataset has repeatedly passed literal full scans and exact 306-update plan reproduction.
+The mounted dataset repeatedly passed literal full scans and exact one-pass-plan reproduction.
 
 ## Exact one-pass plan
 
@@ -77,31 +83,35 @@ train target tokens: 10,006,528
 
 The final training block is partial. Silent data wraparound remains forbidden.
 
-## Passed gates
-
-All evidence-producing trainer work has used a clean detached worktree at:
+## Frozen launch identity
 
 ```text
 launch commit: 45d1da4a1ac3f18cf6ce02b8439672f10e2c8b4c
-GPU: NVIDIA Tesla T4
+GPU qualification target: NVIDIA Tesla T4
 ```
 
-Passed:
+Evidence-producing trainer work used clean detached worktrees at the frozen launch commit.
+
+## Passed qualification gates
 
 ```text
 offline suite: 229 passed, 1 expected live-remote skip
 corrected T4 harness: passed
-dataset full scan and plan reproduction: passed
+dataset full scan and exact plan reproduction: passed
 20-update integrated trainer preflight: passed
 50-update uninterrupted reference: passed
-50-update same-T4 A/A repeat: passed
+50-update same-T4 A/A repeatability: passed
 actual-process SIGTERM at update 25: passed
 fresh-process local resume through update 50: passed
+private Hugging Face checkpoint publication: passed
+empty-environment checkpoint restore: passed
+two-shard Google Drive prefetch and verification: passed
+remote-restored continuation through update 30: passed
 ```
 
 ## Repeatability result
 
-The two independent 50-update runs produced exact non-runtime telemetry and validation equality:
+Two independent 50-update runs produced exact non-runtime telemetry and validation equality:
 
 ```text
 compared numerical values: 10,650
@@ -110,11 +120,6 @@ maximum absolute difference: 0.0
 maximum relative difference: 0.0
 discrete trajectory exact: true
 validation exact: true
-```
-
-Both produced:
-
-```text
 training loss: 10.845867 -> 8.090633
 validation loss: 7.915478
 GradScaler: 65,536 throughout
@@ -122,7 +127,7 @@ FP16 overflow events / retries: 0 / 0
 gradient clipping: 50 / 50 updates
 ```
 
-The first-10 and last-10 median pre-clip norms were `1.399718` and `1.385033`; the final norm was `1.344303`. Universal clipping was therefore accepted as bounded for this qualification.
+The first-10 and last-10 median pre-clip norms were `1.399718` and `1.385033`; the final norm was `1.344303`.
 
 ## Local interruption and resume result
 
@@ -137,7 +142,7 @@ last consumed block: 24
 next resumed block: 25
 ```
 
-A fresh process resumed updates 26-50. The combined path matched the uninterrupted reference exactly:
+A fresh process resumed updates 26-50 and matched the uninterrupted reference exactly:
 
 ```text
 compared numerical values: 10,650
@@ -148,7 +153,7 @@ validation exact: true
 resume class: exact_local_resume
 ```
 
-Decoded checkpoint semantics were exact at both step 25 and step 50:
+Decoded semantic checkpoint state was exact at steps 25 and 50:
 
 ```text
 tensors compared per checkpoint: 383
@@ -156,72 +161,74 @@ tensor elements compared: 54,184,616
 semantic differences: 0
 ```
 
-Raw checkpoint-tree hashes differed while decoded state was exact. This is accepted as serialization-byte variability rather than state divergence.
+Raw checkpoint-tree differences with exact decoded state are accepted as serialization-byte variability rather than training-state divergence.
 
-Local-resume evidence:
+## Remote empty-environment recovery result
 
-```text
-status: passed_local_interruption_resume
-authorization: remote_recovery_only
-evidence directory: /kaggle/working/small-llm-local-resume-controller/small-llm-local-resume-20260804T162921Z
-summary: /kaggle/working/small_llm_local_resume_summary.json
-```
-
-## Final remaining gate
-
-The repository-native launcher is:
+The bounded final gate executed 35 updates total:
 
 ```text
-kaggle/run_20m_remote_recovery_from_clone.py
-```
-
-The remote test is deliberately shorter because 50-step stability and exact local recovery are already established:
-
-```text
-publisher training: updates 1-25
-local continuation: updates 26-30
+publisher segment: updates 1-25
+local reference continuation: updates 26-30
 remote-restored continuation: updates 26-30
-total executed updates: 35
 ```
 
-It must prove:
-
-1. verified two-phase private Hugging Face publication of `step-00000025`;
-2. restore into a destination with no prior checkpoint or data cache;
-3. exact checkpoint-manifest and semantic-state verification;
-4. exact two-shard Google Drive prefetch by immutable file ID, size, and SHA-256;
-5. restored next block equal to 25;
-6. exact local-versus-remote continuation for updates 26-30;
-7. exact semantic step-30 checkpoint equality.
-
-Required Kaggle secrets:
-
-```text
-WANDB_API_KEY
-HF_TOKEN
-SMALL_LLM_HF_REPO_ID
-GOOGLE_DRIVE_OAUTH_TOKEN_JSON
-```
-
-Optional: `WANDB_ENTITY`.
-
-A successful result must report:
+Final result:
 
 ```text
 status: passed_remote_empty_environment_recovery
 authorization: full_306_run_ready_for_explicit_launch
+resume class: exact_remote_empty_environment_recovery
+evidence: /kaggle/working/small-llm-remote-recovery-controller/small-llm-remote-recovery-20260805T073059Z
+```
+
+The source step-25 checkpoint was published privately, restored into an empty destination, and verified. The restored state pointed to block 25 as the next block. Exactly two required train shards were downloaded from Google Drive and matched their immutable byte sizes and SHA-256 identities.
+
+Source versus remote step-25 semantic comparison:
+
+```text
+tensors: 383
+tensor elements: 54,184,616
+scalars: 1,112
+differences: 0
+semantic exact: true
+```
+
+Local versus remote-restored updates 26-30:
+
+```text
+compared numerical values: 1,065
+differing numerical values: 0
+maximum absolute difference: 0.0
+maximum relative difference: 0.0
+numeric trajectory exact: true
+discrete trajectory exact: true
+```
+
+Local versus remote step-30 semantic comparison also had zero differences across the same 383 tensors and 54,184,616 tensor elements.
+
+W&B run identities:
+
+```text
+publisher: 20m-t4-remote-20260805-073105-publisher
+local reference: 20m-t4-remote-20260805-073105-local-reference
+remote restored: 20m-t4-remote-20260805-073105-remote-restored
+project: Small-LLM
+entity observed in Kaggle logs: rocchissimo936-none
 ```
 
 ## Current readiness verdict
 
 **Dataset gate: passed.**
 
-**Exact-commit offline/T4/integrated preflight: passed.**
+**Offline, T4, integrated trainer, and numerical-stability gates: passed.**
 
-**Same-T4 50-update repeatability: passed with exact trajectory equality.**
+**Same-T4 repeatability: passed with exact trajectory equality.**
 
-**Actual-process local interruption and resume: passed with exact trajectory and semantic checkpoint equality.**
+**Actual-process local interruption and resume: passed with exact trajectory and semantic state.**
 
-**Ready next:** run the bounded private remote publication and empty-environment recovery test.
+**Private remote publication and empty-environment recovery: passed with exact trajectory and semantic state.**
 
-**Not yet authorized:** the complete 306-update one-pass segment, because the final remote recovery gate has not yet passed.
+**Ready for explicit launch:** the frozen complete 306-update one-pass segment.
+
+**Not yet started:** the 306-update run. The next project decision is whether to launch it now and preserve the frozen recipe unchanged.
