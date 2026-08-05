@@ -32,6 +32,7 @@ EVIDENCE = ROOT / ("evidence-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%
 CHECKPOINTS = ROOT / "checkpoints"
 SUMMARY = common.WORK / "small_llm_20m_100m_data_scaling_summary.json"
 WANDB_RUN_ID = "20m-100m-data-001"
+WANDB_INIT_TIMEOUT_SECONDS = "600"
 MICROBATCH_BASELINE, MICROBATCH_CANDIDATE = 1, 4
 PROBE_STEPS, PROBE_WARMUP = 8, 2
 MIN_SPEEDUP = 1.05
@@ -246,8 +247,8 @@ def trainer_command(
         "20m", "100m-tokens", "t4", "data-scaling", "microbatch-4",
         "one-pass", "segmented-exact-resume",
     ]
-    if resume:
-        cmd += ["--wandb-resume", "must"]
+    # A timed-out first init may already have created the fixed run server-side.
+    cmd += ["--wandb-resume", "must" if resume else "allow"]
     if entity:
         cmd += ["--wandb-entity", entity]
     return cmd
@@ -473,8 +474,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                    "--output", str(plan_path)], name="qualification-plan", evidence=EVIDENCE, cwd=WORKTREE)
         plan = validate_plan(plan_path)
         state["plan"] = plan
-        env = {"WANDB_API_KEY": wandb_key, "HF_TOKEN": hf_token,
-               "SMALL_LLM_HF_REPO_ID": hf_repo, "UV_LINK_MODE": "copy", "PYTHONUNBUFFERED": "1"}
+        env = {
+            "WANDB_API_KEY": wandb_key,
+            "WANDB_INIT_TIMEOUT": os.environ.get(
+                "WANDB_INIT_TIMEOUT", WANDB_INIT_TIMEOUT_SECONDS
+            ),
+            "HF_TOKEN": hf_token,
+            "SMALL_LLM_HF_REPO_ID": hf_repo,
+            "UV_LINK_MODE": "copy",
+            "PYTHONUNBUFFERED": "1",
+        }
         restored = restore_latest(uv, dataset, hf_repo, env)
         state["remote_restore"] = restored or {"status": "fresh"}
         total = int(plan["trainer"]["steps"])

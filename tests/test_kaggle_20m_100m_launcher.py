@@ -90,6 +90,23 @@ class Kaggle20M100MLauncherTests(unittest.TestCase):
             launcher.WANDB_RUN_ID,
         )
 
+    def test_fresh_command_can_recover_a_run_created_before_init_timeout(self) -> None:
+        command = launcher.trainer_command(
+            "uv",
+            Path("/data"),
+            _plan(),
+            Path("/checkpoints"),
+            additional_steps=12,
+            microbatch=4,
+            online=True,
+        )
+        self.assertNotIn("--resume", command)
+        self.assertEqual(command[command.index("--wandb-resume") + 1], "allow")
+        self.assertEqual(
+            command[command.index("--wandb-run-id") + 1],
+            launcher.WANDB_RUN_ID,
+        )
+
     def test_microbatch_gate_accepts_safe_speedup(self) -> None:
         verdict = launcher.compare_probes(
             _rows(100.0),
