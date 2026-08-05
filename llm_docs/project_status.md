@@ -1,6 +1,6 @@
 # Project Status
 
-_Last updated: 2026-08-05 15:34 Europe/Rome_
+_Last updated: 2026-08-05 15:52 Europe/Rome_
 
 ## Current phase
 
@@ -35,6 +35,28 @@ final remote checkpoint: step-00000306
 ```
 
 The checkpoint is accepted as an engineering and learning-signal success, not as a capable chatbot. Detailed evidence remains in the 20M qualification, repeatability, resume, remote-recovery, and qualitative-result records.
+
+## Pretraining evaluation baseline
+
+GPT-2 is accepted as a historical base-model reference because its released family used autoregressive next-token pretraining and zero-shot evaluation rather than modern instruction tuning or RLHF. Its published cross-corpus perplexities are not project gates: corpus, tokenizer, context construction, and evaluation preprocessing must match before perplexity is directly comparable.
+
+The measured 10M result is the project anchor. Provisional same-corpus planning bands for the unchanged approximately-20M model are:
+
+```text
+10M target tokens: loss 6.0-6.3, perplexity 403-545
+100M target tokens: loss 4.4-5.0, perplexity 81-148
+1B target tokens: loss 3.2-4.0, perplexity 25-55
+```
+
+The 100M and 1B bands bracket a conservative published data-scaling extrapolation and the more optimistic slope observed from the project's 1.638M-to-10M validation trajectory. They are forecasts, not authorization thresholds.
+
+The project evaluation scorecard will extend beyond perplexity to fixed-evaluation loss, bits per byte, per-cluster loss, top-k next-token accuracy, calibration, loss-versus-token curves, BabyLM-style zero-shot tasks, LAMBADA, a small frozen `lm-evaluation-harness` set, generation degeneration metrics, throughput, memory, latency, and recurrent/KV-state cost. A larger static held-out `eval_core_v1` is proposed before scientific 100M-versus-1B comparisons; its exact size is not yet frozen.
+
+Detailed rationale, external references, target derivation, and the proposed scorecard are recorded in:
+
+```text
+llm_docs/pretraining_evaluation_targets.md
+```
 
 ## Fixed 100M dataset identity
 
@@ -155,4 +177,5 @@ Detailed records:
 llm_docs/20m_100m_data_scaling_plan.md
 llm_docs/20m_100m_runbook.md
 llm_docs/100m_kagglehub_publication_suite.md
+llm_docs/pretraining_evaluation_targets.md
 ```
