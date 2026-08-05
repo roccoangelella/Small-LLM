@@ -1,274 +1,192 @@
 # Project Status
 
-_Last updated: 2026-08-05 11:50 Europe/Rome_
+_Last updated: 2026-08-05 15:26 Europe/Rome_
 
 ## Current phase
 
-The frozen approximately-20M engineering qualification ladder is complete, the full run was authorized, and the user has now confirmed that the complete Kaggle run is live and has reached at least optimizer step 150.
+The approximately-20M engineering qualification, complete 10M-token one-pass run, remote checkpoint lifecycle, and post-pretraining prompt suite are complete and accepted.
+
+The project is now preparing the authorized **20M-model / 100M-token data-scaling experiment**. The model is not being enlarged in this stage. The only scientific scale change is the finite accepted-source-token envelope from approximately 10M to approximately 100M; microbatch 4 is an execution optimization that must pass an explicit first-session gate while preserving the same 16-sequence optimizer block.
 
 ```text
-status: running
-qualification: passed_remote_empty_environment_recovery
-authorization: full_306_run_authorized
+status: 100m_experiment_implementation_complete_dataset_build_pending
+current authorization: 20m_model_on_100m_tokens_only
+future logarithmic dataset convention: 10M -> 100M -> 1B -> 10B -> approximately 90B
+later stages authorized now: no
+model enlargement authorized now: no
 execution venue: Kaggle
 accelerator target: NVIDIA Tesla T4
-run state: running_user_reported_step_150
-W&B run ID: 20m-one-pass-001
-latest reported optimizer step: 150 / 306
-latest reported validation perplexity: approximately 576
-corresponding validation loss: approximately 6.356108
-reported at: 2026-08-05 11:50 Europe/Rome
 ```
 
-The live-state record above is based on the user's direct observation of the active run. Completion, final checkpoint publication, and the final metric set remain unverified until the run terminates successfully and its artifacts are inspected.
-
-The authorization was given at 2026-08-05 10:04 Europe/Rome. Architecture selection and the frozen recipe are not being reopened.
-
-Detailed evidence and the launch decision are recorded in:
-
-```text
-llm_docs/20m_kaggle_preflight_results.md
-llm_docs/20m_repeatability_results.md
-llm_docs/20m_local_resume_results.md
-llm_docs/20m_remote_recovery_results.md
-llm_docs/20m_kaggle_launch_authorization.md
-```
-
-## Live complete-run observations
-
-The user reported the following validation trajectory from the active 306-update one-pass run:
-
-```text
-step 50 validation perplexity: approximately 2,739.35
-step 50 validation loss: approximately 7.915476
-step 150 validation perplexity: approximately 576
-step 150 validation loss: approximately 6.356108
-perplexity reduction from step 50 to 150: approximately 4.756x
-validation-loss reduction from step 50 to 150: approximately 1.559 nats
-nominal full-block target tokens committed by step 150: 4,915,200
-fraction of planned train target tokens: approximately 49.12%
-```
-
-This is strong midpoint evidence of continued learning on the fixed validation block. It is not yet a final model-quality result because the validation set is very small and the current metric includes every stored target position, including any synthetic padding positions in the final partial validation sequence.
-
-The run's configured persistence cadence remains:
-
-```text
-local joint checkpoint: every 25 successful optimizer updates
-validation: every 50 successful optimizer updates
-remote Hugging Face publication: every 50 successful optimizer updates
-```
-
-No statement about the success of the live run's step-50, step-100, or step-150 remote publications is recorded here without direct artifact or log verification.
-
-## Frozen model and optimizer
+## Completed 20M / 10M qualification
 
 ```text
 parameters: 20,637,592
-architecture: [GDN-2, GDN-2, GDN-2, full gated MHA] repeated
-context length: 2,048
+architecture: gdn2_hybrid
+context: 2,048
 precision: FP16
-GDN-2 backend: ordinary PyTorch chunkwise
+GDN-2 chunk size: 32
+optimizer: hybrid whole-matrix Muon + AdamW
+seed: 17
+accepted source tokens: 10,000,662
+planned train target tokens: 10,006,528
+optimizer updates: 306
+status: completed
+launcher exit code: 0
+trainer exit code: 0
+FP16 overflow events: 0
+final validation loss: 6.136690
+final validation perplexity: 462.520157
+final remote checkpoint: step-00000306
+```
+
+The W&B history was complete and contiguous. Validation improved at every recorded boundary. Gradient clipping was concentrated early rather than sustained through the run. Dataset consumption, optimizer telemetry, checkpoint cadence, final remote publication, and operational overhead passed their project gates.
+
+The post-pretraining qualitative suite confirmed non-random local English next-token structure, stable generation, punctuation and formatting behavior, and local topic associations. It did not demonstrate reliable factual retrieval, instruction following, or useful chatbot behavior. The checkpoint is accepted as an engineering and learning-signal success, not as a capable language model.
+
+Detailed records:
+
+```text
+llm_docs/20m_training_readiness.md
+llm_docs/20m_repeatability_results.md
+llm_docs/20m_local_resume_results.md
+llm_docs/20m_remote_recovery_results.md
+llm_docs/20m_post_pretraining_qualitative_results.md
+```
+
+## Authorized 100M-token experiment
+
+### Dataset identity
+
+```text
+producer module: dataset.qualification_100m
+report module: dataset.qualification_100m_report
+run ID: 20m-100m-dataset-001
+accepted-source-token target: 100,000,000
+minimum: 90,000,000
+hard maximum: 110,000,000
+context length: 2,048
+stored tokens per sequence: 2,049
+sequences per optimizer block: 16
+target tokens per full optimizer update: 32,768
+target shard size: 8 MiB
+producer durable checkpoint cadence: 20,000,000 source tokens
+remote durability: required
+passes: 1
+implicit wraparound: forbidden
+```
+
+The completed dataset will be attached once as a private Kaggle Dataset and read from immutable local shards under `/kaggle/input`. Google Drive remains the durable mirror and recovery source; ordinary training does not stream shards over the network.
+
+### Frozen model and optimizer
+
+The 20M model recipe remains unchanged:
+
+```text
+parameters: 20,637,592
+model size: smoke
+architecture: gdn2_hybrid
+layer pattern: [GDN-2, GDN-2, GDN-2, full gated MHA] x 2
+context: 2,048
 GDN-2 chunk size: 32
 initialization: normal
+precision: FP16
 seed: 17
 optimizer: hybrid whole-matrix Muon + AdamW
 base LR: 3e-4
-AdamW betas: 0.9 / 0.95
-AdamW epsilon: 1e-8
 weight decay: 0.1
 Muon momentum: 0.95
 Muon LR multiplier: 1.0
 Muon target direction RMS: 0.18
 Muon weight decay: 0.1
 global gradient clipping: 1.0
-```
-
-The user accepted universal clipping for this frozen 20M qualification because it was bounded, exactly repeatable, accompanied by improving loss, and produced no FP16 overflows. This does not transfer automatically to later models or authorize silent hyperparameter changes.
-
-## Accepted qualification dataset
-
-```text
-run ID: 20m-qualification-dataset-001
-accepted source tokens: 10,000,662
-train source tokens: 9,991,872
-validation source tokens: 8,790
-train shards: 6
-validation shards: 1
-train sequences: 4,886
-validation sequences: 5
-train blocks / one-pass optimizer updates: 306
-stored uint16 tokens: 10,021,659
-manifest SHA-256: 1e5ee8f372b77b6728288610dbe7cce74d833be21e53d1538bc5a890229b18bb
-Drive manifest SHA-256: fbb29ee0d0102658e1274e39d6647cf56a6dcb685e0f566b1736847dcc4fbe84
-```
-
-The mounted dataset repeatedly passed literal full scans and exact one-pass-plan reproduction.
-
-## Exact one-pass plan
-
-```text
-schedule: WSD
-passes: 1
-steps: 306
-full-block target tokens: 32,768
-warmup: 16 updates / 524,288 target tokens
-stable: 228 updates / 7,471,104 target tokens
-decay: 62 updates / 2,011,136 target tokens
+schedule: one-pass WSD
 minimum LR ratio: 0.1
-validation blocks: 1
-train target tokens: 10,006,528
 ```
 
-The final training block is partial. Silent data wraparound remains forbidden.
-
-## Frozen launch identity
+### Microbatch qualification
 
 ```text
-launch commit: 45d1da4a1ac3f18cf6ce02b8439672f10e2c8b4c
-GPU qualification target: NVIDIA Tesla T4
-selected execution venue: Kaggle
+baseline microbatch: 1
+candidate microbatch: 4
+effective optimizer block: unchanged at 16 sequences
+probe prefix: first 8 blocks
+throughput requirement: at least 5% median improvement
+maximum per-step loss delta: 0.05
+maximum relative gradient-norm delta: 5%
+maximum reserved-memory fraction: 90% of T4
+FP16 overflow tolerance: zero
+fallback on gate failure: none; fail closed
 ```
 
-Evidence-producing trainer work used clean detached worktrees at the frozen launch commit.
+### Kaggle segmentation and resume
 
-## Passed qualification gates
+The 100M run is structured as bounded exact segments so it does not depend on an abrupt Kaggle session timeout.
 
 ```text
-offline suite: 229 passed, 1 expected live-remote skip
-corrected T4 harness: passed
-dataset full scan and exact plan reproduction: passed
-20-update integrated trainer preflight: passed
-50-update uninterrupted reference: passed
-50-update same-T4 A/A repeatability: passed
-actual-process SIGTERM at update 25: passed
-fresh-process local resume through update 50: passed
-private Hugging Face checkpoint publication: passed
-empty-environment checkpoint restore: passed
-two-shard Google Drive prefetch and verification: passed
-remote-restored continuation through update 30: passed
+maximum additional updates per invocation: 749
+local checkpoint cadence: 250 updates
+validation cadence: 500 updates
+periodic remote publication cadence: 500 updates
+cross-session authority: private Hugging Face latest pointer
+W&B run ID: 20m-100m-data-001
+resume policy: must
 ```
 
-## Repeatability result
+Each invocation either starts fresh when no remote pointer exists or restores the latest verified checkpoint, checks its embedded Drive-manifest identity against the attached dataset, restores optimizer/scheduler/scaler/RNG/data cursor state, and continues the same W&B run. Every normal segment exit requires an explicit final remote publication.
 
-Two independent 50-update runs produced exact non-runtime telemetry and validation equality:
+### Official entry point
 
 ```text
-compared numerical values: 10,650
-differing numerical values: 0
-maximum absolute difference: 0.0
-maximum relative difference: 0.0
-discrete trajectory exact: true
-validation exact: true
-training loss: 10.845867 -> 8.090633
-validation loss: 7.915478
-GradScaler: 65,536 throughout
-FP16 overflow events / retries: 0 / 0
-gradient clipping: 50 / 50 updates
+wrapper: kaggle/run_20m_100m.py
+implementation: kaggle/run_20m_100m_data_scaling.py
+pinned evidence-producing commit: 43190cb72443a2de290dc8e6f2c54f29d8dff501
+wrapper commit: 3f085e57260205bf9c0f9d30873fe97c1cbc2f27
 ```
 
-The first-10 and last-10 median pre-clip norms were `1.399718` and `1.385033`; the final norm was `1.344303`.
+Operator command:
 
-## Local interruption and resume result
+```bash
+cd /kaggle/working/Small-LLM
+git switch main
+git pull --ff-only
+python kaggle/run_20m_100m.py
+```
 
-The actual trainer process group was terminated after the complete step-25 checkpoint:
+Run the same command after every successfully published segment until the summary reports `status: completed` and `remaining_steps: 0`.
+
+## Implementation and test state
+
+Completed on `main`:
 
 ```text
-signal: SIGTERM
-exit code: 143
-forced SIGKILL: false
-process group gone: true
-last consumed block: 24
-next resumed block: 25
+canonical fixed 100M producer: complete
+exact generic finite-profile report: complete
+100M report and Drive-manifest binding: complete
+microbatch-1 versus microbatch-4 gate: complete
+bounded segment planning: complete
+verified remote restore and W&B resume: complete
+single pinned Kaggle wrapper: complete
+duplicate 100M profiles removed: complete
+dedicated VPS/Kaggle runbook: complete
 ```
 
-A fresh process resumed updates 26-50 and matched the uninterrupted reference exactly:
+Offline pure launcher tests passed for segment planning, resume arguments, microbatch acceptance/rejection, dataset-profile identity, and explicit final-publication evidence. No repository CI workflow is currently attached to these commits. T4 throughput/memory qualification and live remote behavior remain intentionally pending because they require the completed attached 100M dataset and Kaggle secrets.
+
+## Immediate next actions
 
 ```text
-compared numerical values: 10,650
-differing numerical values: 0
-numeric trajectory exact: true
-discrete trajectory exact: true
-validation exact: true
-resume class: exact_local_resume
+1. Build 20m-100m-dataset-001 on the VPS with dataset.qualification_100m.
+2. Run the literal full scan and derive qualification_plan.json.
+3. Publish the unchanged completed directory as a private Kaggle Dataset.
+4. Attach it to a T4 notebook and run kaggle/run_20m_100m.py.
+5. Review the microbatch gate before treating the training segment as authorized by evidence.
+6. Re-run the same entry point after each published segment until completion.
 ```
 
-Decoded semantic checkpoint state was exact at steps 25 and 50:
+Detailed plan and commands:
 
 ```text
-tensors compared per checkpoint: 383
-tensor elements compared: 54,184,616
-semantic differences: 0
+llm_docs/20m_100m_data_scaling_plan.md
+llm_docs/20m_100m_runbook.md
 ```
-
-Raw checkpoint-tree differences with exact decoded state are accepted as serialization-byte variability rather than training-state divergence.
-
-## Remote empty-environment recovery result
-
-The bounded final gate executed 35 updates total:
-
-```text
-publisher segment: updates 1-25
-local reference continuation: updates 26-30
-remote-restored continuation: updates 26-30
-```
-
-Final result:
-
-```text
-status: passed_remote_empty_environment_recovery
-authorization: full_306_run_ready_for_explicit_launch
-resume class: exact_remote_empty_environment_recovery
-evidence: /kaggle/working/small-llm-remote-recovery-controller/small-llm-remote-recovery-20260805T073059Z
-```
-
-The source step-25 checkpoint was published privately, restored into an empty destination, and verified. The restored state pointed to block 25 as the next block. Exactly two required train shards were downloaded from Google Drive and matched their immutable byte sizes and SHA-256 identities.
-
-Source versus remote step-25 semantic comparison:
-
-```text
-tensors: 383
-tensor elements: 54,184,616
-scalars: 1,112
-differences: 0
-semantic exact: true
-```
-
-Local versus remote-restored updates 26-30:
-
-```text
-compared numerical values: 1,065
-differing numerical values: 0
-maximum absolute difference: 0.0
-maximum relative difference: 0.0
-numeric trajectory exact: true
-discrete trajectory exact: true
-```
-
-Local versus remote step-30 semantic comparison also had zero differences across the same 383 tensors and 54,184,616 tensor elements.
-
-W&B run identities:
-
-```text
-publisher: 20m-t4-remote-20260805-073105-publisher
-local reference: 20m-t4-remote-20260805-073105-local-reference
-remote restored: 20m-t4-remote-20260805-073105-remote-restored
-project: Small-LLM
-entity observed in Kaggle logs: rocchissimo936-none
-```
-
-## Current readiness verdict
-
-**Dataset gate: passed.**
-
-**Offline, T4, integrated trainer, and numerical-stability gates: passed.**
-
-**Same-T4 repeatability: passed with exact trajectory equality.**
-
-**Actual-process local interruption and resume: passed with exact trajectory and semantic state.**
-
-**Private remote publication and empty-environment recovery: passed with exact trajectory and semantic state.**
-
-**Complete run state: running.** The user has confirmed progress through step 150 of 306 with validation perplexity approximately 576.
-
-**Not yet completed:** final validation, final local checkpoint, final remote publication, W&B finalization, and complete-run acceptance still require direct artifact and log verification.
