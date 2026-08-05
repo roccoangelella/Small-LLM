@@ -1,6 +1,6 @@
 # 20M Model / 100M-Token Data-Scaling Experiment
 
-_Last updated: 2026-08-05 14:52 Europe/Rome_
+_Last updated: 2026-08-05 15:18 Europe/Rome_
 
 ## Decision
 
@@ -56,6 +56,7 @@ minimum LR ratio: 0.1
 The 100M finite dataset remains an immutable schema-v2 shard set. It is not converted into one monolithic training file and it is not streamed from Google Drive or Hugging Face during optimizer steps.
 
 ```text
+run ID: 20m-100m-dataset-001
 context length: 2,048
 stored tokens per sequence: 2,049
 sequences per optimizer block: 16
@@ -67,13 +68,22 @@ passes: 1
 implicit wraparound: forbidden
 ```
 
-The source-production durable checkpoint cadence is scaled by 10x from the 10M build so the 100M producer retains the same approximate number of durable production boundaries. The immutable shard size stays at 8 MiB.
+The source-production durable checkpoint cadence is scaled by 10x from the 10M build so the 100M producer retains approximately the same number of durable production boundaries. The immutable shard size remains 8 MiB.
 
-For Kaggle training, the complete approximately-200-MB uint16 dataset is attached and mounted once under `/kaggle/input`. The trainer reads local immutable shards sequentially. Google Drive remains the durable mirror and recovery source, but ordinary training does not download a shard over the network on every use.
+For Kaggle training, the complete approximately-200-MB uint16 dataset is attached and mounted once under `/kaggle/input`. The trainer reads local immutable shards sequentially. Google Drive remains the durable mirror and recovery source, but ordinary optimizer steps perform no network shard downloads.
+
+The single producer source of truth is:
+
+```text
+dataset/qualification_100m.py
+dataset/qualification_100m_report.py
+```
+
+Superseded duplicate 100M profile modules were removed.
 
 ## Increased microbatch execution
 
-The effective optimizer batch is unchanged at one 16-sequence prepared block, or approximately 32,768 target tokens per full update.
+The effective optimizer batch is unchanged at one 16-sequence prepared block, or 32,768 target tokens per full update.
 
 The candidate execution grouping is:
 
@@ -85,16 +95,17 @@ optimizer updates per block: 1
 
 This changes only how the same block is split into forward/backward calls. It does not change the number of sequences or target tokens contributing to an optimizer update.
 
-Because FP16 accumulation order and GPU kernels can differ with microbatch size, microbatch 4 is not silently assumed equivalent. The single Kaggle launcher must first run a fixed-prefix A/B qualification using microbatch 1 and microbatch 4 from the same seed and initialization. The full 100M run may start only when microbatch 4:
+Because FP16 accumulation order and GPU kernels can differ with microbatch size, microbatch 4 is not silently assumed equivalent. On the first session, the launcher runs microbatch 1 and microbatch 4 from the same seed, initialization, schedule, and first eight blocks. Microbatch 4 is accepted only when:
 
-- consumes the same ordered blocks and target-token counts;
-- produces finite losses and gradients;
-- records zero exhausted overflow retries;
-- remains within the T4 memory-headroom gate;
-- stays within a predeclared loss/gradient agreement tolerance;
-- provides a meaningful throughput improvement over microbatch 1.
+- block IDs, target-token counts, consumed-token cursors, and learning rates match;
+- all losses, gradients, scaler values, and throughput values are finite;
+- no FP16 overflow or retry occurs;
+- median throughput is at least 5% higher after discarding two warm-up updates;
+- maximum per-step loss difference is at most 0.05;
+- maximum relative gradient-norm difference is at most 5%;
+- peak reserved memory is at most 90% of the T4's physical memory.
 
-If this gate fails, the launcher fails closed rather than silently reverting or changing another training variable.
+If the gate fails, the launcher fails closed. It does not silently fall back, alter the effective optimizer batch, or change another hyperparameter.
 
 ## Schedule and persistence cadence
 
@@ -107,7 +118,7 @@ stable updates: all remaining updates
 minimum LR ratio: 0.1
 ```
 
-To preserve approximately the same number of operational observations and checkpoint trees across a run that is about 10x longer, cadence is scaled by 10x in optimizer steps:
+Operational cadence is scaled by approximately 10x in optimizer steps:
 
 ```text
 local checkpoint: every 250 successful updates
@@ -115,27 +126,74 @@ validation: every 500 successful updates
 remote checkpoint publication: every 500 successful updates
 ```
 
-A final validation, local checkpoint, and verified remote publication remain mandatory at the actual last update even when it is not a cadence boundary.
+A final validation, local checkpoint, and verified remote publication remain mandatory at the actual end of every bounded Kaggle segment and at the final update.
 
-This is an operational scaling rule, not a change to model optimization. It keeps storage and recurring overhead comparable to the 10M qualification while retaining observations at similar fractions of training progress.
+## Bounded Kaggle segments and exact resume
 
-## Launch and evidence contract
+A 100M-token run can exceed one Kaggle notebook session. The launcher therefore does not rely on an abrupt notebook timeout.
 
-The next implementation must expose one fail-closed Kaggle entry point that:
+```text
+maximum additional updates per session: 749
+cross-session authority: private Hugging Face latest pointer
+attached data source on every session: the same immutable Kaggle shard dataset
+W&B run ID: 20m-100m-data-001
+```
 
-1. requires an NVIDIA T4 and the same secret surfaces used by the accepted run;
-2. creates a clean detached worktree at one frozen launch commit;
-3. finds the attached 100M dataset and rejects every nonmatching profile;
-4. performs a literal full dataset scan;
-5. verifies the Drive manifest against every local shard identity;
-6. regenerates the exact one-pass block and WSD plan;
-7. runs the microbatch-1 versus microbatch-4 gate;
-8. starts the full microbatch-4 run from a fresh initialization only after the gate passes;
-9. records W&B telemetry, local checkpoints, validation, and private remote publication;
-10. writes durable logs, exit codes, hashes, the exact trainer command, and a final summary under `/kaggle/working`;
-11. fails closed on identity, numerical, memory, overflow, block-order, checkpoint, validation, or publication errors.
+Each invocation:
 
-The microbatch probes are diagnostics only. Their checkpoints are isolated and must never be reused as the full-run initialization.
+1. verifies the complete attached dataset and regenerates the same exact one-pass plan;
+2. checks for the private remote `latest.json` pointer for run `20m-100m-dataset-001`;
+3. starts fresh only when that pointer is absent;
+4. otherwise downloads and verifies the published checkpoint tree;
+5. requires the checkpoint's embedded Drive manifest to hash-identically match the attached dataset's Drive manifest;
+6. requires checkpoint step `N` to correspond to `last_consumed_block_id = N - 1`;
+7. restores model, optimizer, scheduler, scaler, RNG, and dataset cursor;
+8. resumes the same W&B run with `wandb-resume=must`;
+9. executes at most 749 additional updates;
+10. exits normally only after a final verified remote publication.
+
+The segment planner avoids ending a non-final segment exactly on a 500-step periodic-publication boundary so the trainer emits an explicit `final=true` remote-publication event.
+
+Segmenting is an operational accommodation, not a scientific variable. Exact local and remote interruption/resume were already qualified on the 20M recipe, and the effective optimizer update remains one complete 16-sequence block.
+
+## Single Kaggle entry point
+
+The official operator command is:
+
+```text
+%cd /kaggle/working/Small-LLM
+!git pull --ff-only
+!python kaggle/run_20m_100m.py
+```
+
+Run the same command again after each successful bounded segment. The entry point pins the implementation commit and rejects a caller-supplied launch-commit override.
+
+Required Kaggle configuration remains:
+
+```text
+accelerator: NVIDIA T4
+internet: enabled
+attached input: completed 20m-100m-dataset-001 shard dataset
+secrets: WANDB_API_KEY, HF_TOKEN, SMALL_LLM_HF_REPO_ID
+optional secret: WANDB_ENTITY
+```
+
+The implementation records full-scan evidence, the exact plan, microbatch gate results, restore evidence, commands, logs, exit codes, hashes, segment boundaries, and the final summary under `/kaggle/working`.
+
+## Test coverage
+
+Offline tests cover:
+
+- the exact 100M producer envelope and 20M-source-token producer checkpoint cadence;
+- exact WSD derivation and partial-final-block handling;
+- Drive-manifest identity binding;
+- segment planning and avoidance of periodic-publication endpoints;
+- resume CLI arguments and stable W&B identity;
+- microbatch acceptance and rejection thresholds;
+- dataset-profile rejection when the producer cadence is wrong;
+- explicit final remote-publication evidence.
+
+The pure launcher tests were additionally executed locally with all five tested behaviors passing. Full T4 and live-remote behavior remains a launch-time qualification because those surfaces require Kaggle, W&B, Hugging Face, and the completed attached dataset.
 
 ## Interpretation boundary
 
