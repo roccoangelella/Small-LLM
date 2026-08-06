@@ -9,13 +9,13 @@ last_reviewed: 2026-08-06
 
 The approximately-20M-parameter GDN-2 hybrid remains authorized for one pass over the fixed approximately-100M-token dataset.
 
-The corrected run passed the former validation-memory boundary and completed optimizer update 1,138. The next forward pass failed because the correctness-first fixed-size chunkwise GDN-2 backend produced a non-finite intermediate under strong but valid decay. The preceding loss, gradient, throughput, memory, and FP16-overflow telemetry did not show model-wide divergence.
+The adaptive GDN-2 repair passed the former update-1,138 failure boundary. The resumed run then completed optimizer update 1,497 and failed on the next prepared block because the trainer allowed only three FP16 overflow retries. Four scaled-gradient overflows caused termination immediately after the scaler reduced its likely loss scale from 2,048 to 128; scale 128 was never attempted.
 
-The repository now contains an adaptive numerical repair. Assembled GDN layers retain configured maximum chunk size 32 but bisect only chunks whose cumulative decay span is unsafe, retrying down to one token if necessary. Model parameters, checkpoint keys, optimizer routing, and serialized configurations remain unchanged.
+This incident is classified as premature dynamic-loss-scale calibration termination, not a repeat of the GDN-2 forward non-finite failure. The last successful loss, gradient, throughput, and memory telemetry remained ordinary for this run.
 
-The next action is to pull current `main` and rerun the normal Kaggle entry point. The launcher will read the actual verified remote pointer, restore it when present, and resume the same W&B run. The expected latest durable boundary from the observed cadence is step 1,000, but this file does not substitute that expectation for pointer verification.
+The repository now derives an execution-time retry allowance from the restored GradScaler scale and backoff factor. The configured retry count remains serialized and acts as a minimum, preserving checkpoint identity. A block may retry until it receives a final attempt at loss scale 1.0. If gradients remain non-finite there, the trainer still fails closed with block and scale diagnostics. Non-finite forward loss fails immediately because backward loss scaling cannot repair it.
 
-W&B `resume="must"` reconnects the existing run at its last server-side history step; it does not rewind the failed tail. Existing telemetry through update 1,138 remains, and replayed application steps after the restored checkpoint append to the same run. The model/data resume is exact, but the W&B history is not an as-if-nothing-happened truncation.
+The next action is to pull current `main` and rerun the normal Kaggle entry point. The launcher reads and verifies the actual remote checkpoint pointer. The expected latest durable boundary is step 1,250 because verified publication occurs every 250 successful updates, but pointer verification remains authoritative.
 
 ```text
 model parameters: 20,637,592
@@ -28,16 +28,20 @@ experiment: one pass over the fixed approximately-100M-token dataset
 training microbatch: 4 sequences
 validation microbatch: 1 sequence
 configured maximum GDN chunk: 32 tokens
-adaptive decay-span limit: 60
+adaptive GDN decay-span limit: 60
+configured minimum FP16 overflow retries: 3
+adaptive FP16 calibration floor: loss scale 1.0
 validation cadence: 250 updates
 local checkpoint cadence: 250 updates
 verified remote publication cadence: 250 updates
 repository default session cap: none within the finite plan
 W&B run ID: 20m-100m-data-004
-pinned recovery worktree: 38f0d5ae621d2a1bb5a0dd99c3cee17d98bbb0e1
+pinned recovery worktree: 8e3cd9cb149facc5fa28e8108a70304c1f8c1c15
 ```
 
-This file does not guess live step or token progress. Read the active W&B run and verified remote checkpoint pointer for exact progress after launch.
+W&B reconnects to the same fixed run and does not erase failed or replayed history tails. Model/data resume remains exact from the verified checkpoint.
+
+This file does not guess live progress after launch. Read the active W&B run and verified remote checkpoint pointer for exact state.
 
 ## Accepted anchor
 
@@ -56,7 +60,8 @@ FP16 overflow events: 0
 - Continue the main GDN-2 hybrid through the 20M-model data-scaling stage.
 - Do not run the matched all-attention or other mixer baseline yet.
 - Revisit architecture comparisons when larger model versions are reached.
-- Use adaptive numerical subchunking rather than globally shrinking the configured GDN chunk or clamping decay.
+- Use adaptive numerical GDN subchunking rather than globally shrinking the configured chunk or clamping decay.
+- Let FP16 loss scaling calibrate to scale 1.0 before failing an otherwise atomic block.
 - Use the permanent stratified `eval_core_v1` fast/full suites and retain the existing prompt answers in the unified evaluator.
 - Attempt the complete remaining 100M-token one-pass schedule in one Kaggle invocation by default.
 - Validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful updates.
@@ -77,6 +82,9 @@ The ordinary held-out training validation path uses `torch.inference_mode()` and
 ## Current source of truth
 
 - Experiment procedure: [`../runbooks/20m_100m_runbook.md`](../runbooks/20m_100m_runbook.md)
+- FP16 incident evidence: [`../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md`](../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md)
+- FP16 calibration decision: [`../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md`](../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md)
+- FP16 execution contract: [`../reference/fp16_overflow_recovery.md`](../reference/fp16_overflow_recovery.md)
 - GDN-2 incident evidence: [`../evidence/20m_100m/gdn2_nonfinite_step_1138_2026-08-06.md`](../evidence/20m_100m/gdn2_nonfinite_step_1138_2026-08-06.md)
 - Adaptive GDN-2 decision: [`../decisions/0005-adapt-gdn2-chunks-to-decay-span.md`](../decisions/0005-adapt-gdn2-chunks-to-decay-span.md)
 - Validation OOM evidence: [`../evidence/20m_100m/validation_oom_step_500_2026-08-06.md`](../evidence/20m_100m/validation_oom_step_500_2026-08-06.md)
