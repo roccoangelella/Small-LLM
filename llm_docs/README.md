@@ -12,6 +12,7 @@ The files in this directory are the sole source of truth for the Small LLM proje
 - [`training_and_evaluation.md`](training_and_evaluation.md): trainer constraints, experiment ladder, joint checkpoint contract, instrumentation, and unresolved training/evaluation choices.
 - [`decisions_and_ablations.md`](decisions_and_ablations.md): frozen defaults, planned controlled ablations, replaced decisions, and decision standards.
 - [`eval_core_v1_design.md`](eval_core_v1_design.md): frozen stratified holdout size, leakage contract, intrinsic scorecard, prompt-suite integration, and architecture-comparison timing.
+- [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md): installed build, verification, fast-suite, and full-suite commands plus result and operational contracts.
 - [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md): repository-native qualitative generation procedure for verified remote base checkpoints.
 - [`20m_post_pretraining_checkpoint_selection.md`](20m_post_pretraining_checkpoint_selection.md): legacy final-checkpoint selection rule for the completed 20M run.
 - [`20m_post_pretraining_qualitative_results.md`](20m_post_pretraining_qualitative_results.md): first prompt-suite outputs, measured summary, interpretation, and accepted smoke-scale learning-signal verdict.
