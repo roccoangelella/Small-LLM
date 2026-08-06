@@ -16,7 +16,8 @@ from torch import Tensor, nn
 
 from .config import ModelConfig
 from .components import GatedMultiheadAttention, RMSNorm, SwiGLU, TiedEmbedding
-from .gdn2 import GDN2Cache, GatedDeltaNet2
+from .gdn2 import GDN2Cache
+from .gdn2_stable import StableGatedDeltaNet2 as GatedDeltaNet2
 
 
 def _layer_kinds(config: ModelConfig) -> tuple[str, ...]:
