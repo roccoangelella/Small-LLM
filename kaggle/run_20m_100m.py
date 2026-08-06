@@ -19,7 +19,7 @@ if any(
 
 os.environ["SMALL_LLM_100M_LAUNCH_COMMIT"] = PINNED_LAUNCH_COMMIT
 os.environ["WANDB_INIT_TIMEOUT"] = WANDB_INIT_TIMEOUT_SECONDS
-os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import run_20m_one_click as common  # noqa: E402
 from run_20m_100m_console import install_common_console, install_experiment_console  # noqa: E402
