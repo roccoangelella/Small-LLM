@@ -68,7 +68,7 @@ def evaluate_batches(
                 if not torch.isfinite(loss):
                     raise FloatingPointError("non-finite validation loss")
                 total_loss += float(loss.float())
-                total_tokens += microbatch_labels.numel()
+                total_tokens += int(microbatch_labels.ne(-100).sum().item())
                 del logits, loss
 
             del input_ids, labels
@@ -81,7 +81,7 @@ def evaluate_batches(
             torch.cuda.empty_cache()
 
     if total_tokens == 0:
-        raise RuntimeError("validation source yielded no tokens")
+        raise RuntimeError("validation source yielded no active targets")
     mean = total_loss / total_tokens
     if engine.best_validation_loss is None or mean < engine.best_validation_loss:
         engine.best_validation_loss = mean
