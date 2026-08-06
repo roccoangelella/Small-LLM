@@ -13,7 +13,9 @@ The corrected run passed the former validation-memory boundary and completed opt
 
 The repository now contains an adaptive numerical repair. Assembled GDN layers retain configured maximum chunk size 32 but bisect only chunks whose cumulative decay span is unsafe, retrying down to one token if necessary. Model parameters, checkpoint keys, optimizer routing, and serialized configurations remain unchanged.
 
-The next action is to rerun the normal Kaggle entry point from current `main`. The launcher will read the actual verified remote pointer, restore it when present, and resume the same W&B run. The expected latest durable boundary from the observed cadence is step 1,000, but this file does not substitute that expectation for pointer verification.
+The next action is to pull current `main` and rerun the normal Kaggle entry point. The launcher will read the actual verified remote pointer, restore it when present, and resume the same W&B run. The expected latest durable boundary from the observed cadence is step 1,000, but this file does not substitute that expectation for pointer verification.
+
+W&B `resume="must"` reconnects the existing run at its last server-side history step; it does not rewind the failed tail. Existing telemetry through update 1,138 remains, and replayed application steps after the restored checkpoint append to the same run. The model/data resume is exact, but the W&B history is not an as-if-nothing-happened truncation.
 
 ```text
 model parameters: 20,637,592
