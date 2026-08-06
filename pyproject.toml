@@ -19,13 +19,14 @@ post-training = [
 [project.scripts]
 small-llm-eval-data = "dataset.eval_core:main"
 small-llm-eval = "trainer.eval_suite:main"
+small-llm-sft-data = "post_training.sft.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["dataset*", "model*", "trainer*"]
+include = ["dataset*", "model*", "trainer*", "post_training*"]
 exclude = ["tests*"]
 
 [tool.uv]
