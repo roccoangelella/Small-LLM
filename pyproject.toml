@@ -16,6 +16,10 @@ post-training = [
     "tiktoken>=0.9.0",
 ]
 
+[project.scripts]
+small-llm-eval-data = "dataset.eval_core:main"
+small-llm-eval = "trainer.eval_suite:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
