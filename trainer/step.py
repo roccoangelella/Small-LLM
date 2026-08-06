@@ -49,6 +49,38 @@ def _optimizer_step_statistics(optimizer: Optimizer) -> dict[str, object]:
     return dict(value)
 
 
+def _fp16_overflow_retry_limit(scaler: object, configured_retries: int) -> int:
+    """Allow enough skipped attempts to calibrate the scale down to one.
+
+    ``GradScaler`` intentionally skips an optimizer update when scaled
+    gradients contain infs or NaNs, then multiplies its scale by the backoff
+    factor. A fixed retry count can fail before the scaler reaches a usable
+    value. The configured count remains a minimum, while the derived count
+    permits a final attempt at loss scale 1.0.
+    """
+
+    if isinstance(configured_retries, bool) or not isinstance(configured_retries, int):
+        raise TypeError("configured FP16 overflow retries must be an integer")
+    if configured_retries < 0:
+        raise ValueError("configured FP16 overflow retries must be non-negative")
+    get_scale = getattr(scaler, "get_scale", None)
+    get_backoff = getattr(scaler, "get_backoff_factor", None)
+    if not callable(get_scale) or not callable(get_backoff):
+        return configured_retries
+    initial_scale = float(get_scale())
+    backoff = float(get_backoff())
+    if not math.isfinite(initial_scale) or initial_scale <= 0:
+        raise FloatingPointError(f"invalid FP16 loss scale: {initial_scale!r}")
+    if not math.isfinite(backoff) or not 0.0 < backoff < 1.0:
+        raise FloatingPointError(f"invalid FP16 scale backoff factor: {backoff!r}")
+    if initial_scale <= 1.0:
+        return configured_retries
+    reductions_to_one = math.ceil(
+        math.log(1.0 / initial_scale) / math.log(backoff)
+    )
+    return max(configured_retries, reductions_to_one)
+
+
 def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     if batch.split != "train" or batch.sequence_count <= 0:
         raise ValueError("training requires a non-empty train-split block")
@@ -56,7 +88,15 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     if engine.device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(engine.device)
     retries, loss_value, grad_value, lr = 0, math.nan, math.nan, math.nan
-    scaler_scale = float(engine.scaler.get_scale())
+    initial_scaler_scale = float(engine.scaler.get_scale())
+    scaler_scale = initial_scaler_scale
+    overflow_retry_limit = (
+        _fp16_overflow_retry_limit(
+            engine.scaler, engine.config.max_overflow_retries
+        )
+        if engine.scaler.is_enabled()
+        else engine.config.max_overflow_retries
+    )
     role_gradient_norms: dict[str, float] = {}
     update_statistics: dict[str, object] = {}
     gradient_clipped = False
@@ -67,7 +107,6 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
         total_loss = torch.zeros((), dtype=torch.float32, device=engine.device)
         input_ids = batch.input_ids.to(device=engine.device, non_blocking=True)
         labels = batch.labels.to(device=engine.device, non_blocking=True)
-        loss_overflow = False
         size = engine.config.microbatch_size
         for start in range(0, batch.sequence_count, size):
             stop = min(batch.sequence_count, start + size)
@@ -81,21 +120,13 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
                     reduction="sum",
                 )
             if not torch.isfinite(loss_sum):
-                if not engine.scaler.is_enabled():
-                    raise FloatingPointError("non-finite training loss")
-                retries, engine.overflow_events = retries + 1, engine.overflow_events + 1
-                if retries > engine.config.max_overflow_retries:
-                    raise FloatingPointError(
-                        "FP16 loss repeatedly overflowed; block remains unacknowledged"
-                    )
-                engine.scaler.update(max(engine.scaler.get_scale() / 2.0, 1.0))
-                loss_overflow = True
-                break
+                engine.optimizer.zero_grad(set_to_none=True)
+                raise FloatingPointError(
+                    "non-finite FP16 training loss; loss-scale reduction cannot "
+                    f"repair a forward loss (block={batch.block_id})"
+                )
             total_loss += loss_sum.detach().float()
             engine.scaler.scale(loss_sum / batch.target_token_count).backward()
-        if loss_overflow:
-            engine.optimizer.zero_grad(set_to_none=True)
-            continue
 
         engine.scaler.unscale_(engine.optimizer)
         role_gradient_norms = _optimizer_gradient_norms(engine.optimizer)
@@ -107,19 +138,24 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
             raise FloatingPointError("non-finite gradient norm")
         grad_value = float(gradient_norm.detach())
         gradient_clipped = finite_gradient and grad_value > float(engine.config.max_grad_norm)
-        scale_before = engine.scaler.get_scale()
+        scale_before = float(engine.scaler.get_scale())
         _clear_optimizer_step_statistics(engine.optimizer)
         engine.scaler.step(engine.optimizer)
         engine.scaler.update()
         scaler_scale = float(engine.scaler.get_scale())
         if engine.scaler.is_enabled() and (
-            not finite_gradient or engine.scaler.get_scale() < scale_before
+            not finite_gradient or scaler_scale < scale_before
         ):
             retries, engine.overflow_events = retries + 1, engine.overflow_events + 1
-            if retries > engine.config.max_overflow_retries:
+            if retries > overflow_retry_limit:
                 engine.optimizer.zero_grad(set_to_none=True)
                 raise FloatingPointError(
-                    "FP16 optimizer step repeatedly overflowed; block remains unacknowledged"
+                    "FP16 optimizer step remained non-finite after dynamic scale "
+                    "calibration; block remains unacknowledged "
+                    f"(block={batch.block_id}, attempts={retries}, "
+                    f"initial_scale={initial_scaler_scale:g}, "
+                    f"current_scale={scaler_scale:g}, "
+                    f"retry_limit={overflow_retry_limit})"
                 )
             continue
         update_statistics = _optimizer_step_statistics(engine.optimizer)
