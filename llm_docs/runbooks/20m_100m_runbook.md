@@ -1,8 +1,8 @@
 # 20M Model / 100M-Token Experiment Runbook
 
-_Last updated: 2026-08-05 15:34 Europe/Rome_
+_Last updated: 2026-08-06 10:25 Europe/Rome_
 
-This runbook uses one VPS command to build, verify, and privately publish the fixed 100M-token dataset, followed by one repeated Kaggle command for segmented exact training.
+This runbook uses one VPS command to build, verify, and privately publish the fixed 100M-token dataset, followed by one Kaggle command that attempts the complete remaining finite one-pass schedule. Verified remote checkpoints preserve exact resume when Kaggle interrupts the invocation.
 
 ## Part A — Configure the VPS once
 
@@ -93,7 +93,7 @@ Successful publication requires:
 
 Rerun the same command after an interruption. The producer and publisher are idempotent. Use `--force-upload` only when an intentional new Kaggle version is required.
 
-## Part C — Configure each Kaggle account
+## Part C — Configure the Kaggle notebook
 
 Notebook settings:
 
@@ -118,7 +118,7 @@ Optional:
 WANDB_ENTITY
 ```
 
-Every account must attach the same private Kaggle Dataset version. Training reads the attached immutable shards locally; it does not stream the dataset from Drive or Hugging Face.
+Attach the exact private Kaggle Dataset version used by the qualification plan. Training reads immutable local shards; it does not stream the dataset from Drive or Hugging Face.
 
 ## Part D — Run or resume training
 
@@ -129,19 +129,36 @@ git pull --ff-only
 python kaggle/run_20m_100m.py
 ```
 
-The wrapper pins the evidence-producing worktree to:
+Do not pass `--launch-commit`. The wrapper pins a verified worktree commit containing the bounded-validation hotfix.
+
+Operational defaults:
 
 ```text
-43190cb72443a2de290dc8e6f2c54f29d8dff501
+training microbatch: 4 sequences
+validation microbatch: 1 sequence
+local checkpoint cadence: 250 updates
+held-out validation cadence: 250 updates
+verified remote publication cadence: 250 updates
+W&B run ID: 20m-100m-data-004
+allocator safeguard: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+repository default session cap: none within the finite qualification plan
 ```
 
-Do not pass `--launch-commit`.
+The first fresh invocation performs the microbatch-1 versus microbatch-4 T4 training gate and starts from seed 17 only if microbatch 4 passes. The launcher then requests every remaining update in the exact finite one-pass plan rather than stopping at update 749.
 
-The first invocation performs the microbatch-1 versus microbatch-4 T4 gate and starts from seed 17 only if microbatch 4 passes. Each invocation executes at most 749 additional optimizer updates and requires an explicit final remote checkpoint.
+Validation is independent of the training microbatch. It runs under `torch.inference_mode()` one sequence at a time, releases optimizer gradients before evaluation, and clears unused CUDA allocator cache before and after evaluation. Do not increase the validation microbatch until a controlled T4 memory probe demonstrates safe headroom.
 
-After a successful segment, run the identical command on the next Kaggle account. It restores the verified private Hugging Face checkpoint, checks the attached Drive-manifest identity, and resumes the same model, optimizer, scheduler, scaler, RNG, data cursor, and W&B run.
+At every 250-update boundary, the trainer runs held-out validation, writes the local joint checkpoint, and publishes a verified remote checkpoint. If Kaggle interrupts the run, rerun the identical command. It restores the latest verified private Hugging Face checkpoint, checks the attached Drive-manifest identity, and resumes the same model, optimizer, scheduler, scaler, RNG, data cursor, and finite schedule.
 
-Continue until:
+The optional underlying flag remains available for an intentionally bounded diagnostic:
+
+```bash
+python kaggle/run_20m_100m.py --max-steps-this-session 250
+```
+
+Do not use that override for the normal corrected run.
+
+Completion requires:
 
 ```text
 status: completed
@@ -167,6 +184,24 @@ Kaggle training:
 /kaggle/working/small_llm_20m_100m_data_scaling_summary.json
 ```
 
+Incident record:
+
+```text
+llm_docs/evidence/20m_100m/validation_oom_step_500_2026-08-06.md
+```
+
+## First corrected-run checks
+
+At update 250 require:
+
+```text
+validation completed without CUDA OOM
+local checkpoint: step-00000250
+verified remote publication: step-00000250
+```
+
+At update 500 require the same three events for `step-00000500`. Passing update 749 without a launcher exit confirms that the old artificial session stop is no longer active.
+
 ## Stop conditions
 
 Do not proceed if:
@@ -176,8 +211,10 @@ Do not proceed if:
 - the uploaded tree differs from the staged tree;
 - Kaggle training finds zero or multiple matching datasets;
 - microbatch 4 fails throughput, numerical, overflow, or memory gates;
+- validation still approaches unsafe T4 memory or emits a CUDA OOM;
 - a restored checkpoint disagrees with the attached dataset;
-- W&B refuses exact resume;
-- a segment exits without a verified final remote publication.
+- W&B refuses the configured run identity;
+- a scheduled boundary exits without a verified remote publication;
+- the trainer attempts to consume beyond the exact finite one-pass plan.
 
 A failed gate is evidence to review, not permission to silently change the experiment.
