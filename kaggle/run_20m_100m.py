@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import sys
 
-PINNED_LAUNCH_COMMIT = "e7a7d333c7720a7cc2b0f333c21416051aae9a04"
+PINNED_LAUNCH_COMMIT = "38f0d5ae621d2a1bb5a0dd99c3cee17d98bbb0e1"
 WANDB_INIT_TIMEOUT_SECONDS = "30"
 WANDB_RUN_ID = "20m-100m-data-004"
 DURABILITY_EVERY_STEPS = 250
