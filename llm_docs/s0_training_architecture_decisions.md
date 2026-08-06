@@ -4,7 +4,7 @@ _Last updated: 2026-08-06 Europe/Rome_
 
 ## Scope
 
-This record freezes the user's decisions for the first S0 supervised fine-tuning experiment on the approximately-20M-parameter checkpoint pretrained on approximately 100M tokens. It also records the remaining open questions and the current research-backed recommendations without silently treating recommendations as approved decisions.
+This record freezes the user's decisions for the first S0 supervised fine-tuning experiment on the approximately-20M-parameter checkpoint pretrained on approximately 100M tokens. Recommendations are not silently treated as decisions. Superseded proposals are retained where they explain the current design.
 
 ## Frozen model and update scope
 
@@ -41,19 +41,74 @@ approximately 32,768 loss-bearing target tokens per optimizer update
 
 This is defined by active supervised targets, not by number of conversations or total serialized tokens. Chat examples contribute assistant-response and supervised end-of-turn targets; replay examples contribute ordinary next-token targets. Variable-length microbatches accumulate summed loss until the complete atomic block is processed, then divide once by the exact number of active targets and perform one optimizer update.
 
+## What `assistant` means
+
+`assistant` is a role in the logical conversation schema. It identifies text authored by the model side of the dialogue. It is not a separate network, head, loss module, or literal special token.
+
+For S0, an example record conceptually contains:
+
+```text
+system: optional instructions governing the dialogue
+user: input supplied to the model
+assistant: the desired model response
+```
+
+The complete formatted sequence is processed so the model can condition on the system and user text. The baseline SFT loss is applied only to the assistant message content and the end-of-turn marker immediately following that content. The literal role label `Assistant:\n` is context and remains masked.
+
+Example:
+
+```text
+<|endoftext|>User:
+What is the capital of France?
+
+Assistant:
+Paris is the capital of France.<|endoftext|>
+```
+
+Loss policy:
+
+```text
+<|endoftext|>                         masked
+User:\n                               masked
+What is the capital of France?       masked
+Assistant:\n                          masked
+Paris is the capital of France.      loss-bearing
+<|endoftext|>                         loss-bearing
+```
+
+In a multi-turn conversation, every assistant response and its following end marker are supervised. At inference, the prompt ends after `Assistant:\n`; the model then generates the assistant content until `<|endoftext|>`.
+
+In S0, assistant responses come from the retained open dataset. In later stages, the same schema can hold teacher-generated or distilled responses without changing the model architecture.
+
 ## Frozen loss accounting
 
-- Ordinary baseline objective remains token-level cross-entropy unless the user separately approves Dynamic Fine-Tuning.
+- Use ordinary masked token-level cross-entropy as the S0 baseline.
 - Average the loss only over active loss-bearing targets.
-- User, system, role-label, padding, and other masked positions do not enter the denominator.
-- Chat assistant targets have weight `1.0`.
-- ClimbMix replay targets have weight `1.0`.
-- Prompt-token loss weight is provisionally `0.0`; the final prompt-loss decision remains research-informed but not separately frozen by this record.
+- User, system, role-label, padding, and other masked positions do not enter the numerator or denominator.
+- Assistant-content targets have weight `1.0`.
+- The end-of-turn `<|endoftext|>` following every assistant response has weight `1.0`.
+- ClimbMix replay targets have weight `1.0` and use the ordinary next-token objective.
+- Prompt-token loss weight is frozen at `0.0` for S0.
+
+The implementation must keep target weights configurable, but changing them creates a new objective and requires a separately recorded experiment.
+
+## Deferred improvement: Dynamic Fine-Tuning
+
+Dynamic Fine-Tuning, or DFT, reweights each supervised token's cross-entropy using the model's detached probability for that target. It suppresses gradients from targets the current model considers extremely improbable and has reported benefits primarily in reasoning, code, and heterogeneous teacher-trajectory settings.
+
+DFT is not the S0 baseline. The user decided:
+
+```text
+S0: ordinary masked cross-entropy
+larger future SFTs: retain DFT as an optional controlled improvement
+```
+
+The loss interface should therefore support future objective selection without changing dataset serialization, checkpoint lineage, or the ordinary cross-entropy implementation. A future DFT comparison must start from the same parent checkpoint and hold data order, optimizer, schedule, target budget, and evaluation fixed.
 
 ## Frozen data mixture and ordering
 
 - Keep the 85% instruction / 15% ClimbMix replay target-token mixture.
-- The implementation must expose these shares as configuration values for future experiments and larger models.
+- Expose these shares as configuration values; do not hard-code them for future larger models.
 - Within instruction data, use the previously proposed source-level target-token shares unless superseded by the pinned-data audit:
   - 75% `smol-magpie-ultra-short`
   - 10% `smol-contraints`
@@ -62,14 +117,69 @@ This is defined by active supervised targets, not by number of conversations or 
 - Randomize records deterministically without replacement while preserving the target-token source mixture across atomic blocks and evaluation horizons.
 - The schedule is source-stratified by target-token deficit, not semantically classified by a new TF-IDF capability model.
 
+Randomness must not allow long source streaks that materially change the training distribution over time. The builder should independently shuffle each source with the frozen seed and choose records while tracking each source's deficit relative to its target-token share.
+
+## Frozen chat serialization
+
+S0 does not add vocabulary tokens. It reuses GPT-2 token `50256`, rendered as `<|endoftext|>`, as the beginning boundary and the assistant end-of-turn/stop marker.
+
+With a system message:
+
+```text
+<|endoftext|>System:
+{system message}
+
+User:
+{user message}
+
+Assistant:
+{assistant response}<|endoftext|>
+```
+
+Without a system message:
+
+```text
+<|endoftext|>User:
+{user message}
+
+Assistant:
+{assistant response}<|endoftext|>
+```
+
+A later user turn is appended directly after the previous assistant end marker:
+
+```text
+User:
+{next user message}
+
+Assistant:
+{next assistant response}<|endoftext|>
+```
+
+Frozen rules:
+
+- omit the entire system section when absent;
+- use the exact `Assistant:\n` inference prefix;
+- supervise assistant content and the following `<|endoftext|>` for every assistant turn;
+- mask system, user, and role-label text;
+- use no reasoning tags in S0;
+- treat `<|endoftext|>` as the generation stop marker;
+- require byte-exact golden serialization and mask tests;
+- training, validation, and inference must use the same serializer implementation.
+
+This per-assistant-turn stop policy supersedes the earlier provisional idea of supervising only one final EOS for the complete conversation.
+
 ## Frozen length and sequence policy
 
-- Maximum assistant target length: 512 tokens.
+- Maximum assistant target length: 512 tokens, excluding the following end-of-turn marker.
 - Context remains 2,048 input tokens.
 - Use one conversation per sequence for S0 v1.
 - Do not cross-pack unrelated conversations until both causal-attention isolation and explicit GDN recurrent-state resets are implemented and parity-tested.
 - Use right padding only; padding tokens and their targets are masked.
-- Dynamic padding and deterministic length bucketing may reduce wasted compute without changing source membership, atomic-block composition, or target-token accounting.
+- Use dynamic padding to the longest real sequence in each GPU microbatch.
+- Use deterministic length bucketing to reduce padding waste without changing source membership, atomic-block composition, target-token accounting, or the global randomized order.
+
+Length bucketing is an execution optimization, not a curriculum. Records are first assigned to the deterministic atomic optimizer block; only their microbatch arrangement inside that block may be reordered by length.
 
 ## Frozen pass, stopping, checkpointing, and repeatability logic
 
@@ -108,58 +218,30 @@ filter and source configuration
 git commit and model geometry
 ```
 
-## Open: prompt-token loss
+## Configurable post-training utility: base/SFT interpolation
 
-The ordinary S0 recommendation is assistant-only loss plus full next-token loss on replay. Recent Weighted Instruction Tuning research reports that a small prompt-token weight can improve robustness in tested larger-model settings, but this is not yet treated as the dominant default and has not been validated on a lightly pretrained 20M model. The implementation should support a configurable prompt-loss weight, while the baseline remains `0.0` unless the user changes it.
-
-## Open: standard cross-entropy versus Dynamic Fine-Tuning
-
-Dynamic Fine-Tuning multiplies each target token's cross-entropy by the model's detached probability for that target. This suppresses gradients from very low-probability targets and emphasizes medium-confidence targets. Published gains focus primarily on reasoning, code, and other high-entropy trajectories, while the authors explicitly report weaker or inconsistent behavior in some low-entropy and non-reasoning domains. Later work adds compatibility control or anchoring because plain DFT can be sensitive to demonstration-policy mismatch and drift.
-
-Current recommendation, pending user approval:
+The default evaluated checkpoint uses the complete SFT weights:
 
 ```text
-S0 baseline: ordinary masked token cross-entropy
-optional controlled ablation: DFT on the identical base checkpoint, data order, target budget, optimizer, and schedule
+alpha: 1.0
 ```
 
-## Open: exact chat serialization
-
-Recent frontier templates use explicit role boundaries, an explicit end marker for each assistant turn, and separate reasoning/response channels where reasoning is supported. Kimi K3 uses tagged messages plus an end-of-message token; DeepSeek-V4 uses BOS, user and assistant control tokens, EOS after assistant turns, and optional `<think>...</think>` structure.
-
-Because S0 currently avoids vocabulary expansion, the recommended Small LLM equivalent is pending approval:
-
-```text
-<|endoftext|>System:\n{system}\n\nUser:\n{user}\n\nAssistant:\n{assistant}<|endoftext|>
-User:\n{next_user}\n\nAssistant:\n{next_assistant}<|endoftext|>
-```
-
-Recommended rules:
-
-- omit the system section when absent;
-- use the exact `Assistant:\n` generation prefix;
-- supervise assistant content and the following end-of-text token for every assistant turn;
-- mask system, user, and role-label text;
-- use no reasoning tags in S0;
-- preserve byte-exact template tests;
-- treat the end-of-text token as the generation stop marker.
-
-This per-assistant-turn stop policy supersedes the earlier provisional idea of supervising only one final EOS if the user approves it.
-
-## Open: model-selection scorecard
-
-The user explicitly deferred the exact model-selection metric and retention thresholds to a dedicated future discussion. The implementation must still emit the necessary instruction, generation, intrinsic, retention, and operational metrics so that the later decision does not require retraining.
-
-## Optional post-training utility: base/SFT interpolation
-
-Weight interpolation is not yet frozen as the selected output model. It is a cheap evaluation utility:
+The SFT module must make interpolation easy to configure:
 
 ```text
 theta(alpha) = theta_base + alpha * (theta_sft - theta_base)
 ```
 
-`alpha=1` is the full SFT checkpoint; lower values scale back the complete SFT update direction toward the base model. Evaluating a small grid can reveal whether some chat behavior is retained while reducing base-model regression. It requires no additional training and must never replace explicit checkpoint evaluation.
+`alpha=1.0` is the unmodified SFT checkpoint. Lower values move the checkpoint back toward the parent base model and may recover some base capability when full SFT causes measurable regression. Interpolation requires no additional training but every candidate must pass the same full evaluation and identity checks.
+
+Interpolation is an optional evaluation/export utility, not a hidden modification of the training checkpoint. The parent base checkpoint identity and the chosen alpha must be recorded in every interpolated artifact.
 
 ## Early checkpoint selection
 
-Early checkpoint selection means the final selected S0 model need not be the 4M-target endpoint. The run may complete the authorized one-pass horizon while preserving checkpoints at earlier target counts. If chat gains saturate or base retention worsens after an earlier checkpoint, that earlier checkpoint can be selected. This is model selection from a completed trajectory, not necessarily process-level early termination.
+The last 4M-target checkpoint is not automatically the selected S0 model. Preserve checkpoints at the approved intermediate target horizons. If instruction gains saturate or base retention worsens after an earlier checkpoint, that earlier checkpoint may be selected even though the authorized one-pass run completed.
+
+This is model selection from a completed trajectory, not necessarily process-level early termination.
+
+## Deferred: model-selection scorecard
+
+The user explicitly deferred the exact model-selection metric and retention thresholds to a dedicated future discussion. The implementation must still emit all required instruction, generation, intrinsic, retention, and operational metrics so that the later decision does not require retraining.
