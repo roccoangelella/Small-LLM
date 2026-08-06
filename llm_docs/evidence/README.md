@@ -13,4 +13,8 @@ Evidence records completed observations: measured results, verification reports,
 - [`20m/20m_post_pretraining_checkpoint_selection.md`](20m/20m_post_pretraining_checkpoint_selection.md)
 - [`20m/20m_post_pretraining_qualitative_results.md`](20m/20m_post_pretraining_qualitative_results.md)
 
+## Approximately-20M / 100M campaign
+
+- [`20m_100m/validation_oom_step_500_2026-08-06.md`](20m_100m/validation_oom_step_500_2026-08-06.md)
+
 New evidence should use a scale/run-specific subdirectory and include exact model, dataset, tokenizer, code, checkpoint, and evaluation identities.
