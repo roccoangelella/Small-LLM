@@ -28,7 +28,7 @@ local checkpoint cadence: 250 updates
 verified remote publication cadence: 250 updates
 repository default session cap: none within the finite plan
 W&B run ID: 20m-100m-data-004
-pinned hotfix worktree: pending latest documentation repin
+pinned hotfix worktree: e7a7d333c7720a7cc2b0f333c21416051aae9a04
 ```
 
 The user does not require recovery of the failed run's local step-250 checkpoint. The launcher may still restore a compatible verified remote checkpoint when one exists; otherwise it starts the corrected attempt from seed 17.
