@@ -1,29 +1,52 @@
-# Small LLM Technical Documentation
+# Small-LLM project memory
 
-The files in this directory are the sole source of truth for the Small LLM project's goals, decisions, technical contracts, current status, and open questions.
+This directory is the repository's system of record. It is deliberately split by purpose so a human or coding agent can load a small map first and only open the documents relevant to the task.
 
-## Documents
+## Read in this order
 
-- [`project_overview.md`](project_overview.md): project goal, scope, resource assumptions, development strategy, and documentation policy.
-- [`project_status.md`](project_status.md): current phase, completed foundations, operational gates, immediate next steps, and open decisions.
-- [`model_architecture.md`](model_architecture.md): decoder block structure, mixers, normalization, position handling, FFNs, embeddings, and output path.
-- [`model_geometry.md`](model_geometry.md): scalable model family, frozen smoke and approximately 100M configurations, parameter accounting, and hardware-friendly dimensions.
-- [`dataset_and_tokenization.md`](dataset_and_tokenization.md): tokenizer, pinned source, content policy, exact mixture, scheduler, packing, cache, durability, Drive integration, and model-facing data contract.
-- [`training_and_evaluation.md`](training_and_evaluation.md): trainer constraints, experiment ladder, joint checkpoint contract, instrumentation, and unresolved training/evaluation choices.
-- [`decisions_and_ablations.md`](decisions_and_ablations.md): frozen defaults, planned controlled ablations, replaced decisions, and decision standards.
-- [`eval_core_v1_design.md`](eval_core_v1_design.md): frozen stratified holdout size, leakage contract, intrinsic scorecard, prompt-suite integration, and architecture-comparison timing.
-- [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md): installed build, verification, fast-suite, and full-suite commands plus result and operational contracts.
-- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md): repository-native qualitative generation procedure for verified remote base checkpoints.
-- [`20m_post_pretraining_checkpoint_selection.md`](20m_post_pretraining_checkpoint_selection.md): legacy final-checkpoint selection rule for the completed 20M run.
-- [`20m_post_pretraining_qualitative_results.md`](20m_post_pretraining_qualitative_results.md): first prompt-suite outputs, measured summary, interpretation, and accepted smoke-scale learning-signal verdict.
+1. [`current/status.md`](current/status.md) — verified present state.
+2. [`current/roadmap.md`](current/roadmap.md) — next gates and open questions.
+3. [`decisions/README.md`](decisions/README.md) — accepted and superseded ADRs.
+4. The relevant reference document or runbook.
 
-## Maintenance rule
+## Structure
 
-When a project decision or operational fact changes:
+| Directory | Question it answers | Maintenance rule |
+|---|---|---|
+| [`current/`](current/status.md) | What is true now? What happens next? | Short, frequently reviewed, no historical essay. |
+| [`decisions/`](decisions/README.md) | Why did we choose this? | One durable decision per ADR; never silently rewrite accepted rationale. |
+| [`reference/`](reference/README.md) | How is the system defined? | Current technical contracts and detailed system descriptions. |
+| [`runbooks/`](runbooks/README.md) | How do I operate it? | Executable commands, prerequisites, checks, and recovery steps. |
+| [`research/`](research/README.md) | What did we investigate? | Sources, comparisons, assumptions, and conclusions separated from decisions. |
+| [`evidence/`](evidence/README.md) | What actually happened? | Completed results are immutable evidence. |
+| [`archive/`](archive/README.md) | What used to be planned or used? | Superseded material only; commands may no longer exist. |
 
-1. update the relevant topic document;
-2. update [`project_status.md`](project_status.md) when current state, next steps, or open questions change;
-3. update [`decisions_and_ablations.md`](decisions_and_ablations.md) when a default is frozen, replaced, or promoted to an ablation;
-4. state what changed, why it changed, and which benchmark, operational result, or new requirement justified it.
+## Active reference documents
 
-Do not silently overwrite historical reasoning. The documentation should evolve continuously with implementation and experiments.
+- [`reference/project_overview.md`](reference/project_overview.md)
+- [`reference/model_architecture.md`](reference/model_architecture.md)
+- [`reference/model_geometry.md`](reference/model_geometry.md)
+- [`reference/dataset_and_tokenization.md`](reference/dataset_and_tokenization.md)
+- [`reference/training_system.md`](reference/training_system.md)
+- [`reference/optimizer_strategy.md`](reference/optimizer_strategy.md)
+- [`reference/training_and_evaluation.md`](reference/training_and_evaluation.md)
+- [`reference/eval_core_v1_design.md`](reference/eval_core_v1_design.md)
+
+## Active runbooks
+
+- [`runbooks/20m_100m_runbook.md`](runbooks/20m_100m_runbook.md)
+- [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md)
+- [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md)
+
+## Memory-writing contract
+
+- Operational facts go in `current/status.md`.
+- Priorities and gates go in `current/roadmap.md`.
+- A user-approved durable choice creates or supersedes one ADR.
+- Implementation details go in reference docs, not in status or ADRs.
+- Commands go in runbooks, not in reference essays.
+- Measurements go in evidence, not in plans.
+- Superseded plans move to archive.
+- Update documentation in the same commit as the code or operational change it describes.
+
+The rationale for this layout is recorded in [`research/project_memory_research.md`](research/project_memory_research.md) and ADR [`decisions/0001-use-structured-markdown-project-memory.md`](decisions/0001-use-structured-markdown-project-memory.md).
