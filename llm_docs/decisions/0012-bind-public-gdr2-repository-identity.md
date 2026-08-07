@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-07
 supersedes: null
+superseded_by: 0013
 ---
 
 # 0012 — Bind the public Gated Delta Rule-2 repository identity
@@ -37,7 +38,12 @@ The repository name does not change the clean-room/provenance constraints establ
 - The package name remains neutral and suitable for potential future PyPI publication.
 - A future repository rename may be performed manually if desired, but it is not required for the current public release.
 
+## Supersession
+
+ADR 0013 supersedes this repository-name decision after the repository was renamed to `roccoangelella/Gated-Delta-Rule-2`.
+
 ## Links
 
 - [`0011-publish-standalone-gated-delta-rule-package.md`](0011-publish-standalone-gated-delta-rule-package.md)
-- Public repository: https://github.com/roccoangelella/Gated-Delta-Nets-2
+- [`0013-rename-public-gdr2-repository.md`](0013-rename-public-gdr2-repository.md)
+- Historical repository URL: https://github.com/roccoangelella/Gated-Delta-Nets-2
