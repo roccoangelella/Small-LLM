@@ -1,39 +1,52 @@
 # `eval_core_v1` Runbook
 
-_Last updated: 2026-08-06_
+_Last updated: 2026-08-07_
+
+## Normal user-facing workflow
+
+The normal complete evaluator is now self-provisioning. `small-llm-eval` ensures the frozen `eval_core_v1` corpus exists, builds it when absent, verifies it, and only then downloads/verifies the selected checkpoint and evaluates it.
+
+Use `uv run --extra post-training` so the post-training dependencies and console entry point are provisioned as part of the invocation.
+
+Canonical final evaluation example:
+
+```bash
+uv run --extra post-training small-llm-eval full \
+  --repo-id roccoangelella/small-llm-20m-qualification \
+  --run-id 20m-100m-dataset-001 \
+  --pointer best \
+  --output-json artifacts/100m_eval_full_best.json
+```
+
+No `--eval-dir` is required in the normal workflow.
+
+Default eval-corpus cache location:
+
+```text
+Kaggle:              /kaggle/working/eval_core_v1
+other environments: artifacts/eval_core_v1
+environment override: SMALL_LLM_EVAL_DIR
+CLI override:         --eval-dir /custom/path
+```
+
+If the selected directory does not exist, the evaluator builds the frozen corpus. If it already exists, the evaluator reuses it. In both cases verification runs before model evaluation. An invalid existing corpus fails closed and is never silently overwritten.
 
 ## Installed commands
 
-Install the post-training dependencies and console entry points:
-
-```bash
-uv sync --locked --extra post-training
-```
-
-The repository exposes two commands:
+The repository exposes:
 
 ```text
-small-llm-eval-data   build or verify the frozen evaluation corpus
-small-llm-eval        run intrinsic metrics and the existing qualitative prompts
+small-llm-eval        self-provision eval_core_v1 and run the complete evaluator
+small-llm-eval-data   explicit low-level build or verify operations
 ```
 
-The existing module forms remain equivalent:
+The low-level data command remains available for debugging, corpus publication, and explicit reproducibility checks, but it is not a prerequisite for the normal evaluator.
 
-```text
-python -m dataset.eval_core
-python -m trainer.eval_suite
-```
+## What the frozen corpus contains
 
-## Build the frozen corpus
+`eval_core_v1` is generated evaluation data, not source-controlled repository content. Its builder reads the pinned Nemotron-ClimbMix source through deterministic HTTP byte ranges and selects only records assigned to the already-frozen validation hash partition.
 
-The build reads the pinned Nemotron-ClimbMix source through deterministic HTTP byte ranges and selects only records assigned to the already-frozen validation hash partition.
-
-```bash
-small-llm-eval-data build \
-  --output-dir /data/eval_core_v1
-```
-
-The command creates one immutable directory containing:
+A completed corpus contains:
 
 ```text
 manifest.json
@@ -45,35 +58,41 @@ full.records.jsonl
 
 The builder refuses to replace an existing output directory. It writes through a temporary sibling directory and publishes the complete tree only after both suite quotas pass and every file hash is computed.
 
-The fast suite is nested inside the full suite. The production CLI does not expose quota or split overrides; smaller settings exist only as Python injection points for offline tests.
+The fast suite is nested inside the full suite. The production builder does not expose quota or split overrides; smaller settings exist only as Python injection points for offline tests.
 
-`--max-work-items` is a diagnostic source-scan bound. It is not expected to complete a production build unless the frozen quotas happen to pass within that bound.
+## Explicit low-level corpus operations
 
-## Verify the corpus
-
-Run this after copying, downloading, or attaching the evaluation directory:
+Build manually only when needed:
 
 ```bash
-small-llm-eval-data verify \
-  --eval-dir /data/eval_core_v1
+uv run --extra post-training small-llm-eval-data build \
+  --output-dir /custom/path/eval_core_v1
 ```
 
-Verification fails closed on:
+Verify manually:
 
-- manifest self-hash mismatch;
-- source revision, context, cluster, or schema drift;
-- missing files;
-- binary or JSONL hash mismatch;
-- binary geometry mismatch;
-- non-contiguous sequence indexes;
-- invalid document, cluster, or valid-target metadata;
-- aggregate count mismatch;
-- a missed per-cluster document or target-token floor;
-- a fast set that is not a document-level subset of the full set.
+```bash
+uv run --extra post-training small-llm-eval-data verify \
+  --eval-dir /custom/path/eval_core_v1
+```
 
-## Checkpoint environment
+Verification fails closed on manifest/hash drift, source identity drift, missing files, binary/JSONL geometry mismatch, non-contiguous sequence indexes, invalid metadata, aggregate-count mismatch, missed per-cluster floors, or a fast set that is not a document-level subset of the full set.
 
-The complete evaluator reuses the existing verified private-Hugging-Face checkpoint flow and its environment variables:
+## Checkpoint selection
+
+The evaluator uses the existing verified private-Hugging-Face checkpoint flow.
+
+For canonical final evaluation, state the model identity explicitly:
+
+```text
+--repo-id <HF repository>
+--run-id <run ID>
+--pointer best
+```
+
+`best` is the validation-selected checkpoint and remains the default pointer. `--pointer latest` is reserved for explicit endpoint diagnostics.
+
+Environment variables remain supported:
 
 ```bash
 export HF_TOKEN='...'
@@ -81,46 +100,49 @@ export SMALL_LLM_HF_REPO_ID='owner/private-checkpoint-repository'
 export SMALL_LLM_RUN_ID='pretraining-run-id'
 ```
 
-`SMALL_LLM_RUN_ID` may be omitted only when the repository contains exactly one matching pointer. The best validation-selected checkpoint is used by default; pass `--pointer latest` to inspect the latest published checkpoint instead.
-
 ## Fast suite
 
-Use the fast suite for intermediate checkpoints and routine comparisons:
+Use `fast` for intermediate checkpoints and routine comparisons:
 
 ```bash
-small-llm-eval fast \
-  --eval-dir /data/eval_core_v1 \
+uv run --extra post-training small-llm-eval fast \
+  --repo-id owner/checkpoints \
+  --run-id run-id \
+  --pointer best \
   --output-json artifacts/eval-fast.json
 ```
 
-The default run:
-
-1. verifies `eval_core_v1`;
-2. downloads and verifies the selected native checkpoint;
-3. reconstructs the model once;
-4. streams the fast intrinsic scorecard;
-5. prints the complete existing qualitative prompt suite and every generated continuation;
-6. writes one self-hashed JSON bundle containing metrics, prompts, generated token IDs, decoded answers, sampling settings, checkpoint identity, and model geometry.
-
 ## Full suite
 
-Use the full suite for final logarithmic checkpoints and scale decisions:
+Use `full` for final checkpoints and scale decisions:
 
 ```bash
-small-llm-eval full \
-  --eval-dir /data/eval_core_v1 \
+uv run --extra post-training small-llm-eval full \
+  --repo-id owner/checkpoints \
+  --run-id run-id \
+  --pointer best \
   --output-json artifacts/eval-full.json
 ```
 
-The interface and output schema are the same as the fast suite. Only the evaluated corpus changes.
+The complete run:
+
+1. resolves the eval-core cache location;
+2. builds the frozen corpus if absent;
+3. verifies `eval_core_v1`;
+4. downloads and verifies the selected native checkpoint;
+5. reconstructs the model once;
+6. streams the intrinsic scorecard;
+7. prints the complete qualitative prompt suite and every generated continuation;
+8. writes one self-hashed JSON bundle containing metrics, prompts, generated token IDs, decoded answers, sampling settings, checkpoint identity, and model geometry.
 
 ## Useful options
 
 T4 defaults resolve automatically to CUDA FP16 and batch size one. A larger evaluation batch can be attempted explicitly after measuring memory:
 
 ```bash
-small-llm-eval fast \
-  --eval-dir /data/eval_core_v1 \
+uv run --extra post-training small-llm-eval fast \
+  --repo-id owner/checkpoints \
+  --run-id run-id \
   --output-json artifacts/eval-fast.json \
   --batch-size 2
 ```
@@ -128,8 +150,9 @@ small-llm-eval fast \
 Question-only qualitative output:
 
 ```bash
-small-llm-eval fast \
-  --eval-dir /data/eval_core_v1 \
+uv run --extra post-training small-llm-eval fast \
+  --repo-id owner/checkpoints \
+  --run-id run-id \
   --output-json artifacts/eval-fast-questions.json \
   --questions-only
 ```
@@ -137,8 +160,9 @@ small-llm-eval fast \
 Greedy prompt generation:
 
 ```bash
-small-llm-eval full \
-  --eval-dir /data/eval_core_v1 \
+uv run --extra post-training small-llm-eval full \
+  --repo-id owner/checkpoints \
+  --run-id run-id \
   --output-json artifacts/eval-full-greedy.json \
   --temperature 0 \
   --top-p 1 \
@@ -149,7 +173,7 @@ small-llm-eval full \
 
 ## Recorded metrics
 
-The first result schema records:
+The result schema records:
 
 ```text
 negative log-likelihood and perplexity
@@ -174,4 +198,4 @@ The ordinary test suite remains network-free:
 uv run --extra model python -m unittest discover -v
 ```
 
-The evaluation tests use injected records, tiny binary fixtures, and toy models. They do not contact Hugging Face, download a checkpoint, or run the multi-million-token corpus during normal unit testing.
+The self-provisioning entry-point tests mock corpus construction/verification. Normal offline unit tests do not contact Hugging Face or build the multi-million-token production corpus.
