@@ -1,10 +1,12 @@
 # 20M Model / 500M-Token Final Probe Runbook
 
-_Last updated: 2026-08-07 10:11 Europe/Rome_
+_Last updated: 2026-08-07 11:07 Europe/Rome_
 
 This is the final planned data-scaling probe for the approximately-20M-parameter GDN-2 hybrid. It preserves the proven 100M production and training process while binding a separate approximately-500M-token finite dataset and a fresh seed-17 training run.
 
 The 500M training run must not resume the 100M model checkpoint. It receives its own one-pass WSD schedule derived from the completed 500M manifest. Dataset preparation may run in parallel with the tail of the 100M training run because source access, local paths, Drive run folder, Kaggle dataset handle, W&B identity, and checkpoint namespace are distinct.
+
+For this experiment, fresh training starts immediately at microbatch 4. The inherited microbatch 1-vs-4 startup probes are intentionally skipped because microbatch 4 has already been exercised on the same 20M-model/T4 training path. Held-out validation, local checkpointing, and verified remote checkpoint publication remain fixed at every 250 successful optimizer updates.
 
 ## Part A — No whole ClimbMix download is required
 
@@ -174,7 +176,7 @@ python kaggle/run_20m_500m.py
 Do not pass `--launch-commit`. The wrapper pins the implementation worktree at:
 
 ```text
-7c726ab51e4f3ed221d164e2596816da6d54c5cc
+01d562ea1845d0dd128a0458e613c9e677b7381d
 ```
 
 Fixed identities/defaults:
@@ -189,7 +191,8 @@ optimizer: hybrid Muon + AdamW
 learning rate: 3e-4
 weight decay: 0.1
 schedule: one-pass WSD derived from the 500M qualification plan
-training microbatch: 4 sequences after the existing 1-vs-4 gate
+training microbatch: 4 sequences from the first real update
+fresh microbatch probes: skipped by experiment decision
 validation microbatch: 1 sequence
 local checkpoint cadence: 250 updates
 held-out validation cadence: 250 updates
@@ -199,7 +202,25 @@ W&B run name: 20M model on 500M tokens
 repository default session cap: none within the finite plan
 ```
 
+On a fresh run, the launch summary must record:
+
+```text
+microbatch_qualification.status: skipped_by_experiment_decision
+microbatch_qualification.selected_microbatch: 4
+microbatch_qualification.probe_steps_executed: 0
+```
+
+There should be no `microbatch-1-probe` or `microbatch-4-probe` training stages. Update 1 is the first real seed-17 training update at microbatch 4.
+
 Each invocation requests every remaining update in the finite plan. If Kaggle/runtime limits interrupt it, rerun the identical command. The launcher restores only the latest verified checkpoint under the distinct 500M run identity and checks the attached 500M Drive-manifest identity before resuming model, optimizer, scheduler, scaler, RNG, data cursor, and WSD position.
+
+At every 250-successful-update boundary require all three events:
+
+```text
+held-out validation completed
+local checkpoint saved
+verified remote checkpoint publication completed
+```
 
 For a deliberate bounded diagnostic only:
 
@@ -247,11 +268,12 @@ Do not proceed if:
 - the target Kaggle dataset is anonymously readable;
 - Kaggle finds zero or multiple matching 500M datasets;
 - a 100M dataset is attached instead of the 500M identity;
-- microbatch 4 fails the existing speed/numerical/memory gate;
-- validation or FP16 safety gates fail;
+- a fresh 500M launch executes microbatch probe training instead of starting real training at microbatch 4;
+- the real trainer command does not use microbatch 4;
+- validation, FP16, memory, or numerical safety gates fail during real training;
 - a restored checkpoint disagrees with the attached 500M manifest;
 - W&B does not use `20m-500m-data-001`;
-- a scheduled durability boundary lacks verified remote publication;
+- any 250-update durability boundary lacks held-out validation, a local checkpoint, or verified remote publication;
 - the trainer attempts to consume beyond the exact finite one-pass plan.
 
 A failed gate is evidence to inspect, not permission to silently alter the experiment.
