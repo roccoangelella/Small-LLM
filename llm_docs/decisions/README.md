@@ -24,6 +24,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0011-publish-standalone-gated-delta-rule-package.md`](0011-publish-standalone-gated-delta-rule-package.md)
 - [`0013-rename-public-gdr2-repository.md`](0013-rename-public-gdr2-repository.md)
 - [`0014-simplify-public-gdr2-repository-docs.md`](0014-simplify-public-gdr2-repository-docs.md)
+- [`0015-scrub-small-llm-references-from-public-gdr2.md`](0015-scrub-small-llm-references-from-public-gdr2.md)
 
 ## Superseded ADRs
 
