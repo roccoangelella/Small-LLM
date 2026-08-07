@@ -1,9 +1,10 @@
-"""Print qualitative generations from the best verified remote base checkpoint.
+"""Print qualitative generations or teacher-forced diagnostics from a verified base checkpoint.
 
-This is deliberately a base-model prompt suite, not an instruction-following
+This is deliberately a base-model output suite, not an instruction-following
 benchmark. Prompts are phrased as document continuations, simple Q/A records,
 or short structured examples so the pretrained causal model has a clear text
-pattern to continue.
+pattern to continue. A teacher-forced validation mode can instead inspect the
+model's raw next-token distribution on held-out validation text.
 """
 
 from __future__ import annotations
@@ -30,6 +31,10 @@ from dataset.src.joint_checkpoint import (
 from dataset.src.remote import HuggingFaceCheckpointStore
 from model.config import ModelConfig
 from model.model import SmallLLM
+from trainer.teacher_forced_diagnostic import (
+    print_teacher_forced_report,
+    run_teacher_forced_validation,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,8 +460,8 @@ def _resolve_precision(value: str, device: torch.device) -> str:
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Download the best verified Small-LLM base checkpoint and print "
-            "qualitative continuations."
+            "Download a verified Small-LLM base checkpoint and run qualitative "
+            "generation or held-out teacher-forced output diagnostics."
         )
     )
     parser.add_argument("--repo-id", default=os.environ.get("SMALL_LLM_HF_REPO_ID"))
@@ -489,6 +494,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0,
         help="print and save the top-N raw next-token probabilities at every generation step",
     )
+    parser.add_argument(
+        "--teacher-forced-validation",
+        nargs="?",
+        const="auto",
+        metavar="DATASET_DIR",
+        help=(
+            "run the held-out teacher-forced confidence diagnostic instead of prompt "
+            "generation; optionally provide the dataset root, otherwise auto-match "
+            "the attached Kaggle dataset to the checkpoint"
+        ),
+    )
     parser.add_argument("--output-json", type=Path)
     args = parser.parse_args(argv)
     if not args.repo_id:
@@ -500,6 +516,30 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.trace_top_tokens < 0:
         parser.error("--trace-top-tokens must be non-negative")
     return args
+
+
+def _checkpoint_display(
+    checkpoint_info: Mapping[str, object],
+    *,
+    device: torch.device,
+    precision: str,
+    trainer_state: Mapping[str, object],
+    model_config: ModelConfig,
+) -> dict[str, object]:
+    return {
+        **checkpoint_info,
+        "device": str(device),
+        "precision": precision,
+        "global_step": trainer_state.get("global_step"),
+        "consumed_tokens": trainer_state.get("consumed_tokens"),
+        "model_config": {
+            "d_model": model_config.d_model,
+            "n_layers": model_config.n_layers,
+            "d_ff": model_config.d_ff,
+            "architecture": model_config.architecture,
+            "max_seq_len": model_config.max_seq_len,
+        },
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -516,7 +556,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         import tiktoken
     except ImportError as error:
         raise RuntimeError(
-            "the prompt suite requires tiktoken; install the project with .[post-training]"
+            "the output suite requires tiktoken; install the project with .[post-training]"
         ) from error
     encoding = tiktoken.get_encoding("gpt2")
 
@@ -529,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "trace_top_tokens": args.trace_top_tokens,
     }
     records: list[dict[str, object]] = []
+    output_payload: dict[str, object] | None = None
     with tempfile.TemporaryDirectory(prefix="small-llm-prompt-suite-") as temporary:
         checkpoint_root, checkpoint_info = download_verified_checkpoint(
             repo_id=str(args.repo_id),
@@ -543,118 +584,133 @@ def main(argv: Sequence[str] | None = None) -> int:
             device=device,
             model_config_json=args.model_config_json,
         )
-        print("=" * 80)
-        print("Small-LLM post-pretraining qualitative prompt suite")
-        print(
-            json.dumps(
-                {
-                    **checkpoint_info,
-                    "device": str(device),
-                    "precision": precision,
-                    "global_step": trainer_state.get("global_step"),
-                    "consumed_tokens": trainer_state.get("consumed_tokens"),
-                    "model_config": {
-                        "d_model": model_config.d_model,
-                        "n_layers": model_config.n_layers,
-                        "d_ff": model_config.d_ff,
-                        "architecture": model_config.architecture,
-                        "max_seq_len": model_config.max_seq_len,
-                    },
-                    "sampling": sampling_info,
-                },
-                indent=2,
-                sort_keys=True,
-            )
+        checkpoint_display = _checkpoint_display(
+            checkpoint_info,
+            device=device,
+            precision=precision,
+            trainer_state=trainer_state,
+            model_config=model_config,
         )
 
-        for case_index, case in enumerate(cases):
-            prompt_ids = encoding.encode(case.prompt, disallowed_special=())
-            if len(prompt_ids) > model_config.max_seq_len:
-                raise RuntimeError(f"prompt {case.name!r} exceeds the model context window")
-            generation_budget = _generation_budget(case, args.max_new_tokens)
-            for sample_index in range(args.samples_per_prompt):
-                sample_seed = args.seed + case_index * 1_000 + sample_index
-                raw_trace: list[dict[str, object]] = []
-                generated_ids = sample_token_ids(
-                    model,
-                    prompt_ids,
-                    max_new_tokens=generation_budget,
-                    max_seq_len=model_config.max_seq_len,
-                    eos_token_id=encoding.eot_token,
-                    temperature=args.temperature,
-                    top_p=args.top_p,
-                    top_k=args.top_k,
-                    seed=sample_seed,
-                    precision=precision,
-                    trace_top_tokens=args.trace_top_tokens,
-                    trace_out=raw_trace if args.trace_top_tokens > 0 else None,
+        if args.teacher_forced_validation is not None:
+            print("=" * 80)
+            print("Small-LLM post-pretraining model-output suite")
+            print(json.dumps(checkpoint_display, indent=2, sort_keys=True))
+            teacher_forced_report = run_teacher_forced_validation(
+                model,
+                model_config=model_config,
+                checkpoint_root=checkpoint_root,
+                dataset_request=str(args.teacher_forced_validation),
+                device=device,
+                precision=precision,
+                encoding=encoding,
+            )
+            print_teacher_forced_report(teacher_forced_report)
+            output_payload = {
+                "checkpoint": checkpoint_info,
+                "teacher_forced_validation": teacher_forced_report,
+            }
+        else:
+            print("=" * 80)
+            print("Small-LLM post-pretraining qualitative prompt suite")
+            print(
+                json.dumps(
+                    {
+                        **checkpoint_display,
+                        "sampling": sampling_info,
+                    },
+                    indent=2,
+                    sort_keys=True,
                 )
-                continuation = encoding.decode(
-                    [
-                        token_id
-                        for token_id in generated_ids
-                        if token_id != encoding.eot_token
-                    ]
-                )
-                token_trace = (
-                    _decode_token_trace(raw_trace, encoding)
-                    if args.trace_top_tokens > 0
-                    else []
-                )
-                print("\n" + "-" * 80)
-                print(
-                    f"[{case.category}] {case.name} | sample={sample_index + 1} "
-                    f"| seed={sample_seed}"
-                )
-                print("PROMPT:")
-                print(case.prompt)
-                print("\nCONTINUATION:")
-                print(continuation)
-                if token_trace:
-                    print("\nTOKEN TRACE (raw model probabilities before decoding filters):")
-                    for trace_entry in token_trace:
-                        print(
-                            f"step {int(trace_entry['step']):02d} "
-                            f"chosen={trace_entry['chosen_token']!r} "
-                            f"p={float(trace_entry['chosen_probability']):.6f}"
-                        )
-                        candidates = trace_entry["top_tokens"]
-                        assert isinstance(candidates, list)
-                        print(
-                            "  top: "
-                            + " | ".join(
-                                f"{candidate['token']!r}={float(candidate['probability']):.6f}"
-                                for candidate in candidates
-                                if isinstance(candidate, Mapping)
+            )
+
+            for case_index, case in enumerate(cases):
+                prompt_ids = encoding.encode(case.prompt, disallowed_special=())
+                if len(prompt_ids) > model_config.max_seq_len:
+                    raise RuntimeError(f"prompt {case.name!r} exceeds the model context window")
+                generation_budget = _generation_budget(case, args.max_new_tokens)
+                for sample_index in range(args.samples_per_prompt):
+                    sample_seed = args.seed + case_index * 1_000 + sample_index
+                    raw_trace: list[dict[str, object]] = []
+                    generated_ids = sample_token_ids(
+                        model,
+                        prompt_ids,
+                        max_new_tokens=generation_budget,
+                        max_seq_len=model_config.max_seq_len,
+                        eos_token_id=encoding.eot_token,
+                        temperature=args.temperature,
+                        top_p=args.top_p,
+                        top_k=args.top_k,
+                        seed=sample_seed,
+                        precision=precision,
+                        trace_top_tokens=args.trace_top_tokens,
+                        trace_out=raw_trace if args.trace_top_tokens > 0 else None,
+                    )
+                    continuation = encoding.decode(
+                        [
+                            token_id
+                            for token_id in generated_ids
+                            if token_id != encoding.eot_token
+                        ]
+                    )
+                    token_trace = (
+                        _decode_token_trace(raw_trace, encoding)
+                        if args.trace_top_tokens > 0
+                        else []
+                    )
+                    print("\n" + "-" * 80)
+                    print(
+                        f"[{case.category}] {case.name} | sample={sample_index + 1} "
+                        f"| seed={sample_seed}"
+                    )
+                    print("PROMPT:")
+                    print(case.prompt)
+                    print("\nCONTINUATION:")
+                    print(continuation)
+                    if token_trace:
+                        print("\nTOKEN TRACE (raw model probabilities before decoding filters):")
+                        for trace_entry in token_trace:
+                            print(
+                                f"step {int(trace_entry['step']):02d} "
+                                f"chosen={trace_entry['chosen_token']!r} "
+                                f"p={float(trace_entry['chosen_probability']):.6f}"
                             )
-                        )
-                record: dict[str, object] = {
-                    "name": case.name,
-                    "category": case.category,
-                    "sample": sample_index + 1,
-                    "seed": sample_seed,
-                    "prompt": case.prompt,
-                    "continuation": continuation,
-                    "prompt_tokens": len(prompt_ids),
-                    "generated_tokens": len(generated_ids),
-                    "max_new_tokens": generation_budget,
-                }
-                if token_trace:
-                    record["token_trace"] = token_trace
-                records.append(record)
+                            candidates = trace_entry["top_tokens"]
+                            assert isinstance(candidates, list)
+                            print(
+                                "  top: "
+                                + " | ".join(
+                                    f"{candidate['token']!r}={float(candidate['probability']):.6f}"
+                                    for candidate in candidates
+                                    if isinstance(candidate, Mapping)
+                                )
+                            )
+                    record: dict[str, object] = {
+                        "name": case.name,
+                        "category": case.category,
+                        "sample": sample_index + 1,
+                        "seed": sample_seed,
+                        "prompt": case.prompt,
+                        "continuation": continuation,
+                        "prompt_tokens": len(prompt_ids),
+                        "generated_tokens": len(generated_ids),
+                        "max_new_tokens": generation_budget,
+                    }
+                    if token_trace:
+                        record["token_trace"] = token_trace
+                    records.append(record)
+
+            output_payload = {
+                "checkpoint": checkpoint_info,
+                "sampling": sampling_info,
+                "results": records,
+            }
 
     if args.output_json is not None:
+        assert output_payload is not None
         args.output_json.parent.mkdir(parents=True, exist_ok=True)
         args.output_json.write_text(
-            json.dumps(
-                {
-                    "checkpoint": checkpoint_info,
-                    "sampling": sampling_info,
-                    "results": records,
-                },
-                indent=2,
-                ensure_ascii=False,
-            ),
+            json.dumps(output_payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         print(f"\nSaved machine-readable results to {args.output_json}")
