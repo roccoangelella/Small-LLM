@@ -152,15 +152,24 @@ The best pointer remains the default for final qualitative inspection.
 
 During the 20M-model / approximately-100M-token qualification, greedy generation exposed high-probability repetitive loops in long continuations. Keep the existing long prompt suite because it is useful for detecting degeneration, but also use a short-generation diagnostic to separate local next-token quality from long-horizon repetition.
 
-The intended diagnostic is:
+The canonical short diagnostic is:
 
-- greedy decoding (`temperature 0`) so sampling does not obscure the learned ranking;
-- a small global generation budget, initially 32 new tokens per prompt;
-- optional top-5 raw next-token probabilities at every generated step;
-- preserve the token trace in JSON so checkpoints can be compared deterministically;
-- do not apply repetition penalties, no-repeat-ngram rules, or other decoding corrections in the canonical diagnostic.
+```bash
+python -m trainer.post_pretraining_prompt_suite \
+  --max-cases 6 \
+  --temperature 0 \
+  --top-p 1 \
+  --top-k 0 \
+  --max-new-tokens 32 \
+  --trace-top-tokens 5 \
+  --output-json artifacts/prompts_short_greedy_top5.json
+```
 
-The top-token probabilities should be computed from the model's raw next-token logits before top-k/top-p filtering. They are diagnostic evidence about the learned distribution, not a decoding modification. The existing CLI does not yet expose the global token-budget or top-token-trace controls; implementation should add explicit arguments rather than changing the per-prompt defaults silently.
+`--max-new-tokens N` is a global cap: each case uses `min(case.max_new_tokens, N)`. Omitting it preserves the existing per-prompt budgets. `--trace-top-tokens K` is disabled by default; when positive, the suite prints and stores the chosen token's raw probability plus the top-K raw next-token candidates at every generated step.
+
+The top-token probabilities are computed from the model's raw next-token logits before temperature scaling, top-k filtering, or top-p filtering. They are diagnostic evidence about the learned distribution, not a decoding modification. The JSON result includes the run sampling/diagnostic settings, each case's effective generation budget, and a per-step token trace when tracing is enabled.
+
+Do not apply repetition penalties, no-repeat-ngram rules, or other decoding corrections in the canonical diagnostic. The long prompt suite remains useful for detecting degeneration; the short diagnostic is complementary rather than a replacement.
 
 ## Interpretation
 
