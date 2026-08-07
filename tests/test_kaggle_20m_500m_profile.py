@@ -78,6 +78,10 @@ class Kaggle20M500MProfileTests(unittest.TestCase):
             online=True,
         )
         self.assertEqual(
+            command[command.index("--microbatch-size") + 1],
+            "4",
+        )
+        self.assertEqual(
             command[command.index("--wandb-run-id") + 1],
             "20m-500m-data-001",
         )
@@ -88,6 +92,18 @@ class Kaggle20M500MProfileTests(unittest.TestCase):
         tags = command[command.index("--wandb-tags") + 1 :]
         self.assertIn("500m-tokens", tags)
         self.assertNotIn("100m-tokens", tags)
+
+    def test_fresh_500m_run_skips_probes_and_selects_microbatch_four(self) -> None:
+        verdict = launcher.qualify_microbatch(
+            "uv",
+            Path("/data"),
+            _plan(),
+            {},
+        )
+        self.assertIs(launcher.base.qualify_microbatch, launcher.qualify_microbatch)
+        self.assertEqual(verdict["status"], "skipped_by_experiment_decision")
+        self.assertEqual(verdict["selected_microbatch"], 4)
+        self.assertEqual(verdict["probe_steps_executed"], 0)
 
     def test_preflight_uses_500m_run_name_and_id(self) -> None:
         command, _, _ = launcher.wandb_preflight_command(
