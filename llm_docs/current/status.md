@@ -65,6 +65,7 @@ FP16 overflow events: 0
 - Use the permanent stratified `eval_core_v1` fast/full suites and retain the existing prompt answers in the unified evaluator.
 - Attempt the complete remaining 100M-token one-pass schedule in one Kaggle invocation by default.
 - Validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful updates.
+- Retain both free-generation diagnostics and a deterministic teacher-forced held-out confidence/rank diagnostic so later model scales can be compared on semantic uncertainty versus confident errors.
 
 ## Evaluation state
 
@@ -77,7 +78,9 @@ small-llm-eval fast|full
 
 The code, manifest contract, streaming metrics, prompt integration, and offline tests are implemented. The production `eval_core_v1` corpus still needs to be built and its fast/full runtime measured on the T4 before it becomes an accepted evaluation artifact.
 
-The post-pretraining prompt suite now supports `--max-new-tokens` as a global cap on each case's native generation budget and `--trace-top-tokens` for per-step raw next-token probability inspection. The canonical short diagnostic uses greedy decoding, a 32-token cap, and a top-5 raw-token trace; the trace is printed and retained in JSON without changing the model's decoding distribution.
+The post-pretraining model-output suite supports `--max-new-tokens` as a global cap on each case's native generation budget and `--trace-top-tokens` for per-step raw next-token probability inspection. The canonical short diagnostic uses greedy decoding, a 32-token cap, and a top-5 raw-token trace; the trace is printed and retained in JSON without changing the model's decoding distribution.
+
+The suite now also supports `--teacher-forced-validation`. This mode identity-matches the local validation dataset to the verified checkpoint through `drive_manifest.json`, evaluates the first 4,096 active held-out next-token targets in deterministic order, and records true-token probability/rank, raw top-1/top-5 probabilities, top-5 mass, entropy, sampled loss/perplexity, top-k hit rates, and confidently-wrong rates. It processes one sequence at a time and computes distribution metrics in 256-position chunks to keep full-vocabulary diagnostics bounded on the T4.
 
 The ordinary held-out training validation path uses `torch.inference_mode()` and a dedicated one-sequence microbatch to prevent full-vocabulary evaluation OOM on the T4.
 
@@ -92,7 +95,7 @@ The ordinary held-out training validation path uses `torch.inference_mode()` and
 - Validation OOM evidence: [`../evidence/20m_100m/validation_oom_step_500_2026-08-06.md`](../evidence/20m_100m/validation_oom_step_500_2026-08-06.md)
 - Revised durability decision: [`../decisions/0004-run-100m-in-one-session-with-250-step-durability.md`](../decisions/0004-run-100m-in-one-session-with-250-step-durability.md)
 - Evaluation procedure: [`../runbooks/eval_core_v1_runbook.md`](../runbooks/eval_core_v1_runbook.md)
-- Prompt-suite procedure: [`../runbooks/post_pretraining_prompt_suite.md`](../runbooks/post_pretraining_prompt_suite.md)
+- Model-output procedure: [`../runbooks/post_pretraining_prompt_suite.md`](../runbooks/post_pretraining_prompt_suite.md)
 - Model contract: [`../reference/model_architecture.md`](../reference/model_architecture.md)
 - GDN-2 execution contract: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
