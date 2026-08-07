@@ -11,6 +11,7 @@ import torch
 
 from trainer.post_pretraining_prompt_suite import _parse_args
 from trainer.teacher_forced_diagnostic import (
+    _annotated_target_text,
     _summary,
     resolve_validation_dataset,
     teacher_forced_token_metrics,
@@ -84,6 +85,51 @@ class TeacherForcedDiagnosticTests(unittest.TestCase):
         self.assertAlmostEqual(float(summary["top1_accuracy"]), 0.5)
         self.assertAlmostEqual(float(summary["true_rank_le_5"]), 1.0)
         self.assertAlmostEqual(float(summary["confidently_wrong_ge_0_5"]), 0.5)
+
+    def test_readable_target_expands_bpe_piece_to_full_word(self) -> None:
+        pieces = [
+            "This",
+            " is",
+            " a",
+            " huge",
+            " crowd",
+            " ple",
+            "aser",
+            ".",
+        ]
+        text = "".join(pieces)
+        offsets: list[int] = []
+        cursor = 0
+        for piece in pieces:
+            offsets.append(cursor)
+            cursor += len(piece)
+
+        rendered = _annotated_target_text(
+            text,
+            offsets,
+            5,
+            before_chars=100,
+            after_chars=100,
+        )
+        self.assertEqual(rendered, "This is a huge crowd [pleaser].")
+
+    def test_readable_target_expands_piece_that_starts_inside_word(self) -> None:
+        pieces = ["The", " se", "lect", "ion", " worked", "."]
+        text = "".join(pieces)
+        offsets: list[int] = []
+        cursor = 0
+        for piece in pieces:
+            offsets.append(cursor)
+            cursor += len(piece)
+
+        rendered = _annotated_target_text(
+            text,
+            offsets,
+            2,
+            before_chars=100,
+            after_chars=100,
+        )
+        self.assertEqual(rendered, "The [selection] worked.")
 
     def test_explicit_dataset_must_match_checkpoint_drive_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
