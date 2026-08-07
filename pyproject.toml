@@ -18,7 +18,7 @@ post-training = [
 
 [project.scripts]
 small-llm-eval-data = "dataset.eval_core:main"
-small-llm-eval = "trainer.eval_suite:main"
+small-llm-eval = "trainer.eval_entrypoint:main"
 small-llm-sft-data = "post_training.sft.cli:main"
 
 [build-system]
