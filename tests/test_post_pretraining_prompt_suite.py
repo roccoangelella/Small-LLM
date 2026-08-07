@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import math
 import unittest
 
 import torch
@@ -12,6 +13,7 @@ from model.config import ModelConfig
 from trainer.post_pretraining_prompt_suite import (
     PROMPT_CASES,
     _checkpoint_prefix,
+    _generation_budget,
     _normalize_model_config,
     _selected_cases,
     sample_token_ids,
@@ -78,6 +80,13 @@ class PostPretrainingPromptSuiteTests(unittest.TestCase):
         restored = _normalize_model_config(raw)
         self.assertEqual(restored, ModelConfig.smoke())
 
+    def test_global_generation_budget_caps_native_prompt_budget(self) -> None:
+        story = PROMPT_CASES[0]
+        sentiment = PROMPT_CASES[5]
+        self.assertEqual(_generation_budget(story, None), 128)
+        self.assertEqual(_generation_budget(story, 32), 32)
+        self.assertEqual(_generation_budget(sentiment, 64), 48)
+
     def test_greedy_generation_is_deterministic(self) -> None:
         model = _ToyModel()
         generated = sample_token_ids(
@@ -93,6 +102,42 @@ class PostPretrainingPromptSuiteTests(unittest.TestCase):
             precision="fp32",
         )
         self.assertEqual(generated, [2, 2, 2])
+
+    def test_token_trace_uses_raw_model_probabilities(self) -> None:
+        model = _ToyModel()
+        trace: list[dict[str, object]] = []
+        generated = sample_token_ids(
+            model,
+            [0, 1],
+            max_new_tokens=2,
+            max_seq_len=8,
+            eos_token_id=3,
+            temperature=0.0,
+            top_p=1.0,
+            top_k=0,
+            seed=17,
+            precision="fp32",
+            trace_top_tokens=2,
+            trace_out=trace,
+        )
+        self.assertEqual(generated, [2, 2])
+        self.assertEqual(len(trace), 2)
+        self.assertEqual(trace[0]["chosen_token_id"], 2)
+        expected_probability = math.exp(5.0) / (math.exp(5.0) + 3.0)
+        self.assertAlmostEqual(
+            float(trace[0]["chosen_probability"]),
+            expected_probability,
+            places=6,
+        )
+        top_tokens = trace[0]["top_tokens"]
+        self.assertIsInstance(top_tokens, list)
+        assert isinstance(top_tokens, list)
+        self.assertEqual(top_tokens[0]["token_id"], 2)
+        self.assertAlmostEqual(
+            float(top_tokens[0]["probability"]),
+            expected_probability,
+            places=6,
+        )
 
 
 if __name__ == "__main__":
