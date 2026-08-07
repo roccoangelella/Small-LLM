@@ -1,6 +1,6 @@
 # Post-Pretraining Qualitative Prompt Suite
 
-_Last updated: 2026-08-05_
+_Last updated: 2026-08-07_
 
 ## Decision and scope
 
@@ -147,6 +147,20 @@ python -m trainer.post_pretraining_prompt_suite --pointer latest
 ```
 
 The best pointer remains the default for final qualitative inspection.
+
+## Short-generation diagnostic
+
+During the 20M-model / approximately-100M-token qualification, greedy generation exposed high-probability repetitive loops in long continuations. Keep the existing long prompt suite because it is useful for detecting degeneration, but also use a short-generation diagnostic to separate local next-token quality from long-horizon repetition.
+
+The intended diagnostic is:
+
+- greedy decoding (`temperature 0`) so sampling does not obscure the learned ranking;
+- a small global generation budget, initially 32 new tokens per prompt;
+- optional top-5 raw next-token probabilities at every generated step;
+- preserve the token trace in JSON so checkpoints can be compared deterministically;
+- do not apply repetition penalties, no-repeat-ngram rules, or other decoding corrections in the canonical diagnostic.
+
+The top-token probabilities should be computed from the model's raw next-token logits before top-k/top-p filtering. They are diagnostic evidence about the learned distribution, not a decoding modification. The existing CLI does not yet expose the global token-budget or top-token-trace controls; implementation should add explicit arguments rather than changing the per-prompt defaults silently.
 
 ## Interpretation
 
