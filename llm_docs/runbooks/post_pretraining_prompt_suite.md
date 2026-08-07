@@ -1,10 +1,10 @@
-# Post-Pretraining Qualitative Prompt Suite
+# Post-Pretraining Model-Output Suite
 
 _Last updated: 2026-08-07_
 
 ## Decision and scope
 
-The repository includes a small qualitative prompt suite to run after a base-model pretraining campaign completes. This decision does **not** assert that the current qualification or eventual substantive pretraining has already completed; it defines the inspection procedure to use when a completed base checkpoint exists.
+The repository includes a small model-output suite to run after a base-model pretraining campaign completes. This decision does **not** assert that the current qualification or eventual substantive pretraining has already completed; it defines the inspection procedure to use when a completed base checkpoint exists.
 
 The suite is repository-native because Hugging Face stores the project's verified joint checkpoints rather than a Transformers-format export. It:
 
@@ -14,7 +14,8 @@ The suite is repository-native because Hugging Face stores the project's verifie
 4. reconstructs `SmallLLM` from the model configuration embedded in new trainer checkpoints;
 5. loads the native model weights;
 6. tokenizes prompts with the GPT-2 byte-level BPE identity used by the project;
-7. prints seeded base-model continuations and can save the complete result as JSON.
+7. prints seeded base-model continuations and can save the complete result as JSON;
+8. can instead run a teacher-forced confidence diagnostic on identity-matched held-out validation text.
 
 The authoritative entrypoint is:
 
@@ -74,7 +75,7 @@ export SMALL_LLM_RUN_ID='pretraining-run-id'
 
 Only run the suite against a trusted project-controlled repository. The checkpoint tree and its hashes are verified before `trainer_state.pkl` is unpickled, but Python pickle is not a safe interchange format for untrusted third-party artifacts.
 
-## Standard run
+## Standard qualitative run
 
 ```bash
 python -m trainer.post_pretraining_prompt_suite \
@@ -171,13 +172,49 @@ The top-token probabilities are computed from the model's raw next-token logits 
 
 Do not apply repetition penalties, no-repeat-ngram rules, or other decoding corrections in the canonical diagnostic. The long prompt suite remains useful for detecting degeneration; the short diagnostic is complementary rather than a replacement.
 
+## Teacher-forced held-out confidence diagnostic
+
+The greedy trace showed two different regimes: low confidence at semantic branching points and increasing confidence after the model enters repetitive or template-like trajectories. To distinguish broad uncertainty from confidently wrong predictions, the suite now supports teacher-forced analysis against the same schema-v2 held-out next-token targets used by validation loss.
+
+Run it in the same Kaggle notebook with the accepted dataset attached:
+
+```bash
+python -m trainer.post_pretraining_prompt_suite \
+  --teacher-forced-validation \
+  --output-json artifacts/teacher_forced_validation.json
+```
+
+`--teacher-forced-validation` switches the suite from free generation to deterministic teacher-forced analysis. With no value, it scans the attached Kaggle inputs and requires exactly one dataset whose `drive_manifest.json` hash matches the verified checkpoint. An explicit dataset root can be supplied as the optional value:
+
+```bash
+python -m trainer.post_pretraining_prompt_suite \
+  --teacher-forced-validation /path/to/dataset \
+  --output-json artifacts/teacher_forced_validation.json
+```
+
+The canonical diagnostic uses the first 4,096 active validation targets in deterministic shard/sequence order. Inference remains one sequence at a time, and distribution metrics are computed in 256-position chunks so full-vocabulary analysis remains bounded on the T4. The dataset reader uses the same schema-v2 `context+1` contract as training: `input_ids=tokens[:-1]` and `labels=tokens[1:]`.
+
+For every measured target position the JSON records:
+
+- a short decoded context tail;
+- the true held-out token and its raw probability;
+- the true token's rank in the complete vocabulary;
+- the raw top-1 token and probability;
+- the raw top-5 candidates and their probabilities;
+- top-5 probability mass;
+- next-token entropy in nats.
+
+The aggregate report records sampled loss/perplexity, mean and median true-token probability, mean and median top-1 probability, top-1 accuracy, true-token top-5/top-10/top-100 rates, median true-token rank, mean entropy, mean top-5 mass, the fraction of positions whose top-1 probability is below 0.1, and the fraction that are wrong despite top-1 probability at least 0.5. It also prints representative lowest-true-probability and highest-confidence-wrong positions.
+
+This mode is not a decoding test: no temperature, top-k, top-p, repetition penalty, or sampling operation is applied to the measured distribution. Its purpose is to explain *how* a given validation perplexity arises and to provide a deterministic confidence/rank baseline for later model scales and post-training stages.
+
 ## Interpretation
 
-The suite answers a narrow question: does the completed base model produce locally coherent English continuations and show recognizable learned knowledge or patterns?
+The qualitative suite answers a narrow question: does the completed base model produce locally coherent English continuations and show recognizable learned knowledge or patterns? The teacher-forced mode complements that by asking whether the correct held-out next token is present near the top of the learned distribution and how confident the model is when it is wrong.
 
-It does not replace:
+The suite does not replace:
 
-- held-out loss and perplexity;
+- held-out loss and perplexity over the canonical validation protocol;
 - domain-level validation analysis;
 - standardized base-model benchmarks;
 - memorization and contamination checks;
@@ -185,4 +222,4 @@ It does not replace:
 - architecture-matched comparisons;
 - later supervised instruction tuning and preference evaluation.
 
-The JSON output should be retained with the final evaluation artifacts so the same prompts, seeds, and sampling settings can be compared across checkpoints and later post-training stages.
+The JSON output should be retained with the final evaluation artifacts so the same prompts, seeds, sampling settings, and teacher-forced metrics can be compared across checkpoints and later post-training stages.
