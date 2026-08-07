@@ -5,53 +5,63 @@ last_reviewed: 2026-08-07
 
 # Current project status
 
-## Active experiment
+## Completed 20M / 100M pretraining experiment
 
-The approximately-20M-parameter GDN-2 hybrid remains authorized for one pass over the fixed approximately-100M-token dataset.
+The approximately-20M-parameter GDN-2 hybrid has completed the fixed approximately-100M-token finite pretraining schedule.
 
-The adaptive GDN-2 repair passed the former update-1,138 failure boundary. The resumed run then completed optimizer update 1,497 and failed on the next prepared block because the trainer allowed only three FP16 overflow retries. Four scaled-gradient overflows caused termination immediately after the scaler reduced its likely loss scale from 2,048 to 128; scale 128 was never attempted.
-
-This incident is classified as premature dynamic-loss-scale calibration termination, not a repeat of the GDN-2 forward non-finite failure. The last successful loss, gradient, throughput, and memory telemetry remained ordinary for this run.
-
-The repository now derives an execution-time retry allowance from the restored GradScaler scale and backoff factor. The configured retry count remains serialized and acts as a minimum, preserving checkpoint identity. A block may retry until it receives a final attempt at loss scale 1.0. If gradients remain non-finite there, the trainer still fails closed with block and scale diagnostics. Non-finite forward loss fails immediately because backward loss scaling cannot repair it.
-
-The next action remains completion of the normal 100M Kaggle entry point followed by the frozen final evaluation bundle. The launcher reads and verifies the actual remote checkpoint pointer rather than relying on this file for live progress.
+Canonical final W&B evidence:
 
 ```text
-model parameters: 20,637,592
-architecture: gdn2_hybrid
-context: 2,048
-precision: FP16
-optimizer: hybrid Muon + AdamW
-training venue: Kaggle NVIDIA T4
-experiment: one pass over the fixed approximately-100M-token dataset
-training microbatch: 4 sequences
-validation microbatch: 1 sequence
-configured maximum GDN chunk: 32 tokens
-adaptive GDN decay-span limit: 60
-configured minimum FP16 overflow retries: 3
-adaptive FP16 calibration floor: loss scale 1.0
-validation cadence: 250 updates
-local checkpoint cadence: 250 updates
-verified remote publication cadence: 250 updates
-repository default session cap: none within the finite plan
 W&B run ID: 20m-100m-data-004
-pinned recovery worktree: 8e3cd9cb149facc5fa28e8108a70304c1f8c1c15
+W&B state: finished
+optimizer updates: 3,053
+final consumed training target tokens: 100,018,176
+final held-out validation loss: 4.252758495143203
+final held-out validation perplexity: 70.29906475797992
+final checkpoint: step-00003053
+final remote publication: verified, final=true
 ```
 
-W&B reconnects to the same fixed run and does not erase failed or replayed history tails. Model/data resume remains exact from the verified checkpoint.
+The validation curve improved at every recorded checkpoint from update 250 through update 3,053. It fell from `6.517897 / 677.153 PPL` at update 250 to `4.252758 / 70.299 PPL` at completion. Validation still improved materially in the tail: `4.450810` at update 2,250, `4.395521` at update 2,500, `4.324534` at update 2,750, `4.260713` at update 3,000, and `4.252758` at the final partial block. The 100M result therefore does not show data saturation of the 20M model; marginal gains were diminishing but remained measurable at the end.
 
-This file does not guess live progress after launch. Read the active W&B run and verified remote checkpoint pointer for exact state.
+The exact WSD telemetry reaches peak LR `3e-4` at update 153, remains at peak through update 2,442, begins decay at update 2,443, and ends at `3e-5`.
 
-## Authorized next experiment
+### Numerical stability
 
-After the 100M run completes and its frozen evaluation bundle is preserved, the same approximately-20M-parameter model receives one final fresh data-scaling probe over a separately identified approximately-500M-token finite dataset.
+The completed accepted trajectory records nine FP16 overflow events. One-retry events occur at updates 939, 1,066, 1,083, 1,199, and 1,247. The formerly fatal block succeeds at update 1,498 after four retries, calibrating the loss scale to `128`. No later overflow is recorded through completion; scale 128 remains stable for the rest of the run.
 
-The 500M probe is not a continuation of the 100M checkpoint. It starts from the same seed-17 initialization policy and receives a new one-pass WSD schedule derived from the completed 500M manifest. The nominal 500M point is approximately 24.2 accepted source tokens per learned parameter and is intended to characterize the practical limit of the smoke-scale model before the project moves its main pretraining work to larger parameter counts.
+Across the 3,041 unique successful updates with primary W&B train telemetry, median gradient norm is `0.9718`, p95 is `1.5728`, and the maximum is `17.8926` at update 1,144. `1,236 / 3,041` logged successful updates are clipped (`40.6%`). The run remains finite and validation continues improving despite common clipping.
 
-Dataset preparation is already authorized and may run on the VPS while the 100M tail finishes. No whole Nemotron-ClimbMix download is required: the existing pinned deterministic HTTP byte-range production path builds the fixed cache directly. Training must wait for the 100M final evaluation and must consume the fully verified private Kaggle dataset rather than a live source stream.
+### Resume correctness
 
-The fresh 500M training launch does not repeat the inherited microbatch 1-vs-4 probes. Microbatch 4 is already an accepted operating point on the same 20M-model/T4 path, so update 1 is a real seed-17 training update at microbatch 4. The launch summary records the probe as intentionally skipped rather than claiming a measured pass. Held-out validation, local checkpointing, and verified remote checkpoint publication remain fixed at every 250 successful optimizer updates.
+The W&B run preserves replayed tails across six Kaggle sessions. Exactly 630 successful global updates are logged in both an earlier/discarded tail and the resumed trajectory. Every directly overlapping replay has identical logged loss and gradient norm (`max absolute difference = 0`). This is strong empirical evidence that the same-T4 exact restore/replay contract preserved training numerics.
+
+W&B has one evidence gap: updates `2,473–2,484` are absent entirely from the export. No values are inferred for those 12 updates.
+
+### Throughput is now the main implementation concern
+
+Data loading was not the bottleneck:
+
+```text
+median data-wait per logged update: 4.23 ms
+p95 data-wait: 12.25 ms
+maximum data-wait: 57.04 ms
+maximum reserved VRAM: 9.127 GiB
+```
+
+Training compute slowed severely as model state evolved. On the accepted session path, representative median throughput fell from about `3,830 target tok/s` over updates 1–1,000 to about `445 target tok/s` over updates 3,001–3,053, an approximately `8.6x` slowdown. Validation time shows almost the same factor, from roughly `27.55 s` at update 1,000 to `236.20 s` at the final checkpoint.
+
+This is strongly consistent with the correctness-first adaptive GDN-2 backend increasingly selecting smaller numerical subchunks as learned decay spans grow, but the current telemetry does not log actual selected subchunk sizes or split counts. Causality is therefore not yet proven. Instrumenting GDN subchunk selection / decay-span triggers is now a priority for interpreting 500M runtime and for later larger-model work.
+
+The canonical detailed report is:
+
+- [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
+
+## Active next experiment — fresh 20M / 500M run
+
+The authorized next experiment remains the final fresh data-scaling characterization of the same approximately-20M-parameter model over the separately identified approximately-500M-token finite dataset.
+
+It is not a continuation of the 100M checkpoint. It starts from seed 17 with its own one-pass WSD plan.
 
 ```text
 profile: 20m-500m-data-scaling-v1
@@ -59,26 +69,25 @@ dataset run ID: 20m-500m-dataset-001
 target accepted source tokens: 500,000,000
 minimum accepted source tokens: 450,000,000
 hard maximum accepted source tokens: 550,000,000
-producer durable checkpoint cadence: 20,000,000 source tokens
 context: 2,048
-sequences per optimizer block: 16
-target shard size: 8 MiB
-remote durability: required
-fresh initialization seed: 17
-training microbatch: 4 sequences from first real update
+training microbatch: 4 from the first real update
 fresh microbatch probes: skipped by experiment decision
-held-out validation cadence: 250 optimizer updates
-local checkpoint cadence: 250 optimizer updates
-verified remote publication cadence: 250 optimizer updates
+held-out validation cadence: 250 successful updates
+local checkpoint cadence: 250 successful updates
+verified remote publication cadence: 250 successful updates
 W&B run ID: 20m-500m-data-001
-pinned 500M training worktree: 01d562ea1845d0dd128a0458e613c9e677b7381d
+pinned training worktree: 01d562ea1845d0dd128a0458e613c9e677b7381d
 ```
 
-The one-command VPS entry point is `bash kaggle/build_and_push_500m.sh`. The one-command Kaggle entry point, after the 100M final evaluation is complete, is `python kaggle/run_20m_500m.py`.
+The first 500M Kaggle launch verified the attached dataset successfully but failed closed while deriving the schedule because the inherited launcher dispatched the 500M manifest to `dataset.qualification_100m_report`. The dataset was not at fault and no optimizer update ran. `main` now rewrites that one inherited dispatch to `dataset.qualification_500m_report`; the next operational action is simply to pull current `main` and rerun:
 
-## Accepted anchor
+```bash
+python kaggle/run_20m_500m.py
+```
 
-The completed 10M-token run remains the historical anchor:
+The 500M run remains scientifically useful because the 100M result is still improving. Its wall-clock cost is now a separate implementation risk because the 100M run exposed severe late-stage GDN compute slowdown.
+
+## Historical 10M anchor
 
 ```text
 accepted source tokens: 10,000,662
@@ -88,55 +97,44 @@ final validation perplexity: 462.520157
 FP16 overflow events: 0
 ```
 
+The 10M result is a historical anchor, not a strict same-validation-block comparison with the 100M result.
+
 ## Frozen decisions affecting current work
 
-- Continue the main GDN-2 hybrid through the 20M-model data-scaling stage.
-- Complete and evaluate the current 100M run before launching the fresh 500M training run.
-- Use one fresh approximately-500M-token run as the final data-scaling characterization of the 20M smoke model; do not spend 1B tokens on it by default.
-- Do not continue the 100M final checkpoint into the 500M schedule; use fresh seed-17 initialization and a separately derived finite WSD plan.
-- Start the fresh 500M run directly at microbatch 4 and do not execute the inherited microbatch 1-vs-4 startup probes.
-- For the 500M run, validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful optimizer updates.
-- Do not run the matched all-attention or other mixer baseline yet.
-- Revisit architecture comparisons when larger model versions are reached.
-- Use adaptive numerical GDN subchunking rather than globally shrinking the configured chunk or clamping decay.
-- Let FP16 loss scaling calibrate to scale 1.0 before failing an otherwise atomic block.
-- Use the permanent stratified `eval_core_v1` fast/full suites and retain the existing prompt answers in the unified evaluator.
-- Attempt the complete remaining finite one-pass schedule in one Kaggle invocation by default; exact verified checkpoints handle platform interruption.
-- Retain both free-generation diagnostics and a deterministic teacher-forced held-out confidence/rank diagnostic so later token/model scales can be compared on semantic uncertainty versus confident errors.
+- Complete one fresh approximately-500M-token run as the final data-scaling characterization of the 20M smoke model.
+- Do not initialize the 500M run from the 100M final checkpoint.
+- Start the 500M run directly at microbatch 4; do not replay the inherited microbatch 1-vs-4 probes.
+- Validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful 500M updates.
+- Keep adaptive numerical GDN subchunking rather than altering/clamping the recurrence for correctness.
+- Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
+- Do not run the matched all-attention baseline at the 20M smoke scale; revisit architecture comparisons at larger model sizes.
+- Preserve the permanent `eval_core_v1` fast/full suite plus free-generation and teacher-forced confidence/rank diagnostics.
 
 ## Evaluation state
 
-The repository contains:
+The W&B export establishes completion and the held-out training-validation trajectory, but it does not contain the frozen post-pretraining capability evaluation.
+
+Still separate from this training result:
 
 ```text
-small-llm-eval-data build|verify
-small-llm-eval fast|full
+eval_core_v1 fast/full
+free-generation prompt diagnostics
+teacher-forced held-out confidence/rank diagnostics
 ```
 
-The code, manifest contract, streaming metrics, prompt integration, and offline tests are implemented. The production `eval_core_v1` corpus still needs to be built and its fast/full runtime measured on the T4 before it becomes an accepted evaluation artifact.
-
-The post-pretraining model-output suite supports `--max-new-tokens` as a global cap on each case's native generation budget and `--trace-top-tokens` for per-step raw next-token probability inspection. The canonical short diagnostic uses greedy decoding, a 32-token cap, and a top-5 raw-token trace; the trace is printed and retained in JSON without changing the model's decoding distribution.
-
-The suite now also supports `--teacher-forced-validation`. This mode identity-matches the local validation dataset to the verified checkpoint through `drive_manifest.json`, evaluates the first 4,096 active held-out next-token targets in deterministic order, and records true-token probability/rank, raw top-1/top-5 probabilities, top-5 mass, entropy, sampled loss/perplexity, top-k hit rates, and confidently-wrong rates. It processes one sequence at a time and computes distribution metrics in 256-position chunks to keep full-vocabulary diagnostics bounded on the T4.
-
-The ordinary held-out training validation path uses `torch.inference_mode()` and a dedicated one-sequence microbatch to prevent full-vocabulary evaluation OOM on the T4.
+These should be preserved for the 100M checkpoint so the later 500M result can be compared on more than perplexity.
 
 ## Current source of truth
 
-- Current 100M experiment procedure: [`../runbooks/20m_100m_runbook.md`](../runbooks/20m_100m_runbook.md)
-- Authorized 500M final-probe procedure: [`../runbooks/20m_500m_runbook.md`](../runbooks/20m_500m_runbook.md)
-- 500M final-probe decision: [`../decisions/0008-run-500m-final-20m-data-scaling-probe.md`](../decisions/0008-run-500m-final-20m-data-scaling-probe.md)
-- 500M direct-microbatch/durability decision: [`../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md`](../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md)
-- FP16 incident evidence: [`../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md`](../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md)
+- Final 100M W&B evidence: [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
+- 500M procedure: [`../runbooks/20m_500m_runbook.md`](../runbooks/20m_500m_runbook.md)
+- 500M experiment decision: [`../decisions/0008-run-500m-final-20m-data-scaling-probe.md`](../decisions/0008-run-500m-final-20m-data-scaling-probe.md)
+- 500M microbatch/durability decision: [`../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md`](../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md)
 - FP16 calibration decision: [`../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md`](../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md)
+- GDN-2 adaptive execution decision: [`../decisions/0005-adapt-gdn2-chunks-to-decay-span.md`](../decisions/0005-adapt-gdn2-chunks-to-decay-span.md)
+- GDN-2 execution contract: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
 - FP16 execution contract: [`../reference/fp16_overflow_recovery.md`](../reference/fp16_overflow_recovery.md)
-- GDN-2 incident evidence: [`../evidence/20m_100m/gdn2_nonfinite_step_1138_2026-08-06.md`](../evidence/20m_100m/gdn2_nonfinite_step_1138_2026-08-06.md)
-- Adaptive GDN-2 decision: [`../decisions/0005-adapt-gdn2-chunks-to-decay-span.md`](../decisions/0005-adapt-gdn2-chunks-to-decay-span.md)
-- Validation OOM evidence: [`../evidence/20m_100m/validation_oom_step_500_2026-08-06.md`](../evidence/20m_100m/validation_oom_step_500_2026-08-06.md)
-- Revised durability decision: [`../decisions/0004-run-100m-in-one-session-with-250-step-durability.md`](../decisions/0004-run-100m-in-one-session-with-250-step-durability.md)
 - Evaluation procedure: [`../runbooks/eval_core_v1_runbook.md`](../runbooks/eval_core_v1_runbook.md)
 - Model-output procedure: [`../runbooks/post_pretraining_prompt_suite.md`](../runbooks/post_pretraining_prompt_suite.md)
-- Model contract: [`../reference/model_architecture.md`](../reference/model_architecture.md)
-- GDN-2 execution contract: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
