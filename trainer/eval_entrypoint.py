@@ -10,10 +10,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
+import threading
 from typing import Sequence
 
 from dataset.eval_core import build_eval_core, verify_eval_core
 from trainer import eval_suite
+
+_BUILD_HEARTBEAT_SECONDS = 15.0
 
 
 def default_eval_dir() -> Path:
@@ -39,6 +42,57 @@ def _eval_dir_from_argv(argv: Sequence[str]) -> Path | None:
     return None
 
 
+def _partial_build_bytes(eval_dir: Path) -> int:
+    """Return bytes currently written by this process's atomic eval build."""
+
+    parent = eval_dir.parent
+    prefix = f".{eval_dir.name}.partial-"
+    total = 0
+    try:
+        candidates = tuple(parent.iterdir())
+    except OSError:
+        return 0
+    for candidate in candidates:
+        if not candidate.is_dir() or not candidate.name.startswith(prefix):
+            continue
+        try:
+            total += sum(
+                path.stat().st_size
+                for path in candidate.rglob("*")
+                if path.is_file()
+            )
+        except OSError:
+            continue
+    return total
+
+
+def _build_with_heartbeat(eval_dir: Path) -> None:
+    """Build eval_core while making long remote scans visibly alive."""
+
+    stop = threading.Event()
+
+    def heartbeat() -> None:
+        while not stop.wait(_BUILD_HEARTBEAT_SECONDS):
+            written = _partial_build_bytes(eval_dir)
+            print(
+                "eval_core_v1 build active: scanning pinned ClimbMix source "
+                f"| partial_output={written / (1024 * 1024):.1f} MiB",
+                flush=True,
+            )
+
+    thread = threading.Thread(
+        target=heartbeat,
+        name="eval-core-build-heartbeat",
+        daemon=True,
+    )
+    thread.start()
+    try:
+        build_eval_core(eval_dir)
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+
+
 def ensure_eval_core(eval_dir: Path) -> Path:
     """Build the frozen eval corpus when absent and always verify it."""
 
@@ -48,8 +102,13 @@ def ensure_eval_core(eval_dir: Path) -> Path:
             f"eval_core_v1 not found at {resolved}; building the frozen evaluation corpus...",
             flush=True,
         )
+        print(
+            "The frozen validation partition is sparse; source scanning can run for many "
+            "records before the corpus builder selects its first reporting batch.",
+            flush=True,
+        )
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        build_eval_core(resolved)
+        _build_with_heartbeat(resolved)
     else:
         print(f"Using existing eval_core_v1 at {resolved}", flush=True)
 
