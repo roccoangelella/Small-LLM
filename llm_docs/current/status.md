@@ -51,6 +51,8 @@ The 500M probe is not a continuation of the 100M checkpoint. It starts from the 
 
 Dataset preparation is already authorized and may run on the VPS while the 100M tail finishes. No whole Nemotron-ClimbMix download is required: the existing pinned deterministic HTTP byte-range production path builds the fixed cache directly. Training must wait for the 100M final evaluation and must consume the fully verified private Kaggle dataset rather than a live source stream.
 
+The fresh 500M training launch does not repeat the inherited microbatch 1-vs-4 probes. Microbatch 4 is already an accepted operating point on the same 20M-model/T4 path, so update 1 is a real seed-17 training update at microbatch 4. The launch summary records the probe as intentionally skipped rather than claiming a measured pass. Held-out validation, local checkpointing, and verified remote checkpoint publication remain fixed at every 250 successful optimizer updates.
+
 ```text
 profile: 20m-500m-data-scaling-v1
 dataset run ID: 20m-500m-dataset-001
@@ -63,9 +65,13 @@ sequences per optimizer block: 16
 target shard size: 8 MiB
 remote durability: required
 fresh initialization seed: 17
-training durability cadence: 250 optimizer updates
+training microbatch: 4 sequences from first real update
+fresh microbatch probes: skipped by experiment decision
+held-out validation cadence: 250 optimizer updates
+local checkpoint cadence: 250 optimizer updates
+verified remote publication cadence: 250 optimizer updates
 W&B run ID: 20m-500m-data-001
-pinned 500M training worktree: 7c726ab51e4f3ed221d164e2596816da6d54c5cc
+pinned 500M training worktree: 01d562ea1845d0dd128a0458e613c9e677b7381d
 ```
 
 The one-command VPS entry point is `bash kaggle/build_and_push_500m.sh`. The one-command Kaggle entry point, after the 100M final evaluation is complete, is `python kaggle/run_20m_500m.py`.
@@ -88,13 +94,14 @@ FP16 overflow events: 0
 - Complete and evaluate the current 100M run before launching the fresh 500M training run.
 - Use one fresh approximately-500M-token run as the final data-scaling characterization of the 20M smoke model; do not spend 1B tokens on it by default.
 - Do not continue the 100M final checkpoint into the 500M schedule; use fresh seed-17 initialization and a separately derived finite WSD plan.
+- Start the fresh 500M run directly at microbatch 4 and do not execute the inherited microbatch 1-vs-4 startup probes.
+- For the 500M run, validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful optimizer updates.
 - Do not run the matched all-attention or other mixer baseline yet.
 - Revisit architecture comparisons when larger model versions are reached.
 - Use adaptive numerical GDN subchunking rather than globally shrinking the configured chunk or clamping decay.
 - Let FP16 loss scaling calibrate to scale 1.0 before failing an otherwise atomic block.
 - Use the permanent stratified `eval_core_v1` fast/full suites and retain the existing prompt answers in the unified evaluator.
 - Attempt the complete remaining finite one-pass schedule in one Kaggle invocation by default; exact verified checkpoints handle platform interruption.
-- Validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful updates.
 - Retain both free-generation diagnostics and a deterministic teacher-forced held-out confidence/rank diagnostic so later token/model scales can be compared on semantic uncertainty versus confident errors.
 
 ## Evaluation state
@@ -119,6 +126,7 @@ The ordinary held-out training validation path uses `torch.inference_mode()` and
 - Current 100M experiment procedure: [`../runbooks/20m_100m_runbook.md`](../runbooks/20m_100m_runbook.md)
 - Authorized 500M final-probe procedure: [`../runbooks/20m_500m_runbook.md`](../runbooks/20m_500m_runbook.md)
 - 500M final-probe decision: [`../decisions/0008-run-500m-final-20m-data-scaling-probe.md`](../decisions/0008-run-500m-final-20m-data-scaling-probe.md)
+- 500M direct-microbatch/durability decision: [`../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md`](../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md)
 - FP16 incident evidence: [`../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md`](../evidence/20m_100m/fp16_overflow_step_1497_2026-08-06.md)
 - FP16 calibration decision: [`../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md`](../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md)
 - FP16 execution contract: [`../reference/fp16_overflow_recovery.md`](../reference/fp16_overflow_recovery.md)
