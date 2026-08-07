@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-06
+last_reviewed: 2026-08-07
 ---
 
 # Current project status
@@ -77,6 +77,8 @@ small-llm-eval fast|full
 
 The code, manifest contract, streaming metrics, prompt integration, and offline tests are implemented. The production `eval_core_v1` corpus still needs to be built and its fast/full runtime measured on the T4 before it becomes an accepted evaluation artifact.
 
+The post-pretraining prompt suite now supports `--max-new-tokens` as a global cap on each case's native generation budget and `--trace-top-tokens` for per-step raw next-token probability inspection. The canonical short diagnostic uses greedy decoding, a 32-token cap, and a top-5 raw-token trace; the trace is printed and retained in JSON without changing the model's decoding distribution.
+
 The ordinary held-out training validation path uses `torch.inference_mode()` and a dedicated one-sequence microbatch to prevent full-vocabulary evaluation OOM on the T4.
 
 ## Current source of truth
@@ -90,6 +92,7 @@ The ordinary held-out training validation path uses `torch.inference_mode()` and
 - Validation OOM evidence: [`../evidence/20m_100m/validation_oom_step_500_2026-08-06.md`](../evidence/20m_100m/validation_oom_step_500_2026-08-06.md)
 - Revised durability decision: [`../decisions/0004-run-100m-in-one-session-with-250-step-durability.md`](../decisions/0004-run-100m-in-one-session-with-250-step-durability.md)
 - Evaluation procedure: [`../runbooks/eval_core_v1_runbook.md`](../runbooks/eval_core_v1_runbook.md)
+- Prompt-suite procedure: [`../runbooks/post_pretraining_prompt_suite.md`](../runbooks/post_pretraining_prompt_suite.md)
 - Model contract: [`../reference/model_architecture.md`](../reference/model_architecture.md)
 - GDN-2 execution contract: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
