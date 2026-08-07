@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
+from typing import Any
 
 PINNED_LAUNCH_COMMIT = "01d562ea1845d0dd128a0458e613c9e677b7381d"
 WANDB_INIT_TIMEOUT_SECONDS = "30"
 WANDB_RUN_ID = "20m-500m-data-001"
 DURABILITY_EVERY_STEPS = 250
+_BASE_QUALIFICATION_REPORT = "dataset.qualification_100m_report"
+_PROFILE_QUALIFICATION_REPORT = "dataset.qualification_500m_report"
 
 if any(
     argument == "--launch-commit" or argument.startswith("--launch-commit=")
@@ -27,6 +31,30 @@ from run_20m_100m_console import install_common_console  # noqa: E402
 install_common_console(common)
 
 import run_20m_500m_data_scaling as experiment  # noqa: E402
+
+
+def _rewrite_profile_command(command: Sequence[str]) -> list[str]:
+    """Bind inherited 100M report dispatch to the 500M qualification profile."""
+
+    return [
+        _PROFILE_QUALIFICATION_REPORT if item == _BASE_QUALIFICATION_REPORT else item
+        for item in command
+    ]
+
+
+# The private 500M overlay intentionally reuses the proven 100M launch loop.
+# That loop contains one literal module dispatch for qualification-plan creation.
+# Rewrite only that exact command at the process boundary so the verified 500M
+# manifest is evaluated by its own profile. All other setup/training commands
+# continue through the existing console/evidence wrapper unchanged.
+_profile_console_run = common.run
+
+
+def _run_500m_profile(command: Sequence[str], *args: Any, **kwargs: Any) -> dict[str, Any]:
+    return _profile_console_run(_rewrite_profile_command(command), *args, **kwargs)
+
+
+common.run = _run_500m_profile
 
 # Attempt every remaining update in the exact finite 500M one-pass plan in each
 # invocation. Fresh training starts directly at microbatch 4; the profile records
