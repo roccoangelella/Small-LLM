@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Fail-closed 500M profile overlay for the proven 20M/100M Kaggle launcher.
 
-The training mechanics remain identical to the qualified 100M path.  This module
-binds a distinct finite dataset identity, W&B identity, output namespace, and
-500M manifest envelope while reusing exact-resume, numerical gates, validation,
-and checkpoint publication code.
+The training mechanics remain identical to the qualified 100M path. This module
+loads that implementation under a private module name, then binds a distinct
+finite dataset identity, W&B identity, output namespace, and 500M manifest
+envelope. The private load prevents the 500M profile from mutating the ordinary
+100M module when both are imported by the offline test suite.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -16,7 +18,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-import run_20m_100m_data_scaling as base
+BASE_IMPLEMENTATION = Path(__file__).with_name("run_20m_100m_data_scaling.py")
+BASE_SPEC = importlib.util.spec_from_file_location(
+    "small_llm_run_20m_500m_base", BASE_IMPLEMENTATION
+)
+if BASE_SPEC is None or BASE_SPEC.loader is None:
+    raise RuntimeError(f"Cannot load {BASE_IMPLEMENTATION}")
+base = importlib.util.module_from_spec(BASE_SPEC)
+sys.modules[BASE_SPEC.name] = base
+BASE_SPEC.loader.exec_module(base)
 
 DEFAULT_COMMIT = "__PIN_20M_500M_LAUNCH_COMMIT__"
 DATASET_RUN_ID = "20m-500m-dataset-001"
@@ -197,8 +207,8 @@ def install_profile() -> None:
 install_profile()
 
 # Re-export the training surface used by the console adapter, entry point, and
-# offline tests.  Functions imported from the base module read the overlaid
-# globals above at call time.
+# offline tests. Functions imported from the private base module read the
+# overlaid globals above at call time.
 LaunchFailure = base.LaunchFailure
 common = base.common
 MAX_STEPS_PER_SESSION = base.MAX_STEPS_PER_SESSION
