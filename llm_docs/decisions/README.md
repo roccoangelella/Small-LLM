@@ -20,5 +20,6 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0007-render-teacher-forced-examples-as-readable-ground-truth.md`](0007-render-teacher-forced-examples-as-readable-ground-truth.md)
 - [`0008-run-500m-final-20m-data-scaling-probe.md`](0008-run-500m-final-20m-data-scaling-probe.md)
 - [`0009-start-500m-at-microbatch-4-with-250-step-durability.md`](0009-start-500m-at-microbatch-4-with-250-step-durability.md)
+- [`0010-self-provision-eval-core-from-main-evaluator.md`](0010-self-provision-eval-core-from-main-evaluator.md)
 
 Use [`template.md`](template.md) for new decisions. Historical omnibus decision registers are retained under [`../archive/decision_registers/`](../archive/decision_registers/decisions_and_ablations.md) but are no longer the preferred format for new choices.
