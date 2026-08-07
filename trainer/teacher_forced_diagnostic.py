@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import statistics
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import torch
 from torch import Tensor, nn
@@ -148,6 +149,73 @@ def _decode_token(encoding: Any, token_id: int) -> str:
     return encoding.decode_single_token_bytes(token_id).decode("utf-8", errors="replace")
 
 
+def _is_word_character(character: str) -> bool:
+    return character.isalnum() or character in {"_", "'", "’"}
+
+
+def _annotated_target_text(
+    text: str,
+    token_offsets: Sequence[int],
+    target_token_index: int,
+    *,
+    before_chars: int = 120,
+    after_chars: int = 80,
+) -> str:
+    """Show readable ground truth with the lexical span containing the target bracketed."""
+
+    if not 0 <= target_token_index < len(token_offsets):
+        raise ValueError("target_token_index is outside the decoded token sequence")
+    if before_chars < 0 or after_chars < 0:
+        raise ValueError("display context sizes must be non-negative")
+
+    token_start = int(token_offsets[target_token_index])
+    token_end = (
+        int(token_offsets[target_token_index + 1])
+        if target_token_index + 1 < len(token_offsets)
+        else len(text)
+    )
+    token_start = max(0, min(token_start, len(text)))
+    token_end = max(token_start, min(token_end, len(text)))
+
+    word_positions = [
+        index
+        for index in range(token_start, token_end)
+        if _is_word_character(text[index])
+    ]
+    if word_positions:
+        span_start = word_positions[0]
+        span_end = word_positions[-1] + 1
+        while span_start > 0 and _is_word_character(text[span_start - 1]):
+            span_start -= 1
+        while span_end < len(text) and _is_word_character(text[span_end]):
+            span_end += 1
+    else:
+        span_start, span_end = token_start, token_end
+        while span_start < span_end and text[span_start].isspace():
+            span_start += 1
+        while span_end > span_start and text[span_end - 1].isspace():
+            span_end -= 1
+        if span_start == span_end:
+            span_start, span_end = token_start, token_end
+
+    context_start = max(0, span_start - before_chars)
+    context_end = min(len(text), span_end + after_chars)
+    before = text[context_start:span_start]
+    target = text[span_start:span_end]
+    after = text[span_end:context_end]
+    snippet = before + "[" + target + "]" + after
+    snippet = " ".join(snippet.split())
+    if context_start > 0:
+        snippet = "..." + snippet
+    if context_end < len(text):
+        snippet += "..."
+    return snippet
+
+
+def _format_probability_percent(probability: float) -> str:
+    return f"{probability * 100:.6g}%"
+
+
 def _summary(records: list[dict[str, object]]) -> dict[str, float | int]:
     if not records:
         raise RuntimeError("teacher-forced diagnostic produced no active target tokens")
@@ -242,11 +310,19 @@ def run_teacher_forced_validation(
             for sequence_index in range(batch.sequence_count):
                 if len(records) >= maximum_tokens:
                     break
-                input_ids = batch.input_ids[sequence_index : sequence_index + 1].to(
+
+                source_input_ids = batch.input_ids[sequence_index]
+                source_labels = batch.labels[sequence_index]
+                ground_truth_ids = torch.cat((source_input_ids, source_labels[-1:])).tolist()
+                ground_truth_text, ground_truth_offsets = encoding.decode_with_offsets(
+                    ground_truth_ids
+                )
+
+                input_ids = source_input_ids.unsqueeze(0).to(
                     device=device,
                     non_blocking=True,
                 )
-                labels = batch.labels[sequence_index].to(device=device, non_blocking=True)
+                labels = source_labels.to(device=device, non_blocking=True)
                 with autocast_context(precision, device):
                     logits = model(input_ids)[0]
 
@@ -297,6 +373,11 @@ def run_teacher_forced_validation(
                                 "sequence_index": sequence_index,
                                 "position": position,
                                 "context_tail": encoding.decode(context_ids),
+                                "display_text": _annotated_target_text(
+                                    ground_truth_text,
+                                    ground_truth_offsets,
+                                    position + 1,
+                                ),
                                 "true_token_id": true_token_id,
                                 "true_token": _decode_token(encoding, true_token_id),
                                 "true_log_probability": float(true_log_probability[local_index]),
@@ -326,6 +407,10 @@ def run_teacher_forced_validation(
             torch.cuda.empty_cache()
 
     summary = _summary(records)
+    raw_records = [
+        {key: value for key, value in row.items() if key != "display_text"}
+        for row in records
+    ]
     return {
         "mode": "teacher_forced_validation",
         "dataset_root": str(dataset_root),
@@ -334,7 +419,7 @@ def run_teacher_forced_validation(
         "top_n": top_n,
         "summary": summary,
         "representative": _representative_rows(records),
-        "tokens": records,
+        "tokens": raw_records,
     }
 
 
@@ -355,16 +440,30 @@ def print_teacher_forced_report(report: Mapping[str, object]) -> None:
         for row in rows:
             if not isinstance(row, Mapping):
                 continue
+            true_token = str(row.get("true_token", ""))
+            top1_token = str(row.get("top1_token", ""))
+            print()
             print(
-                f"context={str(row.get('context_tail'))!r} true={str(row.get('true_token'))!r} "
-                f"p_true={float(row.get('true_probability', 0.0)):.6f} "
-                f"rank={int(row.get('true_rank', 0))} "
-                f"top1={str(row.get('top1_token'))!r} "
-                f"p_top1={float(row.get('top1_probability', 0.0)):.6f}"
+                "TEXT: "
+                + json.dumps(str(row.get("display_text", "")), ensure_ascii=False)
+            )
+            print(
+                "TARGET TOKEN: "
+                + json.dumps(true_token, ensure_ascii=False)
+                + f"  (token {int(row.get('true_token_id', 0)):,})"
+            )
+            print(
+                "MODEL TOP-1: "
+                + json.dumps(top1_token, ensure_ascii=False)
+                + f"  p={_format_probability_percent(float(row.get('top1_probability', 0.0)))}"
+            )
+            print(
+                "TARGET: "
+                + json.dumps(true_token, ensure_ascii=False)
+                + f"  p={_format_probability_percent(float(row.get('true_probability', 0.0)))}, "
+                + f"rank={int(row.get('true_rank', 0)):,}"
             )
 
 
 def json_dumps(value: object) -> str:
-    import json
-
     return json.dumps(value, indent=2, sort_keys=True)
