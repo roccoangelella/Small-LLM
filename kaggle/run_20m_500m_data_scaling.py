@@ -6,6 +6,11 @@ loads that implementation under a private module name, then binds a distinct
 finite dataset identity, W&B identity, output namespace, and 500M manifest
 envelope. The private load prevents the 500M profile from mutating the ordinary
 100M module when both are imported by the offline test suite.
+
+For this final 20M-model probe, microbatch 4 is already an accepted operating
+point from the preceding T4 run. The 500M profile therefore records that choice
+explicitly and skips the fresh microbatch 1-vs-4 probe runs; ordinary training
+still starts from seed 17 and uses microbatch 4 from its first real update.
 """
 from __future__ import annotations
 
@@ -37,6 +42,7 @@ MAXIMUM_SOURCE_TOKENS = 550_000_000
 CHECKPOINT_SOURCE_TOKENS = 20_000_000
 RUN_NAME = "20M model on 500M tokens"
 WANDB_RUN_ID = "20m-500m-data-001"
+SELECTED_MICROBATCH = 4
 ROOT = base.common.WORK / "small-llm-20m-500m-data-scaling"
 WORKTREE = ROOT / "launch-worktree"
 EVIDENCE = ROOT / ("evidence-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -176,6 +182,23 @@ def trainer_command(
     return command
 
 
+def qualify_microbatch_without_probe(
+    uv: str,
+    dataset: Path,
+    plan: Mapping[str, Any],
+    env: Mapping[str, str],
+) -> dict[str, Any]:
+    """Select the already-qualified microbatch 4 without executing probe updates."""
+
+    del uv, dataset, plan, env
+    return {
+        "status": "skipped_by_experiment_decision",
+        "selected_microbatch": SELECTED_MICROBATCH,
+        "probe_steps_executed": 0,
+        "reason": "microbatch_4_already_qualified_on_the_same_20m_model_and_T4_training_path",
+    }
+
+
 def profile_print(*values: object, **kwargs: object) -> None:
     replaced = [
         value.replace("100M-token run completed", "500M-token run completed")
@@ -201,6 +224,7 @@ def install_profile() -> None:
     base.find_dataset = find_dataset
     base.wandb_preflight_command = wandb_preflight_command
     base.trainer_command = trainer_command
+    base.qualify_microbatch = qualify_microbatch_without_probe
     base.print = profile_print
 
 
@@ -217,7 +241,7 @@ EVAL_EVERY = base.EVAL_EVERY
 REMOTE_EVERY = base.REMOTE_EVERY
 WANDB_INIT_TIMEOUT_SECONDS = base.WANDB_INIT_TIMEOUT_SECONDS
 validate_wandb_preflight_result = base.validate_wandb_preflight_result
-compare_probes = base.compare_probes
+qualify_microbatch = base.qualify_microbatch
 segment_plan = base.segment_plan
 validate_plan = base.validate_plan
 main = base.main
