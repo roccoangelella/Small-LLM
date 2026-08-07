@@ -18,7 +18,7 @@ import tempfile
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import torch
 from torch import Tensor, nn
@@ -278,6 +278,53 @@ def _filter_logits(logits: Tensor, *, top_k: int, top_p: float) -> Tensor:
     return filtered
 
 
+def _generation_budget(case: PromptCase, max_new_tokens: int | None) -> int:
+    """Return the prompt's native budget capped by an optional global limit."""
+
+    if max_new_tokens is None:
+        return case.max_new_tokens
+    return min(case.max_new_tokens, max_new_tokens)
+
+
+def _decode_token(encoding: Any, token_id: int) -> str:
+    return encoding.decode_single_token_bytes(token_id).decode("utf-8", errors="replace")
+
+
+def _decode_token_trace(
+    trace: Sequence[Mapping[str, object]],
+    encoding: Any,
+) -> list[dict[str, object]]:
+    decoded: list[dict[str, object]] = []
+    for entry in trace:
+        candidates = entry.get("top_tokens")
+        if not isinstance(candidates, list):
+            raise RuntimeError("token trace has an invalid top_tokens payload")
+        decoded_candidates: list[dict[str, object]] = []
+        for rank, candidate in enumerate(candidates, start=1):
+            if not isinstance(candidate, Mapping):
+                raise RuntimeError("token trace candidate is not a mapping")
+            token_id = int(candidate["token_id"])
+            decoded_candidates.append(
+                {
+                    "rank": rank,
+                    "token_id": token_id,
+                    "token": _decode_token(encoding, token_id),
+                    "probability": float(candidate["probability"]),
+                }
+            )
+        chosen_token_id = int(entry["chosen_token_id"])
+        decoded.append(
+            {
+                "step": int(entry["step"]),
+                "chosen_token_id": chosen_token_id,
+                "chosen_token": _decode_token(encoding, chosen_token_id),
+                "chosen_probability": float(entry["chosen_probability"]),
+                "top_tokens": decoded_candidates,
+            }
+        )
+    return decoded
+
+
 @torch.inference_mode()
 def sample_token_ids(
     model: nn.Module,
@@ -291,8 +338,10 @@ def sample_token_ids(
     top_k: int,
     seed: int,
     precision: str,
+    trace_top_tokens: int = 0,
+    trace_out: list[dict[str, object]] | None = None,
 ) -> list[int]:
-    """Generate one continuation with greedy or seeded top-k/top-p sampling."""
+    """Generate one continuation and optionally capture the raw next-token distribution."""
 
     if not prompt_ids:
         raise ValueError("prompt must contain at least one token")
@@ -304,15 +353,32 @@ def sample_token_ids(
         raise ValueError("top_p must be in (0, 1]")
     if top_k < 0:
         raise ValueError("top_k must be non-negative")
+    if trace_top_tokens < 0:
+        raise ValueError("trace_top_tokens must be non-negative")
+    if trace_top_tokens > 0 and trace_out is None:
+        raise ValueError("trace_out is required when trace_top_tokens is positive")
 
     device = next(model.parameters()).device
     output = torch.tensor([list(prompt_ids)], dtype=torch.long, device=device)
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
     generated: list[int] = []
-    for _ in range(max_new_tokens):
+    for step_index in range(max_new_tokens):
         with _autocast_context(device, precision):
             logits = model(output[:, -max_seq_len:])[:, -1, :].float()
+
+        raw_probabilities: Tensor | None = None
+        trace_ids: Tensor | None = None
+        trace_probabilities: Tensor | None = None
+        if trace_top_tokens > 0:
+            raw_probabilities = torch.softmax(logits, dim=-1)
+            trace_count = min(trace_top_tokens, raw_probabilities.shape[-1])
+            trace_probabilities, trace_ids = torch.topk(
+                raw_probabilities,
+                trace_count,
+                dim=-1,
+            )
+
         if temperature == 0:
             next_token = logits.argmax(dim=-1, keepdim=True)
         else:
@@ -323,7 +389,32 @@ def sample_token_ids(
             ):
                 raise FloatingPointError("sampling produced an invalid probability distribution")
             next_token = torch.multinomial(probabilities, 1, generator=generator)
+
         token_id = int(next_token.item())
+        if trace_top_tokens > 0:
+            assert trace_out is not None
+            assert raw_probabilities is not None
+            assert trace_ids is not None
+            assert trace_probabilities is not None
+            trace_out.append(
+                {
+                    "step": step_index + 1,
+                    "chosen_token_id": token_id,
+                    "chosen_probability": float(raw_probabilities[0, token_id].item()),
+                    "top_tokens": [
+                        {
+                            "token_id": int(candidate_id),
+                            "probability": float(candidate_probability),
+                        }
+                        for candidate_id, candidate_probability in zip(
+                            trace_ids[0].tolist(),
+                            trace_probabilities[0].tolist(),
+                            strict=True,
+                        )
+                    ],
+                }
+            )
+
         generated.append(token_id)
         output = torch.cat((output, next_token), dim=1)
         if token_id == eos_token_id:
@@ -387,12 +478,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--samples-per-prompt", type=int, default=1)
     parser.add_argument("--questions-only", action="store_true")
     parser.add_argument("--max-cases", type=int)
+    parser.add_argument(
+        "--max-new-tokens",
+        type=int,
+        help="cap every prompt's native generation budget at this many new tokens",
+    )
+    parser.add_argument(
+        "--trace-top-tokens",
+        type=int,
+        default=0,
+        help="print and save the top-N raw next-token probabilities at every generation step",
+    )
     parser.add_argument("--output-json", type=Path)
     args = parser.parse_args(argv)
     if not args.repo_id:
         parser.error("set --repo-id or SMALL_LLM_HF_REPO_ID")
     if args.samples_per_prompt <= 0:
         parser.error("--samples-per-prompt must be positive")
+    if args.max_new_tokens is not None and args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive")
+    if args.trace_top_tokens < 0:
+        parser.error("--trace-top-tokens must be non-negative")
     return args
 
 
@@ -414,6 +520,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ) from error
     encoding = tiktoken.get_encoding("gpt2")
 
+    sampling_info = {
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "top_k": args.top_k,
+        "seed": args.seed,
+        "max_new_tokens": args.max_new_tokens,
+        "trace_top_tokens": args.trace_top_tokens,
+    }
     records: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="small-llm-prompt-suite-") as temporary:
         checkpoint_root, checkpoint_info = download_verified_checkpoint(
@@ -446,12 +560,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "architecture": model_config.architecture,
                         "max_seq_len": model_config.max_seq_len,
                     },
-                    "sampling": {
-                        "temperature": args.temperature,
-                        "top_p": args.top_p,
-                        "top_k": args.top_k,
-                        "seed": args.seed,
-                    },
+                    "sampling": sampling_info,
                 },
                 indent=2,
                 sort_keys=True,
@@ -462,12 +571,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             prompt_ids = encoding.encode(case.prompt, disallowed_special=())
             if len(prompt_ids) > model_config.max_seq_len:
                 raise RuntimeError(f"prompt {case.name!r} exceeds the model context window")
+            generation_budget = _generation_budget(case, args.max_new_tokens)
             for sample_index in range(args.samples_per_prompt):
                 sample_seed = args.seed + case_index * 1_000 + sample_index
+                raw_trace: list[dict[str, object]] = []
                 generated_ids = sample_token_ids(
                     model,
                     prompt_ids,
-                    max_new_tokens=case.max_new_tokens,
+                    max_new_tokens=generation_budget,
                     max_seq_len=model_config.max_seq_len,
                     eos_token_id=encoding.eot_token,
                     temperature=args.temperature,
@@ -475,6 +586,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     top_k=args.top_k,
                     seed=sample_seed,
                     precision=precision,
+                    trace_top_tokens=args.trace_top_tokens,
+                    trace_out=raw_trace if args.trace_top_tokens > 0 else None,
                 )
                 continuation = encoding.decode(
                     [
@@ -482,6 +595,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         for token_id in generated_ids
                         if token_id != encoding.eot_token
                     ]
+                )
+                token_trace = (
+                    _decode_token_trace(raw_trace, encoding)
+                    if args.trace_top_tokens > 0
+                    else []
                 )
                 print("\n" + "-" * 80)
                 print(
@@ -492,24 +610,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(case.prompt)
                 print("\nCONTINUATION:")
                 print(continuation)
-                records.append(
-                    {
-                        "name": case.name,
-                        "category": case.category,
-                        "sample": sample_index + 1,
-                        "seed": sample_seed,
-                        "prompt": case.prompt,
-                        "continuation": continuation,
-                        "prompt_tokens": len(prompt_ids),
-                        "generated_tokens": len(generated_ids),
-                    }
-                )
+                if token_trace:
+                    print("\nTOKEN TRACE (raw model probabilities before decoding filters):")
+                    for trace_entry in token_trace:
+                        print(
+                            f"step {int(trace_entry['step']):02d} "
+                            f"chosen={trace_entry['chosen_token']!r} "
+                            f"p={float(trace_entry['chosen_probability']):.6f}"
+                        )
+                        candidates = trace_entry["top_tokens"]
+                        assert isinstance(candidates, list)
+                        print(
+                            "  top: "
+                            + " | ".join(
+                                f"{candidate['token']!r}={float(candidate['probability']):.6f}"
+                                for candidate in candidates
+                                if isinstance(candidate, Mapping)
+                            )
+                        )
+                record: dict[str, object] = {
+                    "name": case.name,
+                    "category": case.category,
+                    "sample": sample_index + 1,
+                    "seed": sample_seed,
+                    "prompt": case.prompt,
+                    "continuation": continuation,
+                    "prompt_tokens": len(prompt_ids),
+                    "generated_tokens": len(generated_ids),
+                    "max_new_tokens": generation_budget,
+                }
+                if token_trace:
+                    record["token_trace"] = token_trace
+                records.append(record)
 
     if args.output_json is not None:
         args.output_json.parent.mkdir(parents=True, exist_ok=True)
         args.output_json.write_text(
             json.dumps(
-                {"checkpoint": checkpoint_info, "results": records},
+                {
+                    "checkpoint": checkpoint_info,
+                    "sampling": sampling_info,
+                    "results": records,
+                },
                 indent=2,
                 ensure_ascii=False,
             ),
