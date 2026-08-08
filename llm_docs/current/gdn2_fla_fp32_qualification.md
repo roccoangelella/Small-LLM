@@ -7,15 +7,29 @@ last_reviewed: 2026-08-08
 
 Released FLA v0.5.1/v0.5.2 mixed-precision `chunk_gdn2` training remains blocked for the active 20M/500M trajectory because trainer-AMP backward failures overlap the real verified step-4000 decay regime.
 
-A bounded diagnostic is now authorized by ADR 0020: test whether forcing the complete FLA GDN-2 chunk execution to FP32 removes the synthetic decay-dependent backward failure without changing recurrence or learned-state semantics.
+A bounded diagnostic is authorized by ADR 0020: test whether forcing the complete FLA GDN-2 chunk execution to FP32 removes the synthetic decay-dependent backward failure without changing recurrence or learned-state semantics.
 
-Single Kaggle entry point:
+## Notebook entry point
+
+Use the self-provisioning Kaggle/Colab wrapper:
 
 ```text
-python kaggle/run_gdn2_fla_fp32_qualification.py
+python kaggle/run_gdn2_fla_fp32.py
 ```
 
-The script:
+It provisions missing lightweight runtime dependencies before launching the scientific diagnostic in `kaggle/run_gdn2_fla_fp32_qualification.py`. In particular, if Triton is missing it reads the already-installed PyTorch package metadata and installs PyTorch's own Triton requirement rather than choosing an arbitrary Triton version.
+
+The first notebook attempt on 2026-08-08 used the implementation file directly. `fla-core==0.5.2` was installed with `--no-deps`, then import failed before any scientific test ran:
+
+```text
+ModuleNotFoundError: No module named 'triton'
+```
+
+This was an environment/bootstrap failure only. It produced no FLA forward/backward evidence, touched no checkpoint, and does not alter the qualification state.
+
+## Scientific diagnostic
+
+After bootstrap, the wrapped diagnostic:
 
 1. forces diagnostic `fla-core==0.5.2`;
 2. runs the known mixed-precision full-layer decay sweep as an in-run control;
