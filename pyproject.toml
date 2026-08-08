@@ -10,6 +10,10 @@ dependencies = []
 model = [
     "torch>=2.7.0",
 ]
+fla = [
+    "torch>=2.7.0",
+    "fla-core==0.5.1",
+]
 post-training = [
     "torch>=2.7.0",
     "huggingface-hub>=0.34.0",
