@@ -6,6 +6,10 @@ Default:
 
 Optional checkpoint compatibility/behavior check:
     python kaggle/run_gdn2_fla_layer_probe.py --checkpoint /path/to/checkpoint.pt
+
+The layer and checkpoint paths deliberately keep model parameters in FP32 and
+execute under CUDA FP16 autocast, matching the real trainer.  This catches AMP
+mixed-dtype behavior that a blanket ``model.half()`` smoke test cannot expose.
 """
 
 from __future__ import annotations
@@ -93,8 +97,13 @@ def _assert_close(
 
 
 def _parameter_grads(torch: Any, layer: Any, x: Any, upstream: Any) -> tuple[Any, dict[str, Any]]:
-    output = layer(x)
-    loss = (output.float() * upstream.float()).sum()
+    # Match trainer semantics: FP32 master parameters/activations enter a CUDA
+    # FP16 autocast region.  In this path F.normalize can leave q/k in FP32
+    # while v/write are FP16, which is exactly the mixed-dtype case the FLA
+    # adapter must canonicalize before entering Triton.
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        output = layer(x)
+        loss = (output.float() * upstream.float()).sum()
     names = [name for name, _ in layer.named_parameters()]
     parameters = [parameter for _, parameter in layer.named_parameters()]
     grads = torch.autograd.grad(loss, [x, *parameters], allow_unused=False)
@@ -114,8 +123,8 @@ def _layer_case(torch: Any, *, strong_decay: bool) -> dict[str, Any]:
     from model.config import ModelConfig
     from model.gdn2_stable import AdaptiveChunkwiseGDN2Backend, StableGatedDeltaNet2
 
-    label = "strong_decay_-6" if strong_decay else "normal_decay"
-    print(f"[layer] {label}  saved_config_chunk=32  FLA_runtime_chunk=64")
+    label = "strong_decay_-6_amp" if strong_decay else "normal_decay_amp"
+    print(f"[layer] {label}  fp32_params+fp16_autocast  saved_config_chunk=32  FLA_runtime_chunk=64")
     # This deliberately matches the existing 500M checkpoint configuration:
     # adaptive/reference execution sees chunk 32, while CUDA candidate execution
     # uses FLA's fixed 64-token kernel without changing the model config.
@@ -123,8 +132,8 @@ def _layer_case(torch: Any, *, strong_decay: bool) -> dict[str, Any]:
     reference = StableGatedDeltaNet2(
         config,
         backend=AdaptiveChunkwiseGDN2Backend(chunk_size=32),
-    ).cuda().half()
-    candidate = StableGatedDeltaNet2(config).cuda().half()
+    ).cuda()
+    candidate = StableGatedDeltaNet2(config).cuda()
     candidate.load_state_dict(reference.state_dict(), strict=True)
 
     if tuple(reference.state_dict()) != tuple(candidate.state_dict()):
@@ -140,15 +149,16 @@ def _layer_case(torch: Any, *, strong_decay: bool) -> dict[str, Any]:
         64,
         config.d_model,
         device="cuda",
-        dtype=torch.float16,
+        dtype=torch.float32,
         generator=generator,
     )
-    upstream = torch.randn(source.shape, device="cuda", dtype=torch.float16, generator=generator)
+    upstream = torch.randn(source.shape, device="cuda", dtype=torch.float32, generator=generator)
     ref_x = source.detach().clone().requires_grad_(True)
     fla_x = source.detach().clone().requires_grad_(True)
 
     result: dict[str, Any] = {
         "label": label,
+        "precision_contract": "fp32_parameters_with_cuda_fp16_autocast",
         "saved_config_chunk_size": 32,
         "fla_runtime_chunk_size": 64,
         "passed": False,
@@ -197,7 +207,7 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
     from model.config import ModelConfig
     from model.model import SmallLLM
 
-    print(f"[checkpoint] {checkpoint}")
+    print(f"[checkpoint] {checkpoint}  fp32_params+fp16_autocast")
     result: dict[str, Any] = {"path": str(checkpoint), "passed": False}
     try:
         raw = torch.load(checkpoint, map_location="cpu", weights_only=False)
@@ -214,8 +224,8 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
         candidate.load_state_dict(model_state, strict=True)
         reference.load_state_dict(model_state, strict=True)
         _replace_with_adaptive(reference)
-        candidate = candidate.cuda().half().eval()
-        reference = reference.cuda().half().eval()
+        candidate = candidate.cuda().eval()
+        reference = reference.cuda().eval()
 
         actual_sequence = min(sequence, config.max_seq_len)
         generator = torch.Generator(device="cuda")
@@ -227,7 +237,7 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
             device="cuda",
             generator=generator,
         )
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=torch.float16):
             reference_logits = reference(input_ids)
             candidate_logits = candidate(input_ids)
         errors = _assert_close(
@@ -242,6 +252,7 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
             {
                 "passed": True,
                 "global_step": raw.get("global_step"),
+                "precision_contract": "fp32_parameters_with_cuda_fp16_autocast",
                 "saved_config_chunk_size": config.gdn_chunk_size,
                 "fla_runtime_chunk_size": 64,
                 "sequence": actual_sequence,
@@ -284,7 +295,7 @@ def main() -> int:
     )
 
     report: dict[str, Any] = {
-        "probe": "gdn2_fla_integrated_layer",
+        "probe": "gdn2_fla_integrated_layer_amp",
         "environment": {
             "torch": torch.__version__,
             "triton": triton_version,
@@ -305,10 +316,11 @@ def main() -> int:
     report["summary"] = {
         "layer_forward_backward_parity": layer_pass,
         "checkpoint_parity": None if report["checkpoint"] is None else checkpoint_pass,
+        "trainer_amp_contract_tested": True,
         "verdict": (
-            "INTEGRATION QUALIFIED for checkpoint evaluation/resume geometry; fresh-training authorization remains separate."
+            "INTEGRATION QUALIFIED under trainer AMP dtypes for checkpoint evaluation/resume geometry; fresh-training authorization remains separate."
             if passed
-            else "NOT QUALIFIED; inspect failed layer/checkpoint parity before using FLA integration."
+            else "NOT QUALIFIED; inspect failed AMP layer/checkpoint parity before using FLA integration."
         ),
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -319,6 +331,7 @@ def main() -> int:
     print("=" * 78)
     print(f"layer_forward_backward_parity: {layer_pass}")
     print(f"checkpoint_parity: {report['summary']['checkpoint_parity']}")
+    print("trainer_amp_contract_tested: True")
     print(report["summary"]["verdict"])
     print(f"JSON report: {args.report}")
     return 0 if passed else 1
