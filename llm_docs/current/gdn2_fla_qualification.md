@@ -11,19 +11,19 @@ The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/
 
 ## Current experiment
 
-ADR 0016 authorizes qualification of Flash Linear Attention (FLA) GDN-2 before changing/clipping learned decay. The one-click probe is:
+ADR 0016 authorized qualification of Flash Linear Attention (FLA) GDN-2 before changing/clipping learned decay. The one-click probe is:
 
 ```bash
 python kaggle/run_gdn2_fla_t4_probe.py
 ```
 
-Backward qualification is explicit:
+The full probe including backward was run with:
 
 ```bash
 python kaggle/run_gdn2_fla_t4_probe.py --with-backward
 ```
 
-## Forward result on Tesla T4
+## Full T4 result
 
 Environment:
 
@@ -40,35 +40,62 @@ Qualification summary:
 
 ```text
 forward_correctness: True
-backward_correctness: pending
-FLA speedup over adaptive, normal decay: 21.361x
-FLA speedup over adaptive, strong decay: 160.719x
-adaptive strong-decay speed retention: 0.090x
-FLA strong-decay speed retention: 0.676x
+backward_correctness: True (normal-decay FP16 gradient parity)
+FLA speedup over adaptive, normal forward: 20.830x
+FLA speedup over adaptive, strong-decay forward: 162.541x
+adaptive strong-decay forward retention: 0.086x
+FLA strong-decay forward retention: 0.671x
+FLA speedup over adaptive, strong-decay forward+backward: 135.441x
+```
+
+Raw backend rates at batch 4 / context 2048:
+
+```text
+normal:
+  adaptive forward:             177,861 tok/s
+  FLA forward:                3,704,843 tok/s
+  adaptive forward+backward:    58,623 tok/s
+  FLA forward+backward:       1,062,705 tok/s
+
+strong log_decay=-6:
+  adaptive forward:              15,296 tok/s
+  FLA forward:                2,486,218 tok/s
+  adaptive forward+backward:      6,050 tok/s
+  FLA forward+backward:         819,392 tok/s
 ```
 
 Interpretation:
 
-- The current adaptive backend keeps only 9% of its normal forward speed in the strong-decay stress regime.
-- FLA keeps 67.6% of its normal forward speed under the same strong decay.
-- FLA is already about 21.4x faster in the normal case and about 160.7x faster in the pathological strong-decay case.
-- The same strong-decay GDN-2 recurrence therefore runs correctly on T4 without the catastrophic collapse of the current backend.
+- Forward recurrence parity passes for normal decay, `log_decay=-6`, and extreme `log_decay=-10`.
+- Normal-decay backward gradients for q, k, v, log-decay, erase, write, and initial state match the recurrent oracle within the probe tolerance.
+- The full FLA strong-decay forward+backward path executes successfully and is about 135.4x faster than the adaptive backend in the same stress case.
+- The current adaptive backend keeps only about 8.6% of its normal forward speed in the strong-decay stress regime; FLA keeps about 67.1%.
+- FLA is already about 20.8x faster in the normal forward case, showing the existing PyTorch backend is intrinsically expensive even before pathological splitting begins.
 - This strongly supports the hypothesis that the late-training slowdown is an implementation/backend problem, not evidence that learned decay itself must be clipped.
+
+Important qualification detail: the current probe performs recurrent-oracle gradient parity only for the normal-decay backward case. The strong-decay forward+backward path is executed and benchmarked successfully, but stress-case gradient parity should be included in the next integration-level test.
 
 ## Packaging/autotuning findings
 
-FLA's PyPI packaging is split. `fla-core` contains `fla.ops` and the kernels. Installing only `flash-linear-attention --no-deps` does not provide `fla.ops`; the probe now explicitly installs/checks `fla-core==0.5.1` without changing PyTorch/Triton.
+FLA's PyPI packaging is split. `fla-core` contains `fla.ops` and the kernels. Installing only `flash-linear-attention --no-deps` does not provide `fla.ops`; the probe explicitly installs/checks `fla-core==0.5.1` without changing PyTorch/Triton.
 
-The first backward attempt appeared stuck after forward correctness with CPU near 100% and GPU nearly idle. Investigation showed that FLA falls back to Triton autotuning when no matching cached GPU configuration exists. There is no packaged Tesla T4 tuning profile; GDN-2 backward includes multiple kernels, with at least one non-Hopper kernel enumerating 36 configurations. Treat the first backward compile/autotune phase as a qualification cost, not as proof of a GDN mathematical hang.
+On Tesla T4 there is no packaged matching tuning profile, so the first backward invocation falls back to Triton autotuning. At least one GDN-2 non-Hopper backward kernel enumerates 36 configurations. This causes a one-time CPU-heavy compile/autotune phase with low GPU utilization. Once tuned for the geometry, steady-state execution is fast.
 
 ## Current decision boundary
 
-Do **not** clip or bound learned GDN-2 decay based on the slowdown evidence at this point.
+Do **not** clip or bound learned GDN-2 decay based on the slowdown evidence.
 
-Do **not** integrate FLA into production training yet.
+FLA is now sufficiently qualified at the standalone operator level to justify a Small-LLM integration experiment, but it is **not yet authorized as the production training backend**.
 
-The next mandatory gate is backward qualification: gradients must match the recurrent oracle and the strong-decay forward+backward path must execute reliably and materially faster than the current adaptive backend. Only then should a checkpoint-compatible FLA adapter/full-layer integration be considered.
+The next gate is a checkpoint-compatible FLA adapter/full-layer integration:
 
-Detailed evidence: [`../evidence/gdn2_fla_t4_forward_qualification_2026-08-08.md`](../evidence/gdn2_fla_t4_forward_qualification_2026-08-08.md)
+1. preserve the existing Small-LLM GDN layer, projections, parameter names, and checkpoint keys;
+2. replace only the chunkwise recurrence calculator with `fla.ops.gdn2.chunk_gdn2`;
+3. run full-layer forward/backward parity, including strong-decay gradient parity;
+4. verify existing checkpoints load unchanged;
+5. run a short optimizer-step replay/mini-training test;
+6. only after those pass decide whether to restart the 500M experiment from update 1 with FLA or explicitly migrate a checkpoint.
+
+Detailed full-probe evidence: [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
 
 Decision: [`../decisions/0016-qualify-fla-gdn2-before-changing-decay.md`](../decisions/0016-qualify-fla-gdn2-before-changing-decay.md)
