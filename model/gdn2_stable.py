@@ -119,9 +119,12 @@ class AdaptiveChunkwiseGDN2Backend:
 class StableGatedDeltaNet2(GatedDeltaNet2):
     """Existing GDN-2 layer with FLA-preferred CUDA execution.
 
-    The layer's learned parameters and state-dict contract are unchanged.  At
-    the active 64-token CUDA geometry, FLA evaluates the recurrence. CPU and
-    unsupported test geometries continue through the adaptive PyTorch backend.
+    Learned parameters and the state-dict contract are unchanged. The model's
+    configured ``gdn_chunk_size`` is retained for checkpoint identity and for
+    the adaptive CPU/reference fallback. CUDA execution uses FLA GDN-2's fixed
+    64-token kernel even for historical checkpoints whose saved configuration
+    says ``gdn_chunk_size=32``; chunk size is an execution grouping rather than
+    a learned recurrence parameter.
     """
 
     def __init__(self, config: ModelConfig, backend: GDN2Backend | None = None) -> None:
