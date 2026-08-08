@@ -20,7 +20,7 @@ final validation perplexity: 70.29906475797992
 final checkpoint: step-00003053
 ```
 
-The run stayed numerically trainable but suffered an approximately 8.6x throughput collapse, from roughly 3,830 target tok/s early to roughly 445 tok/s late. Data wait remained negligible. Controlled backend experiments strongly support the diagnosis that stronger learned GDN-2 decay exposed pathological subdivision and synchronization in the adaptive PyTorch chunk backend.
+The run stayed trainable but suffered an approximately 8.6x throughput collapse, from roughly 3,830 target tok/s early to roughly 445 tok/s late. Data wait remained negligible. Controlled backend experiments strongly support the diagnosis that stronger learned GDN-2 decay exposed pathological subdivision and synchronization in the adaptive PyTorch chunk backend.
 
 ## Active 20M / 500M experiment
 
@@ -38,13 +38,11 @@ microbatch: 4
 saved gdn_chunk_size: 32
 ```
 
-The checkpoint is clean. All FLA migration attempts failed before a successful update 4001 was committed.
+The checkpoint is clean. No FLA migration attempt has committed a successful update 4001.
 
 ## FLA v0.5.1 training status — BLOCKED
 
-FLA was investigated because its GDN-2 kernels were dramatically faster than the adaptive PyTorch backend on the same Tesla T4. Forward parity and normal-decay AMP backward parity passed.
-
-However, trainer-realistic AMP backward testing found a decay-dependent numerical failure:
+Trainer-realistic AMP testing found a decay-dependent backward failure in FLA v0.5.1:
 
 ```text
 passing forced constant g: [-0.25, -0.5]
@@ -52,7 +50,7 @@ failing forced constant g: [-0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6
 first failing tested point: g=-0.75
 ```
 
-The decisive real-checkpoint telemetry on `step-00004000` then reported:
+Real `step-00004000` telemetry then reported:
 
 ```text
 any_individual_g_le_minus_0.75: True
@@ -60,20 +58,30 @@ any_64tok_mean_g_le_minus_0.75: True
 real checkpoint overlaps the tested FLA failure region
 ```
 
-Therefore FLA v0.5.1 `chunk_gdn2` is **not qualified for resumed training of the active 500M trajectory**.
+Therefore FLA v0.5.1 `chunk_gdn2` is not qualified for resumed training of this trajectory.
 
-Current backend source of truth: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md).
+## Latest upstream correction — test FLA v0.5.2 next
 
-## Immediate engineering choices
+FLA v0.5.2 was released on 2026-07-27 and is newer than the v0.5.1 build currently integrated in Small-LLM. A dedicated T4 qualification probe now forces v0.5.2 and repeats the exact trainer-AMP decay sweep:
 
-The project now has two legitimate paths:
+```bash
+python kaggle/run_gdn2_fla_052_amp_decay_sweep.py
+```
 
-1. **Continue the existing 500M trajectory immediately with the previous adaptive PyTorch backend.** This preserves the exact model/checkpoint semantics but accepts the known throughput collapse.
-2. **Pause the 500M trajectory while qualifying another exact-recurrence optimized backend.** A fused/recurrent GDN-2 kernel is the next candidate to investigate before considering any learned-decay clamp/bound.
+Do not change the production launcher to v0.5.2 until that test passes.
 
-No decision between those two paths has yet been recorded.
+Upstream GDN-2 `fused_recurrent_gdn2` is inference-only/forward-only and explicitly does not track gradients, so it is not a pretraining fallback. FlashQLA in v0.5.2 targets the older gated-delta-rule path and requires SM90/SM100-class hardware, so it is not applicable to the Tesla T4 active run.
 
-Do not resume with FLA chunk backward, and do not clip/bound learned decay merely to make that kernel work.
+Detailed backend source of truth: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md).
+
+## Immediate next gate
+
+Run the v0.5.2 decay sweep.
+
+- If v0.5.2 still fails in the real checkpoint's decay region, reject released FLA chunk training for this trajectory. Then choose between continuing with the adaptive PyTorch backend or engineering/qualifying another exact differentiable training kernel.
+- If v0.5.2 passes through the entire synthetic range to `g=-6`, run a direct real step-4000 forward/backward finite-gradient parity test before production integration.
+
+Do not clip/bound learned decay merely to make a kernel pass.
 
 ## Frozen/accepted decisions still in force
 
