@@ -19,7 +19,7 @@ from .gdn2 import (
     _validate_backend_result,
 )
 
-FLA_CORE_VERSION = "0.5.1"
+FLA_CORE_VERSION = "0.5.2"
 FLA_GDN2_CHUNK_SIZE = 64
 
 
@@ -32,7 +32,7 @@ def _load_chunk_gdn2() -> Callable[..., tuple[Tensor, Tensor | None]]:
         raise ImportError(
             "CUDA GDN-2 requires the qualified FLA core backend. Install "
             f"`fla-core=={FLA_CORE_VERSION}` (Kaggle qualification used "
-            "`pip install --no-deps fla-core==0.5.1`)."
+            "`pip install --no-deps fla-core==0.5.2`)."
         ) from error
     return chunk_gdn2
 

@@ -9,11 +9,11 @@ dependencies = []
 [project.optional-dependencies]
 model = [
     "torch>=2.7.0",
-    "fla-core==0.5.1",
+    "fla-core==0.5.2",
 ]
 fla = [
     "torch>=2.7.0",
-    "fla-core==0.5.1",
+    "fla-core==0.5.2",
 ]
 post-training = [
     "torch>=2.7.0",

@@ -1,0 +1,53 @@
+{
+  "block": 4000,
+  "checkpoint_step": 4000,
+  "experiment": "gdn2_fla_step4000_benchmark_v1",
+  "fla_runtime_chunk_size": 64,
+  "microbatch_size": 4,
+  "optimizer_step_executed": false,
+  "results": {
+    "fp32": {
+      "all_gradients_finite": true,
+      "elapsed_seconds": [
+        1.535686356000042,
+        1.549121147999358
+      ],
+      "gdn_layers": 6,
+      "median_elapsed_seconds": 1.5424037519997,
+      "median_tokens_per_second": 21244.76159858717,
+      "mode": "fp32",
+      "peak_allocated_bytes": 8118448640,
+      "warmup_gradients_finite": true
+    },
+    "mixed": {
+      "all_gradients_finite": true,
+      "elapsed_seconds": [
+        1.4342581769997196,
+        1.4444460750000871
+      ],
+      "gdn_layers": 6,
+      "median_elapsed_seconds": 1.4393521259999034,
+      "median_tokens_per_second": 22765.79817272747,
+      "mode": "mixed",
+      "peak_allocated_bytes": 7892943360,
+      "warmup_gradients_finite": true
+    },
+    "reference": {
+      "all_gradients_finite": true,
+      "elapsed_seconds": [
+        16.58908079699995,
+        16.766761456000495
+      ],
+      "gdn_layers": 6,
+      "median_elapsed_seconds": 16.677921126500223,
+      "median_tokens_per_second": 1964.7532657972342,
+      "mode": "reference",
+      "peak_allocated_bytes": 8938232832,
+      "warmup_gradients_finite": true
+    }
+  },
+  "saved_gdn_chunk_size": 32,
+  "speedup_fp32_vs_adaptive": 10.81294123207207,
+  "speedup_mixed_vs_adaptive": 11.587102853594105,
+  "target_tokens": 32768
+}

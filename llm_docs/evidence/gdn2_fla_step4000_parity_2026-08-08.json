@@ -1,0 +1,2983 @@
+{
+  "candidates": {
+    "fp32": {
+      "elapsed_forward_backward_seconds": 57.97432910799989,
+      "forward_pass": true,
+      "forward_rows": [
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.03125,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.05859375,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.0625,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.0625,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        }
+      ],
+      "gdn_layers": 6,
+      "gradient_failures": [],
+      "gradient_parity_pass": true,
+      "gradient_rows": {
+        "blocks.0.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.045797348022461e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.404254913330078e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.4796463549137115e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.415648385882378e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3783574104309082e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.227032721042633e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.076864570379257e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.364418029785156e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.103515625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.562999725341797e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.1828880310058594e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.112720489501953e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.9073486328125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.9788742065429688e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.3216125555336475e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.86102294921875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.6450881958007812e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.0531158447265625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.513429641723633e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.166685251519084e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0371208190917969e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.987022399902344e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.67572021484375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.287793904542923e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.731133908033371e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.8719583749771118e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.3213367462158203e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.3296237234026194e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.493661880493164e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.5272369384765625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.779066562652588e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1399388313293457e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.351139068603516e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.851289749145508e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.049041748046875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.868989784270525e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.9591064453125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.782131433486938e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.71661376953125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.602836608886719e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.270144462585449e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0744552128016949e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.702278137207031e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.947185516357422e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.794929504394531e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.0018272809684277e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.099006325006485e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.551823854446411e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.5367431640625e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.301844794303179e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.413327693939209e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.5272369384765625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.198883056640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0669231414794922e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.27501106262207e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2725591659545898e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0609626770019531e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.7940765246748924e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.38690185546875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.285045623779297e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.71661376953125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.239776611328125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0132789611816406e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3039098121225834e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.417533874511719e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.900859832763672e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.708766937255859e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.476168447174132e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.gate_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.682209014892578e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.k_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.825182259082794e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1801719665527344e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.5735626220703125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.q_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.268491804599762e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.8596649169921875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1473894119262695e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.7495046854019165e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.3478946685791016e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.62939453125e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.125999450683594e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.5049084797501564e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.825859261676669e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.948807716369629e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0132789611816406e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.846863935701549e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0132789611816406e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.0742416381835938e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.291534423828125e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1205673217773438e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.5299530029296875e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.854534149169922e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.4356794357299805e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.1152663975954056e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.86102294921875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.079673767089844e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.288818359375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0013580322265625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4603137969970703e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.1126470528542995e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.32554292678833e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.066394805908203e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.9604644775390625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.6838388293981552e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.450159268453717e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.172325134277344e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.6391277313232422e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.601978045888245e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.430511474609375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.743171691894531e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.761882781982422e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4901161193847656e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.874301910400391e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3589859008789062e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.2756867110729218e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.62396240234375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.46451997756958e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.3015689849853516e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.7881393432617188e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.6797566786408424e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.821487426757812e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.887580871582031e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.155801773071289e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.8451246432960033e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.9008293747901917e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.387731552124023e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.337860107421875e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2107047950848937e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.86102294921875e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.153915405273438e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0941177606582642e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.7642974853515625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.794929504394531e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1682510375976562e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.0675361156463623e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.500856786966324e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.000133514404296875,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.6464462280273438e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.568431854248047e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.677870750427246e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.4852495193481445e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.5805278457701206e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.866190910339355e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.364418029785156e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.318092346191406e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.036860678344965e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.gate_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4454126358032227e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.k_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.221700459718704e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.8133392333984375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.884336471557617e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.q_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.477348506450653e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.0517578125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.3909759521484375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.7116697058081627e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "final_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1294614523649216e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "token_embedding.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.218572914600372e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        }
+      },
+      "gradients_finite": true,
+      "loss": 3.9077218174934387,
+      "loss_abs_diff": 4.38690185546875e-05,
+      "mode": "fp32",
+      "passed": true,
+      "peak_allocated_bytes": 8118430208,
+      "target_tokens": 32768,
+      "tokens_per_second": 565.2156825990477
+    },
+    "mixed": {
+      "elapsed_forward_backward_seconds": 64.58662105700023,
+      "forward_pass": true,
+      "forward_rows": [
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.032318115234375,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.07421875,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.05078125,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.078125,
+          "mismatch_count": 0,
+          "passed": true,
+          "reference_nonfinite": 0
+        }
+      ],
+      "gdn_layers": 6,
+      "gradient_failures": [],
+      "gradient_parity_pass": true,
+      "gradient_rows": {
+        "blocks.0.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.62396240234375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.834766387939453e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.417533874511719e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.989320248365402e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.2794196158647537e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.564621925354004e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.986060619354248e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.1666498873382807e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.100162863731384e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.4849853515625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.4868717193603516e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.528594970703125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.1425228118896484e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.86102294921875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.6450881958007812e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.837972715497017e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.814697265625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.241964340209961e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.765655517578125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.159046173095703e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.407499313354492e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.0.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3142998795956373e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.987022399902344e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.225440979003906e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.894371032714844e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.448374289087951e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.7497222870588303e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.8312206268310547e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.6193599700927734e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.528111847117543e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.003545761108398e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.516487777233124e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.5017728805541992e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.6570091247558594e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.589557647705078e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.735324859619141e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0967254638671875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.49926233664155e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.00543212890625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.059906005859375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.002716064453125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.827976226806641e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0896474123001099e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.1.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0056828614324331e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.6533684730529785e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.304813385009766e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.22868537902832e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.2434687707573175e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.5387562345713377e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.073364496231079e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2293457984924316e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.688504410907626e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1771917343139648e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.47955322265625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.76837158203125e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4066696166992188e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.708766937255859e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.71661376953125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.5367431640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.226479748263955e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.340576171875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1265277862548828e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.09808349609375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.5367431640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2516975402832031e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.2.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.429638359695673e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.046627044677734e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.107853889465332e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.185604095458984e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.1964515326544642e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.gate_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.905726432800293e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.k_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.0439911168068647e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2278556823730469e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.71661376953125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.q_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.8400536393746734e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3947486877441406e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.344650268554688e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.3.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.15345062315464e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.556510925292969e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.556510925292969e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.271766662597656e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.3837201297283173e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0621151886880398e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.997717380523682e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.589557647705078e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.299849827773869e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1473894119262695e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.574920654296875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.245208740234375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3947486877441406e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.410743713378906e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.887580871582031e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.808208465576172e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.305845893919468e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.38690185546875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.198883056640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.855062484741211e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.67572021484375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.3543834686279297e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.4.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.3680546544492245e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.033348083496094e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.079673767089844e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.407499313354492e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.3862230591475964e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.2069940567016602e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.034970283508301e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.8030405044555664e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.516661521047354e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1846423149108887e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.365776062011719e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.5497207641601562e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.172325134277344e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.4836273193359375e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0371208190917969e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.202752511948347e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.863739013671875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.106231689453125e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.814697265625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.0013580322265625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.9669532775878906e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.5.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.5760706446599215e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.5367431640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.079673767089844e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.317611455917358e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.873588189482689e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.A_log": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.1292286217212677e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.decay_proj.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.960464477539062e-07,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.decay_proj.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.455447196960449e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.dt_bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4253309927880764e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.erase_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.2186508178710938e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.k_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.918212890625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.4021992683410645e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.0265579223632812e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.0.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.933906555175781e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.1.bias": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.58306884765625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_gate.1.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.9550323486328125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.output_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.200301529839635e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.q_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 0.000125885009765625,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.9087066650390625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.v_conv.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.4849853515625e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.811981201171875e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer.write_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.6507844924926758e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.6.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.5418412405997515e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.down.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 9.566545486450195e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.gate.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.198883056640625e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn.up.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 5.781650543212891e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.ffn_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.011307515203953e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.gate_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.30385160446167e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.k_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 6.473623216152191e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.k_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 3.8623809814453125e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.out_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.748603820800781e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.q_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 8.036848157644272e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.q_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 2.8133392333984375e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer.v_proj.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 7.808208465576172e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "blocks.7.mixer_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.676141543313861e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "final_norm.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 1.210835762321949e-06,
+          "passed": true,
+          "reference_nonfinite": 0
+        },
+        "token_embedding.weight": {
+          "candidate_nonfinite": 0,
+          "max_abs": 4.360359162092209e-05,
+          "passed": true,
+          "reference_nonfinite": 0
+        }
+      },
+      "gradients_finite": true,
+      "loss": 3.907714068889618,
+      "loss_abs_diff": 5.161762237548828e-05,
+      "mode": "mixed",
+      "passed": true,
+      "peak_allocated_bytes": 7890827776,
+      "target_tokens": 32768,
+      "tokens_per_second": 507.34965637977797
+    }
+  },
+  "checkpoint_step": 4000,
+  "dataset_root": "/kaggle/input/datasets/roccoangelella/small-llm-20m-500m-dataset-001",
+  "experiment": "gdn2_fla_real_step4000_parity_v1",
+  "fla_runtime_chunk_size": 64,
+  "last_consumed_block_id": 3999,
+  "microbatch_size": 4,
+  "next_block": 4000,
+  "optimizer_step_executed": false,
+  "production_authorized": false,
+  "reference": {
+    "elapsed_forward_backward_seconds": 34.45471147099988,
+    "forward_pass": true,
+    "forward_rows": [
+      {
+        "passed": true
+      },
+      {
+        "passed": true
+      },
+      {
+        "passed": true
+      },
+      {
+        "passed": true
+      }
+    ],
+    "gdn_layers": 6,
+    "gradient_failures": [],
+    "gradient_parity_pass": true,
+    "gradient_rows": {
+      "blocks.0.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.0.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.1.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.2.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.gate_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.k_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.q_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.3.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.4.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.5.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.A_log": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.decay_proj.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.decay_proj.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.dt_bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.erase_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.k_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.output_gate.0.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.output_gate.1.bias": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.output_gate.1.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.output_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.q_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.v_conv.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer.write_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.6.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.ffn.down.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.ffn.gate.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.ffn.up.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.ffn_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.gate_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.k_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.k_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.out_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.q_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.q_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer.v_proj.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "blocks.7.mixer_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "final_norm.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      },
+      "token_embedding.weight": {
+        "candidate_nonfinite": 0,
+        "max_abs": 0.0,
+        "passed": true,
+        "reference_nonfinite": 0
+      }
+    },
+    "gradients_finite": true,
+    "loss": 3.9077656865119934,
+    "mode": "reference",
+    "peak_allocated_bytes": 8938232832,
+    "target_tokens": 32768,
+    "tokens_per_second": 951.0455493896802
+  },
+  "saved_gdn_chunk_size": 32,
+  "scaler_scale": 256.0,
+  "trainer_precision": "fp16"
+}

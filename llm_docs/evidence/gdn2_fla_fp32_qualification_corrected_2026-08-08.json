@@ -1,0 +1,60 @@
+{
+  "baseline": {
+    "all_passed": true,
+    "all_references_valid": true,
+    "candidate_failing": [],
+    "failing": [],
+    "first_candidate_failure": null,
+    "invalid_reference": [],
+    "passing": [
+      -0.25,
+      -0.5,
+      -0.75,
+      -1.0,
+      -1.25,
+      -1.5,
+      -2.0,
+      -3.0,
+      -4.0,
+      -5.0,
+      -6.0
+    ],
+    "reproduced_candidate_failure": false
+  },
+  "candidate_fp32": {
+    "all_passed": true,
+    "all_references_valid": true,
+    "candidate_failing": [],
+    "failing": [],
+    "first_candidate_failure": null,
+    "invalid_reference": [],
+    "passing": [
+      -0.25,
+      -0.5,
+      -0.75,
+      -1.0,
+      -1.25,
+      -1.5,
+      -2.0,
+      -3.0,
+      -4.0,
+      -5.0,
+      -6.0
+    ],
+    "reproduced_candidate_failure": false
+  },
+  "checkpoint_touched": false,
+  "cuda_version": "12.8",
+  "experiment": "gdn2_fla_fp32_qualification_v2",
+  "fla_core_version": "0.5.2",
+  "fla_runtime_chunk_size": 64,
+  "gpu": "Tesla T4",
+  "input_seed": 12345,
+  "layer_init_seed": 20260808,
+  "outer_trainer_contract": "FP32 parameters + CUDA FP16 autocast",
+  "production_authorized": false,
+  "reference_recurrence_contract": "adaptive PyTorch recurrence with CUDA autocast disabled internally",
+  "saved_gdn_chunk_size": 32,
+  "torch_version": "2.10.0+cu128",
+  "verdict": "INCONCLUSIVE-BUT-PASSING: full-FP32 FLA passed every tested point, but mixed-precision FLA did not reproduce a candidate-specific failure against the finite FP32 reference. Do not attribute a fix yet."
+}
