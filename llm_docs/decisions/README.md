@@ -28,6 +28,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0016-qualify-fla-gdn2-before-changing-decay.md`](0016-qualify-fla-gdn2-before-changing-decay.md)
 - [`0017-use-latest-pointer-for-10m-prompt-comparison.md`](0017-use-latest-pointer-for-10m-prompt-comparison.md)
 - [`0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
+- [`0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`](0019-resume-500m-checkpoint-with-fla-gdn2-execution.md)
 
 ## Superseded ADRs
 
