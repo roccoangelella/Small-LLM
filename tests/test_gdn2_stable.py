@@ -5,7 +5,7 @@ from torch.nn import functional as F
 
 from model.config import ModelConfig
 from model.gdn2 import GatedDeltaNet2, assert_gdn2_backend_parity
-from model.gdn2_fla import FLAPreferredGDN2Backend
+from model.gdn2_fla import FLA_GDN2_CHUNK_SIZE, FLAPreferredGDN2Backend
 from model.gdn2_stable import AdaptiveChunkwiseGDN2Backend, StableGatedDeltaNet2
 from model.model import SmallLLM
 
@@ -84,9 +84,15 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
         expected = reference(x)
         torch.testing.assert_close(preferred, expected, atol=1e-6, rtol=1e-6)
 
+    def test_legacy_chunk32_config_still_owns_adaptive_fallback_but_cuda_kernel_is_fla64(self):
+        layer = StableGatedDeltaNet2(tiny_config())
+        self.assertIsInstance(layer.backend, FLAPreferredGDN2Backend)
+        self.assertEqual(layer.backend.chunk_size, 32)
+        self.assertEqual(layer.backend.fallback_backend.chunk_size, 32)
+        self.assertEqual(layer.backend.fla_backend.chunk_size, FLA_GDN2_CHUNK_SIZE)
+        self.assertEqual(FLA_GDN2_CHUNK_SIZE, 64)
+
     def test_assembled_model_uses_fla_preferred_backend(self):
-        # The tiny CPU geometry is deliberately non-64 so calls still fall back
-        # to the correctness backend, but assembly must use the preferred wrapper.
         model = SmallLLM(tiny_config())
         gdn_mixers = [
             block.mixer
@@ -105,6 +111,7 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
             )
         )
         self.assertTrue(all(mixer.backend.chunk_size == 32 for mixer in gdn_mixers))
+        self.assertTrue(all(mixer.backend.fla_backend.chunk_size == 64 for mixer in gdn_mixers))
 
 
 if __name__ == "__main__":
