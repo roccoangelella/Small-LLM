@@ -5,25 +5,13 @@ last_reviewed: 2026-08-08
 
 # Current GDN-2 backend qualification status
 
-## Problem being investigated
+## Problem and diagnosis
 
 The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 target tok/s late, with validation slowing by almost the same factor. Data loading was not the bottleneck. The leading explanation is that stronger learned GDN-2 decay makes the correctness-first adaptive PyTorch backend repeatedly subdivide chunks and synchronize with Python, destroying GPU efficiency while preserving the intended recurrence.
 
-## Current experiment
+Standalone FLA qualification on Tesla T4 strongly supports that diagnosis rather than a need to clip learned decay.
 
-ADR 0016 authorized qualification of Flash Linear Attention (FLA) GDN-2 before changing/clipping learned decay. The one-click probe is:
-
-```bash
-python kaggle/run_gdn2_fla_t4_probe.py
-```
-
-The full probe including backward was run with:
-
-```bash
-python kaggle/run_gdn2_fla_t4_probe.py --with-backward
-```
-
-## Full T4 result
+## Standalone T4 qualification
 
 Environment:
 
@@ -48,7 +36,7 @@ FLA strong-decay forward retention: 0.671x
 FLA speedup over adaptive, strong-decay forward+backward: 135.441x
 ```
 
-Raw backend rates at batch 4 / context 2048:
+Raw backend rates at batch 4 / context 2,048:
 
 ```text
 normal:
@@ -69,33 +57,71 @@ Interpretation:
 - Forward recurrence parity passes for normal decay, `log_decay=-6`, and extreme `log_decay=-10`.
 - Normal-decay backward gradients for q, k, v, log-decay, erase, write, and initial state match the recurrent oracle within the probe tolerance.
 - The full FLA strong-decay forward+backward path executes successfully and is about 135.4x faster than the adaptive backend in the same stress case.
-- The current adaptive backend keeps only about 8.6% of its normal forward speed in the strong-decay stress regime; FLA keeps about 67.1%.
-- FLA is already about 20.8x faster in the normal forward case, showing the existing PyTorch backend is intrinsically expensive even before pathological splitting begins.
-- This strongly supports the hypothesis that the late-training slowdown is an implementation/backend problem, not evidence that learned decay itself must be clipped.
+- The adaptive backend keeps only about 8.6% of normal forward speed in the strong-decay stress regime; FLA keeps about 67.1%.
+- FLA is already about 20.8x faster in the normal forward case, so the PyTorch reference backend is intrinsically expensive even before pathological splitting begins.
+- Strong learned decay should not be clipped merely to protect the old backend.
 
-Important qualification detail: the current probe performs recurrent-oracle gradient parity only for the normal-decay backward case. The strong-decay forward+backward path is executed and benchmarked successfully, but stress-case gradient parity should be included in the next integration-level test.
+The standalone probe only performs recurrent-oracle gradient parity for the normal-decay backward case. Strong-decay gradient parity is therefore part of the integration-level gate.
 
-## Packaging/autotuning findings
+## Integration now implemented on `main`
 
-FLA's PyPI packaging is split. `fla-core` contains `fla.ops` and the kernels. Installing only `flash-linear-attention --no-deps` does not provide `fla.ops`; the probe explicitly installs/checks `fla-core==0.5.1` without changing PyTorch/Triton.
+ADR 0018 authorizes a checkpoint-compatible integration experiment. The implementation keeps the complete Small-LLM GDN-2 layer and swaps only recurrence execution on the supported CUDA path.
 
-On Tesla T4 there is no packaged matching tuning profile, so the first backward invocation falls back to Triton autotuning. At least one GDN-2 non-Hopper backward kernel enumerates 36 configurations. This causes a one-time CPU-heavy compile/autotune phase with low GPU utilization. Once tuned for the geometry, steady-state execution is fast.
+New integration structure:
 
-## Current decision boundary
+```text
+StableGatedDeltaNet2
+  same q/k/v projections
+  same convolutions
+  same learned decay
+  same erase/write gates
+  same output gate/norm/projection
+  same state-dict keys
+        |
+        +-- CUDA + chunk_size=64 -> fla.ops.gdn2.chunk_gdn2
+        |
+        +-- CPU / unsupported test geometry -> AdaptiveChunkwiseGDN2Backend
+```
 
-Do **not** clip or bound learned GDN-2 decay based on the slowdown evidence.
+Files:
 
-FLA is now sufficiently qualified at the standalone operator level to justify a Small-LLM integration experiment, but it is **not yet authorized as the production training backend**.
+- `model/gdn2_fla.py` — lazy FLA adapter and call-time preferred backend;
+- `model/gdn2_stable.py` — assembled GDN layer now uses the preferred wrapper by default;
+- `tests/test_gdn2_stable.py` — CPU fallback, assembly, and checkpoint-key invariance tests;
+- `pyproject.toml` — optional `fla` extra pins `fla-core==0.5.1`;
+- `kaggle/run_gdn2_fla_layer_probe.py` — one-click whole-layer and optional checkpoint probe.
 
-The next gate is a checkpoint-compatible FLA adapter/full-layer integration:
+On the active 64-token CUDA path FLA is mandatory. Missing FLA or a kernel failure is raised rather than silently reverting to the pathological adaptive training path. This prevents an apparently healthy run from accidentally returning to the slow backend.
 
-1. preserve the existing Small-LLM GDN layer, projections, parameter names, and checkpoint keys;
-2. replace only the chunkwise recurrence calculator with `fla.ops.gdn2.chunk_gdn2`;
-3. run full-layer forward/backward parity, including strong-decay gradient parity;
-4. verify existing checkpoints load unchanged;
-5. run a short optimizer-step replay/mini-training test;
-6. only after those pass decide whether to restart the 500M experiment from update 1 with FLA or explicitly migrate a checkpoint.
+## Next integration gate
 
-Detailed full-probe evidence: [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
+Run on the T4:
 
-Decision: [`../decisions/0016-qualify-fla-gdn2-before-changing-decay.md`](../decisions/0016-qualify-fla-gdn2-before-changing-decay.md)
+```bash
+git pull --ff-only
+python kaggle/run_gdn2_fla_layer_probe.py
+```
+
+The probe compares the entire Small-LLM GDN layer, not just the bare recurrence. It checks output and all parameter/input gradients under both normal decay and a forced approximately `log_decay=-6` regime.
+
+To check an existing trainer checkpoint as well:
+
+```bash
+python kaggle/run_gdn2_fla_layer_probe.py --checkpoint /path/to/checkpoint.pt
+```
+
+Checkpoint mode strict-loads the same trainer checkpoint into an adaptive-reference full model and the integrated FLA full model, then compares short full-model logits.
+
+## Decision boundary
+
+- Do **not** clip or bound learned GDN-2 decay based on the slowdown evidence.
+- The FLA integration is implemented for qualification and checkpoint inspection.
+- Do **not** authorize a fresh production 500M restart yet; the user will inspect integrated/checkpoint behavior first and decide separately.
+- Existing checkpoints are expected to remain load-compatible because the FLA backend introduces no learned parameters or state-dict entries.
+- Switching backend is mathematically compatible but not expected to preserve bitwise-identical future training trajectories because floating-point operation ordering differs.
+
+Detailed standalone evidence: [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
+
+Qualification decision: [`../decisions/0016-qualify-fla-gdn2-before-changing-decay.md`](../decisions/0016-qualify-fla-gdn2-before-changing-decay.md)
+
+Integration decision: [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
