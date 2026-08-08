@@ -91,6 +91,26 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
         self.assertEqual(layer.backend.fallback_backend.chunk_size, 32)
         self.assertEqual(layer.backend.fla_backend.chunk_size, FLA_GDN2_CHUNK_SIZE)
         self.assertEqual(FLA_GDN2_CHUNK_SIZE, 64)
+        self.assertFalse(layer.backend.fla_backend.force_fp32)
+
+    def test_fp32_fla_mode_is_explicit_and_does_not_change_checkpoint_geometry(self):
+        config = tiny_config()
+        adaptive = AdaptiveChunkwiseGDN2Backend(chunk_size=config.gdn_chunk_size)
+        backend = FLAPreferredGDN2Backend(
+            chunk_size=config.gdn_chunk_size,
+            fallback_backend=adaptive,
+            force_fp32=True,
+        )
+        layer = StableGatedDeltaNet2(config, backend=backend)
+
+        self.assertEqual(layer.backend.chunk_size, 32)
+        self.assertEqual(layer.backend.fallback_backend.chunk_size, 32)
+        self.assertEqual(layer.backend.fla_backend.chunk_size, 64)
+        self.assertTrue(layer.backend.fla_backend.force_fp32)
+        self.assertEqual(
+            tuple(layer.state_dict()),
+            tuple(GatedDeltaNet2(config).state_dict()),
+        )
 
     def test_assembled_model_uses_fla_preferred_backend(self):
         model = SmallLLM(tiny_config())
@@ -112,6 +132,7 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
         )
         self.assertTrue(all(mixer.backend.chunk_size == 32 for mixer in gdn_mixers))
         self.assertTrue(all(mixer.backend.fla_backend.chunk_size == 64 for mixer in gdn_mixers))
+        self.assertTrue(all(not mixer.backend.fla_backend.force_fp32 for mixer in gdn_mixers))
 
 
 if __name__ == "__main__":
