@@ -34,7 +34,11 @@ if str(KAGGLE_DIR) not in sys.path:
 RUN_ID = "20m-500m-dataset-001"
 EXPECTED_CHECKPOINT_ID = "step-00004000"
 WORK = Path("/kaggle/working/gdn2-step4000-decay-telemetry")
-RESTORE_ROOT = WORK / "checkpoints"
+# restore_on_empty_vps() creates its own `checkpoints/` and `cache/` children
+# below the destination, so pass a neutral restore root rather than a path that
+# is already named `checkpoints`.
+RESTORE_DESTINATION = WORK / "restore"
+CHECKPOINTS_ROOT = RESTORE_DESTINATION / "checkpoints"
 RESTORE_RESULT = WORK / "restore.json"
 TEMP_TORCH_CHECKPOINT = WORK / "step-00004000-trainer-state.pt"
 
@@ -109,9 +113,9 @@ def restore(dataset_root: Path) -> Path:
     uv = ensure_uv()
 
     WORK.mkdir(parents=True, exist_ok=True)
-    if RESTORE_ROOT.exists():
-        shutil.rmtree(RESTORE_ROOT)
-    RESTORE_ROOT.mkdir(parents=True, exist_ok=True)
+    if RESTORE_DESTINATION.exists():
+        shutil.rmtree(RESTORE_DESTINATION)
+    RESTORE_DESTINATION.mkdir(parents=True, exist_ok=True)
     restore_script = WORK / "restore_verified_checkpoint.py"
     restore_script.write_text(RESTORE_SCRIPT, encoding="utf-8")
     if RESTORE_RESULT.exists():
@@ -135,7 +139,7 @@ def restore(dataset_root: Path) -> Path:
         str(restore_script),
         hf_repo,
         RUN_ID,
-        str(RESTORE_ROOT),
+        str(RESTORE_DESTINATION),
         str(dataset_root / "drive_manifest.json"),
         str(RESTORE_RESULT),
     ]
@@ -156,7 +160,7 @@ def restore(dataset_root: Path) -> Path:
             "restored step-4000 checkpoint does not report last_consumed_block_id=3999"
         )
     root = Path(str(result.get("checkpoint_root", ""))).resolve()
-    expected = (RESTORE_ROOT / EXPECTED_CHECKPOINT_ID).resolve()
+    expected = (CHECKPOINTS_ROOT / EXPECTED_CHECKPOINT_ID).resolve()
     if root != expected or not root.is_dir():
         raise SystemExit(f"restored checkpoint root mismatch: {root} != {expected}")
     print(f"[checkpoint] verified {EXPECTED_CHECKPOINT_ID} at {root}", flush=True)
