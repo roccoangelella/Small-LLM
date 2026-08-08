@@ -9,7 +9,7 @@ last_reviewed: 2026-08-08
 
 The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 target tok/s late while validation kept improving. Controlled FLA tests on the same Tesla T4 strongly support the explanation that stronger learned GDN-2 decay exposed pathological chunk subdivision / synchronization in the correctness-first adaptive PyTorch backend rather than a need to clip learned decay.
 
-## Standalone FLA operator qualification — PASSED
+## Standalone FLA operator qualification — FORWARD/normal-backward passed
 
 Environment:
 
@@ -31,10 +31,10 @@ FLA speedup over adaptive, normal forward: 20.830x
 FLA speedup over adaptive, strong-decay forward: 162.541x
 adaptive strong-decay forward retention: 0.086x
 FLA strong-decay forward retention: 0.671x
-FLA speedup over adaptive, strong-decay forward+backward: 135.441x
+FLA speedup over adaptive, strong-decay forward+backward benchmark: 135.441x
 ```
 
-FLA therefore preserves the same recurrence while removing most of the catastrophic strong-decay runtime collapse. Decay clipping/bounding is not justified by the slowdown evidence.
+Important correction: the original strong-decay forward+backward benchmark only completed/timed `.backward()`; it did not inspect strong-decay gradients for finiteness/parity. Therefore it did not qualify strong-decay backward correctness.
 
 ## First full-layer integration probe — PASSED, but precision coverage was incomplete
 
@@ -47,8 +47,6 @@ INTEGRATION QUALIFIED for checkpoint evaluation; fresh-training authorization re
 ```
 
 However, that probe converted the whole candidate/reference layer to FP16 with `model.half()`. It did not reproduce the real trainer precision contract of FP32 master parameters plus CUDA FP16 autocast.
-
-That distinction became material in the first resumed 500M attempt.
 
 ## First 500M FLA resume attempt — FAILED CLOSED BEFORE UPDATE 4001
 
@@ -63,21 +61,40 @@ No successful update 4001 was produced, so the latest verified checkpoint remain
 
 Root cause: under the real trainer's FP32-master + FP16-autocast path, normalized q/k can enter the FLA adapter as FP32 while v/write are FP16. FLA v0.5.1 allocates its solved WY matrix with `k.dtype`, then dots it with a v/write block. Triton requires both dot operands to use the same dtype.
 
-This is an adapter precision-contract bug, not a recurrence mismatch, checkpoint mismatch, strong-decay failure, or T4 incompatibility.
-
 Detailed evidence: [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
 
-## AMP-safe adapter fix on main
+## AMP-safe adapter fix — normal decay passes, strong decay fails backward
 
-`model/gdn2_fla.py` now canonicalizes the ordinary FLA compute tensors:
+`model/gdn2_fla.py` canonicalizes the ordinary FLA compute tensors to the low-precision value dtype while keeping log-decay and recurrent state FP32. The revised integration probe keeps model parameters in FP32 and uses CUDA FP16 autocast, matching the actual trainer.
+
+Results reported by the user:
 
 ```text
-q, k, v, erase, write -> v.dtype
+normal_decay_amp:
+  layer output: PASS
+  all tested input/parameter gradients: PASS
+
+strong_decay_-6_amp:
+  layer output: PASS
+  backward parity: FAIL
+  NaN/non-finite gradients observed
 ```
 
-In the active trainer this gives the already-qualified FP16 compute contract. Log-decay and recurrent state remain FP32. The FLA result is cast back to the original Small-LLM q dtype before returning, and the internal casts remain differentiable.
+Thus the dtype-contract bug is fixed, but FLA v0.5.1 chunk backward remains unqualified under the forced strong-decay AMP stress case.
 
-The integration probe has also been corrected. It now keeps model parameters in FP32 and executes both reference and FLA paths under CUDA FP16 autocast, matching the real trainer instead of blanket-casting the model to FP16.
+## Retained-intermediate test — FAILS too
+
+A focused probe then tested FLA with `disable_recompute=True`, retaining the forward WY/state intermediates instead of reconstructing them during backward.
+
+User-reported verdict:
+
+```text
+VERDICT: FAIL — retained-intermediate FLA is still not qualified for resumed training.
+```
+
+This rules out backward recomputation as the sole cause. The strong-decay AMP failure is deeper in the v0.5.1 chunk-backward numerical path.
+
+Detailed evidence: [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
 
 ## Historical chunk-32 checkpoint vs FLA64 runtime
 
@@ -87,55 +104,43 @@ The active 20M/500M checkpoint stores:
 gdn_chunk_size = 32
 ```
 
-That configuration remains unchanged for strict checkpoint restore. CUDA recurrence execution uses FLA's fixed internal chunk size 64. CPU/reference execution keeps the historical adaptive chunk 32. Chunk size is execution grouping, not learned model state.
+That configuration remains unchanged for strict checkpoint restore. CUDA FLA chunk execution uses fixed internal chunk size 64; CPU/reference execution keeps historical adaptive chunk 32. This execution grouping does not add learned state.
 
-## 500M launcher wiring
+## Current production boundary — FLA resume BLOCKED
 
-The normal wrapper creates a detached training worktree, so changing `model/` on current `main` alone is insufficient. The wrapper is now repinned to the implementation containing the AMP-safe FLA adapter and revised probe:
+Do not retry the 500M resume with FLA chunk training yet.
 
-```text
-efa3d10327af1ade96db5363616e00c870b164dc
-```
+The valid trajectory remains safely resumable from verified step 4000. The FLA experiments have not committed update 4001.
 
-The pinned worktree also includes `fla-core==0.5.1` in the `model` runtime extra. The trainer still passes `--gdn-chunk-size 32` so historical checkpoint configuration remains strict-load compatible.
+Before deciding whether FLA can still be used without changing model semantics, determine whether the forced constant `log_decay=-6` stress case overlaps the model's real learned regime:
 
-## Mandatory gate before retrying 500M resume
+1. sweep forced log-decay values around the adaptive danger region (for example `-0.5, -0.75, -1, -1.5, -2, -4, -6`) under FP32 parameters + FP16 autocast and check finite gradient parity;
+2. instrument the real step-4000 checkpoint on representative training data and record per-token log-decay quantiles plus 64-token cumulative decay spans per GDN layer;
+3. compare the actual distribution with the FLA backward failure boundary;
+4. benchmark/qualify FLA's fused-recurrent GDN-2 implementation as an exact-recurrence fallback before changing learned decay semantics.
 
-Run on the T4:
+Why this matters: the old adaptive backend begins splitting when cumulative log-decay span exceeds roughly 60. Over 64 tokens, a constant log-decay around `-1` is already enough to cross that threshold; the synthetic constant `-6` test corresponds to a much larger cumulative span (~384). Failure at `-6` therefore does not yet prove failure at the actual checkpoint's decay values.
 
-```bash
-git pull --ff-only
-python kaggle/run_gdn2_fla_layer_probe.py
-```
+## Upstream context
 
-Require:
-
-```text
-layer_forward_backward_parity: True
-trainer_amp_contract_tested: True
-```
-
-Only after that revised AMP-realistic probe passes should the ordinary resume command be retried:
-
-```bash
-python kaggle/run_20m_500m.py
-```
+As of 2026-08-08, FLA v0.5.1 is still the latest release. A later upstream PR (`#1007`, closed without merge) explored an opt-in bounded/safe GDN-2 gate path after a training failure involving extreme learned gate state. It reported numerical failures in the default extreme-gate regime and finite behavior under the bounded path. This is relevant evidence that strong-decay robustness is a real upstream concern, but it does not authorize Small-LLM to bound/clamp decay.
 
 ## Current decision boundary
 
-- Do **not** clip/bound GDN-2 decay based on the slowdown.
-- Standalone FLA operator qualification remains passed.
-- The first layer probe was insufficient for the real trainer precision contract.
-- The active 500M trajectory remains safely resumable from verified step 4000; no update was committed by the failed FLA attempt.
-- Retry the 500M resume only after the revised AMP-realistic integration probe passes.
-- Preserve `gdn_chunk_size=32` in the existing checkpoint/model configuration while FLA uses fixed chunk 64 internally on CUDA.
-- A fresh 500M FLA-from-update-1 run remains a separate later decision.
+- Do **not** clip/bound learned GDN-2 decay solely because the old adaptive backend slows down.
+- FLA v0.5.1 forward remains strongly qualified and normal-decay AMP backward parity passes.
+- FLA v0.5.1 strong-decay AMP chunk backward is **not qualified**.
+- `disable_recompute=True` does not fix the strong-decay backward failure.
+- Do **not** resume the active 500M trajectory with FLA chunk training until the decay failure boundary and real checkpoint decay distribution are measured.
+- The latest verified usable training checkpoint remains step 4000.
+- A fresh FLA-from-update-1 run remains unauthorized while the same strong-decay backward issue is unresolved.
 
 Evidence:
 - [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
 - [`../evidence/gdn2_fla_layer_integration_2026-08-08.md`](../evidence/gdn2_fla_layer_integration_2026-08-08.md)
 - [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
+- [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
 
 Decisions:
 - [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
-- [`../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`](../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md)
+- [`../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`](../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md) — currently blocked by failed qualification gate; no resumed update has been accepted.
