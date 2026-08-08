@@ -5,6 +5,7 @@ from torch.nn import functional as F
 
 from model.config import ModelConfig
 from model.gdn2 import GatedDeltaNet2, assert_gdn2_backend_parity
+from model.gdn2_fla import FLAPreferredGDN2Backend
 from model.gdn2_stable import AdaptiveChunkwiseGDN2Backend, StableGatedDeltaNet2
 from model.model import SmallLLM
 
@@ -65,7 +66,27 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
         stable_keys = tuple(StableGatedDeltaNet2(config).state_dict())
         self.assertEqual(stable_keys, legacy_keys)
 
-    def test_assembled_model_uses_adaptive_backend(self):
+    def test_preferred_backend_uses_adaptive_fallback_on_cpu(self):
+        config = tiny_config(gdn_chunk_size=64, max_seq_len=64)
+        layer = StableGatedDeltaNet2(config)
+        self.assertIsInstance(layer.backend, FLAPreferredGDN2Backend)
+        self.assertIsInstance(layer.backend.fallback_backend, AdaptiveChunkwiseGDN2Backend)
+
+        torch.manual_seed(8)
+        x = torch.randn(1, 16, config.d_model)
+        preferred = layer(x)
+
+        reference = StableGatedDeltaNet2(
+            config,
+            backend=AdaptiveChunkwiseGDN2Backend(chunk_size=64),
+        )
+        reference.load_state_dict(layer.state_dict(), strict=True)
+        expected = reference(x)
+        torch.testing.assert_close(preferred, expected, atol=1e-6, rtol=1e-6)
+
+    def test_assembled_model_uses_fla_preferred_backend(self):
+        # The tiny CPU geometry is deliberately non-64 so calls still fall back
+        # to the correctness backend, but assembly must use the preferred wrapper.
         model = SmallLLM(tiny_config())
         gdn_mixers = [
             block.mixer
@@ -75,7 +96,13 @@ class AdaptiveChunkwiseGDN2Tests(unittest.TestCase):
         self.assertTrue(gdn_mixers)
         self.assertTrue(all(isinstance(mixer, StableGatedDeltaNet2) for mixer in gdn_mixers))
         self.assertTrue(
-            all(isinstance(mixer.backend, AdaptiveChunkwiseGDN2Backend) for mixer in gdn_mixers)
+            all(isinstance(mixer.backend, FLAPreferredGDN2Backend) for mixer in gdn_mixers)
+        )
+        self.assertTrue(
+            all(
+                isinstance(mixer.backend.fallback_backend, AdaptiveChunkwiseGDN2Backend)
+                for mixer in gdn_mixers
+            )
         )
         self.assertTrue(all(mixer.backend.chunk_size == 32 for mixer in gdn_mixers))
 
