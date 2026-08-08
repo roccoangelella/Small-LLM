@@ -1,4 +1,4 @@
-"""Numerically adaptive GDN-2 chunkwise backend for assembled training models."""
+"""Numerically stable GDN-2 execution backends for assembled training models."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from .gdn2 import (
     _check_recurrence_inputs,
     gdn2_chunkwise_reference,
 )
+from .gdn2_fla import FLAPreferredGDN2Backend
 
 # Dense chunk products materialize both causal and discarded anti-causal
 # entries before triangular masking. Keeping every cumulative-decay span below
@@ -33,12 +34,11 @@ def _log_decay_span(log_decay: Tensor, start: int, end: int) -> float:
 class AdaptiveChunkwiseGDN2Backend:
     """Use the largest safe subchunks up to the configured chunk size.
 
-    The correctness-first PyTorch chunk kernel factorizes pairwise decays into
-    reciprocal exponentials. Strong but valid decay can overflow those
-    intermediates even when the recurrent equations remain finite. This
-    wrapper keeps ordinary chunks unchanged and bisects only numerically unsafe
-    chunks. If a finite-span chunk still produces a non-finite result, it is
-    retried at a smaller size down to the exact one-token recurrence.
+    This remains the correctness/reference fallback. The PyTorch chunk kernel
+    factorizes pairwise decays into reciprocal exponentials. Strong but valid
+    decay can overflow those intermediates even when the recurrent equations
+    remain finite, so this wrapper bisects unsafe chunks down to the exact
+    one-token recurrence when necessary.
     """
 
     def __init__(self, chunk_size: int = 64) -> None:
@@ -117,17 +117,25 @@ class AdaptiveChunkwiseGDN2Backend:
 
 
 class StableGatedDeltaNet2(GatedDeltaNet2):
-    """GDN-2 layer whose default training backend adapts unsafe chunks."""
+    """Existing GDN-2 layer with FLA-preferred CUDA execution.
+
+    The layer's learned parameters and state-dict contract are unchanged.  At
+    the active 64-token CUDA geometry, FLA evaluates the recurrence. CPU and
+    unsupported test geometries continue through the adaptive PyTorch backend.
+    """
 
     def __init__(self, config: ModelConfig, backend: GDN2Backend | None = None) -> None:
-        super().__init__(
-            config,
-            backend=(
-                backend
-                if backend is not None
-                else AdaptiveChunkwiseGDN2Backend(config.gdn_chunk_size)
-            ),
-        )
+        if backend is None:
+            adaptive = AdaptiveChunkwiseGDN2Backend(config.gdn_chunk_size)
+            backend = FLAPreferredGDN2Backend(
+                chunk_size=config.gdn_chunk_size,
+                fallback_backend=adaptive,
+            )
+        super().__init__(config, backend=backend)
 
 
-__all__ = ["AdaptiveChunkwiseGDN2Backend", "StableGatedDeltaNet2"]
+__all__ = [
+    "AdaptiveChunkwiseGDN2Backend",
+    "FLAPreferredGDN2Backend",
+    "StableGatedDeltaNet2",
+]
