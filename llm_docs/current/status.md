@@ -1,13 +1,13 @@
 ---
 status: current
-last_reviewed: 2026-08-07
+last_reviewed: 2026-08-08
 ---
 
 # Current project status
 
 ## Completed 20M / 100M pretraining experiment
 
-The approximately-20M-parameter GDN-2 hybrid has completed the fixed approximately-100M-token finite pretraining schedule.
+The approximately-20M-parameter GDN-2 hybrid completed the fixed approximately-100M-token finite pretraining schedule.
 
 Canonical final W&B evidence:
 
@@ -22,46 +22,60 @@ final checkpoint: step-00003053
 final remote publication: verified, final=true
 ```
 
-The validation curve improved at every recorded checkpoint from update 250 through update 3,053. It fell from `6.517897 / 677.153 PPL` at update 250 to `4.252758 / 70.299 PPL` at completion. Validation still improved materially in the tail: `4.450810` at update 2,250, `4.395521` at update 2,500, `4.324534` at update 2,750, `4.260713` at update 3,000, and `4.252758` at the final partial block. The 100M result therefore does not show data saturation of the 20M model; marginal gains were diminishing but remained measurable at the end.
+Validation improved at every recorded checkpoint from update 250 through update 3,053. The run therefore did not show data saturation of the 20M model.
 
-The exact WSD telemetry reaches peak LR `3e-4` at update 153, remains at peak through update 2,442, begins decay at update 2,443, and ends at `3e-5`.
+The exact WSD telemetry reached peak LR `3e-4` at update 153, stayed at peak through update 2,442, began decay at update 2,443, and ended at `3e-5`.
 
 ### Numerical stability
 
-The completed accepted trajectory records nine FP16 overflow events. One-retry events occur at updates 939, 1,066, 1,083, 1,199, and 1,247. The formerly fatal block succeeds at update 1,498 after four retries, calibrating the loss scale to `128`. No later overflow is recorded through completion; scale 128 remains stable for the rest of the run.
+The accepted trajectory recorded nine FP16 overflow events. The formerly fatal block succeeded at update 1,498 after four retries, calibrating the loss scale to `128`; no later overflow was recorded through completion.
 
-Across the 3,041 unique successful updates with primary W&B train telemetry, median gradient norm is `0.9718`, p95 is `1.5728`, and the maximum is `17.8926` at update 1,144. `1,236 / 3,041` logged successful updates are clipped (`40.6%`). The run remains finite and validation continues improving despite common clipping.
+Across the 3,041 unique successful updates with primary W&B telemetry, median gradient norm was `0.9718`, p95 `1.5728`, maximum `17.8926`; `1,236 / 3,041` logged successful updates were clipped (`40.6%`).
 
 ### Resume correctness
 
-The W&B run preserves replayed tails across six Kaggle sessions. Exactly 630 successful global updates are logged in both an earlier/discarded tail and the resumed trajectory. Every directly overlapping replay has identical logged loss and gradient norm (`max absolute difference = 0`). This is strong empirical evidence that the same-T4 exact restore/replay contract preserved training numerics.
+Across six Kaggle sessions, 630 successful global updates were replayed after resume and every directly overlapping replay had identical logged loss and gradient norm. This established the same-implementation exact restore/replay contract used before the FLA migration.
 
-W&B has one evidence gap: updates `2,473–2,484` are absent entirely from the export. No values are inferred for those 12 updates.
-
-### Throughput is now the main implementation concern
+### Throughput collapse and resolved diagnosis
 
 Data loading was not the bottleneck:
 
 ```text
-median data-wait per logged update: 4.23 ms
+median data-wait: 4.23 ms
 p95 data-wait: 12.25 ms
 maximum data-wait: 57.04 ms
 maximum reserved VRAM: 9.127 GiB
 ```
 
-Training compute slowed severely as model state evolved. On the accepted session path, representative median throughput fell from about `3,830 target tok/s` over updates 1–1,000 to about `445 target tok/s` over updates 3,001–3,053, an approximately `8.6x` slowdown. Validation time shows almost the same factor, from roughly `27.55 s` at update 1,000 to `236.20 s` at the final checkpoint.
+Training throughput fell from about `3,830 target tok/s` early to about `445 target tok/s` late, approximately `8.6x`; validation slowed by almost exactly the same factor.
 
-This is strongly consistent with the correctness-first adaptive GDN-2 backend increasingly selecting smaller numerical subchunks as learned decay spans grow, but the current telemetry does not log actual selected subchunk sizes or split counts. Causality is therefore not yet proven. Instrumenting GDN subchunk selection / decay-span triggers is now a priority for interpreting 500M runtime and for later larger-model work.
+The original hypothesis was that stronger learned GDN-2 decay caused the correctness-first adaptive PyTorch backend to repeatedly subdivide chunks and synchronize with Python. Controlled FLA tests on the same Tesla T4 now strongly support that diagnosis:
 
-The canonical detailed report is:
+```text
+FLA forward correctness: pass
+FLA backward correctness: pass
+FLA speedup vs adaptive, normal forward: 20.830x
+FLA speedup vs adaptive, strong-decay forward: 162.541x
+FLA speedup vs adaptive, strong-decay forward+backward: 135.441x
+adaptive strong-decay forward retention: 0.086x
+FLA strong-decay forward retention: 0.671x
+```
 
-- [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
+The full Small-LLM integrated layer probe also passed:
 
-## Active next experiment — fresh 20M / 500M run
+```text
+layer_forward_backward_parity: True
+checkpoint_parity: None
+INTEGRATION QUALIFIED for checkpoint evaluation
+```
 
-The authorized next experiment remains the final fresh data-scaling characterization of the same approximately-20M-parameter model over the separately identified approximately-500M-token finite dataset.
+Therefore decay clipping/bounding is no longer the preferred runtime fix. FLA is now the accepted CUDA recurrence implementation for checkpoint evaluation and the active 500M resume path.
 
-It is not a continuation of the 100M checkpoint. It starts from seed 17 with its own one-pass WSD plan.
+Detailed current backend state: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md).
+
+## Active 20M / 500M experiment
+
+The 500M experiment remains its own fresh seed-17 trajectory; it is not initialized from the 100M final checkpoint. It already has its own verified checkpoint chain and may now resume that chain using the FLA execution backend.
 
 ```text
 profile: 20m-500m-data-scaling-v1
@@ -70,22 +84,29 @@ target accepted source tokens: 500,000,000
 minimum accepted source tokens: 450,000,000
 hard maximum accepted source tokens: 550,000,000
 context: 2,048
-training microbatch: 4 from the first real update
-fresh microbatch probes: skipped by experiment decision
+training microbatch: 4
+saved/configured gdn_chunk_size: 32
+CUDA FLA runtime chunk: 64
 held-out validation cadence: 250 successful updates
 local checkpoint cadence: 250 successful updates
 verified remote publication cadence: 250 successful updates
 W&B run ID: 20m-500m-data-001
-pinned training worktree: 01d562ea1845d0dd128a0458e613c9e677b7381d
+pinned training worktree: a1471472ca9b5d07f70c844460acffe5c96c5200
 ```
 
-The first 500M Kaggle launch verified the attached dataset successfully but failed closed while deriving the schedule because the inherited launcher dispatched the 500M manifest to `dataset.qualification_100m_report`. The dataset was not at fault and no optimizer update ran. `main` now rewrites that one inherited dispatch to `dataset.qualification_500m_report`; the next operational action is simply to pull current `main` and rerun:
+The historical `gdn_chunk_size=32` model configuration is deliberately preserved because trainer checkpoints compare model configuration strictly. On CUDA, the integrated backend executes the same recurrence with FLA's fixed 64-token kernel internally; the adaptive/reference fallback retains the configured chunk size 32.
+
+The one-click launcher has been repinned to the FLA-integrated implementation. Running:
 
 ```bash
 python kaggle/run_20m_500m.py
 ```
 
-The 500M run remains scientifically useful because the 100M result is still improving. Its wall-clock cost is now a separate implementation risk because the 100M run exposed severe late-stage GDN compute slowdown.
+continues to restore the latest verified remote 500M checkpoint and resumes its model, optimizer, scheduler, scaler, RNG, data cursor, consumed-token position, and WSD position. No checkpoint tensor conversion is required because FLA adds no learned parameters or state-dict keys.
+
+This resumed path is an explicit implementation migration. Future updates are not expected to be bitwise identical to a hypothetical continuation with the old backend because floating-point operation ordering changes.
+
+A later completely fresh 500M run from update 1 using FLA remains a separate scientific decision if a clean single-backend reference trajectory is desired.
 
 ## Historical 10M anchor
 
@@ -99,22 +120,22 @@ FP16 overflow events: 0
 
 The 10M result is a historical anchor, not a strict same-validation-block comparison with the 100M result.
 
-## Frozen decisions affecting current work
+## Current frozen/accepted decisions affecting work
 
-- Complete one fresh approximately-500M-token run as the final data-scaling characterization of the 20M smoke model.
-- Do not initialize the 500M run from the 100M final checkpoint.
-- Start the 500M run directly at microbatch 4; do not replay the inherited microbatch 1-vs-4 probes.
+- The active 500M trajectory may resume its latest verified checkpoint with FLA GDN-2 CUDA execution.
+- Preserve the checkpoint's historical `gdn_chunk_size=32`; do not rewrite model configuration to 64.
+- FLA internally uses its fixed 64-token GDN-2 kernel on CUDA.
+- Do not clip/bound learned GDN-2 decay based on the old adaptive-backend slowdown.
+- Keep the adaptive PyTorch backend as the correctness/reference fallback.
+- Start/resume the 500M experiment at microbatch 4; no inherited startup microbatch probes.
 - Validate, checkpoint locally, and publish a verified remote checkpoint every 250 successful 500M updates.
-- Keep adaptive numerical GDN subchunking rather than altering/clamping the recurrence for correctness.
 - Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
-- Do not run the matched all-attention baseline at the 20M smoke scale; revisit architecture comparisons at larger model sizes.
-- Preserve the permanent `eval_core_v1` fast/full suite plus free-generation and teacher-forced confidence/rank diagnostics.
+- Do not run the matched all-attention baseline at the 20M smoke scale; revisit architecture comparisons at larger sizes.
+- Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
 
 ## Evaluation state
 
-The W&B export establishes completion and the held-out training-validation trajectory, but it does not contain the frozen post-pretraining capability evaluation.
-
-Still separate from this training result:
+The completed 100M W&B export establishes the held-out training-validation trajectory. Frozen post-pretraining capability evaluation remains separately preserved/compared through:
 
 ```text
 eval_core_v1 fast/full
@@ -122,19 +143,19 @@ free-generation prompt diagnostics
 teacher-forced held-out confidence/rank diagnostics
 ```
 
-These should be preserved for the 100M checkpoint so the later 500M result can be compared on more than perplexity.
-
 ## Current source of truth
 
 - Final 100M W&B evidence: [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
+- FLA backend state: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
+- Standalone FLA evidence: [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
+- Integrated-layer evidence: [`../evidence/gdn2_fla_layer_integration_2026-08-08.md`](../evidence/gdn2_fla_layer_integration_2026-08-08.md)
+- FLA integration decision: [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
+- 500M FLA resume decision: [`../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`](../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md)
 - 500M procedure: [`../runbooks/20m_500m_runbook.md`](../runbooks/20m_500m_runbook.md)
 - 500M experiment decision: [`../decisions/0008-run-500m-final-20m-data-scaling-probe.md`](../decisions/0008-run-500m-final-20m-data-scaling-probe.md)
 - 500M microbatch/durability decision: [`../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md`](../decisions/0009-start-500m-at-microbatch-4-with-250-step-durability.md)
 - FP16 calibration decision: [`../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md`](../decisions/0006-calibrate-fp16-loss-scale-before-failing-block.md)
-- GDN-2 adaptive execution decision: [`../decisions/0005-adapt-gdn2-chunks-to-decay-span.md`](../decisions/0005-adapt-gdn2-chunks-to-decay-span.md)
-- GDN-2 execution contract: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
-- FP16 execution contract: [`../reference/fp16_overflow_recovery.md`](../reference/fp16_overflow_recovery.md)
+- Historical adaptive GDN decision: [`../decisions/0005-adapt-gdn2-chunks-to-decay-span.md`](../decisions/0005-adapt-gdn2-chunks-to-decay-span.md)
+- GDN-2 execution reference: [`../reference/gdn2_chunkwise_training.md`](../reference/gdn2_chunkwise_training.md)
 - Evaluation procedure: [`../runbooks/eval_core_v1_runbook.md`](../runbooks/eval_core_v1_runbook.md)
-- Model-output procedure: [`../runbooks/post_pretraining_prompt_suite.md`](../runbooks/post_pretraining_prompt_suite.md)
-- Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
