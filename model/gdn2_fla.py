@@ -1,6 +1,6 @@
 """Flash Linear Attention execution backend for the existing Small-LLM GDN-2 layer.
 
-This module deliberately changes only how the recurrence is evaluated.  The
+This module deliberately changes only how the recurrence is evaluated. The
 Small-LLM projections, learned parameters, checkpoint keys, decay semantics,
 and layer assembly remain owned by :mod:`model.gdn2`.
 """
@@ -8,7 +8,7 @@ and layer assembly remain owned by :mod:`model.gdn2`.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable
+from typing import Callable
 
 from torch import Tensor
 
@@ -23,12 +23,7 @@ FLA_GDN2_CHUNK_SIZE = 64
 
 
 def _load_chunk_gdn2() -> Callable[..., tuple[Tensor, Tensor | None]]:
-    """Import the qualified FLA GDN-2 operator lazily.
-
-    FLA is optional for CPU/reference use.  A CUDA training path that selects
-    this backend must have the exact qualified core package installed rather
-    than silently dropping back to the slow correctness implementation.
-    """
+    """Import the qualified FLA GDN-2 operator lazily."""
 
     try:
         from fla.ops.gdn2 import chunk_gdn2
@@ -44,12 +39,8 @@ def _load_chunk_gdn2() -> Callable[..., tuple[Tensor, Tensor | None]]:
 class FLAGDN2Backend:
     """Evaluate the existing GDN-2 recurrence with FLA's Triton training kernel."""
 
-    def __init__(self, *, chunk_size: int = FLA_GDN2_CHUNK_SIZE, disable_recompute: bool = False) -> None:
-        if chunk_size != FLA_GDN2_CHUNK_SIZE:
-            raise ValueError(
-                f"FLA GDN-2 requires chunk_size={FLA_GDN2_CHUNK_SIZE}, got {chunk_size}"
-            )
-        self.chunk_size = chunk_size
+    def __init__(self, *, disable_recompute: bool = False) -> None:
+        self.chunk_size = FLA_GDN2_CHUNK_SIZE
         self.disable_recompute = bool(disable_recompute)
 
     def __call__(
@@ -85,7 +76,7 @@ class FLAGDN2Backend:
             use_qk_l2norm_in_kernel=False,
             use_gate_in_kernel=False,
             safe_gate=False,
-            chunk_size=self.chunk_size,
+            chunk_size=FLA_GDN2_CHUNK_SIZE,
             disable_recompute=self.disable_recompute,
         )
         if final_state is None:
@@ -94,31 +85,34 @@ class FLAGDN2Backend:
 
 
 class FLAPreferredGDN2Backend:
-    """Use qualified FLA on the supported CUDA path and the reference fallback elsewhere.
+    """Use qualified FLA on CUDA and the configured adaptive backend elsewhere.
 
-    Selection happens at call time because Small-LLM models are commonly built
-    on CPU and moved to CUDA afterwards.  On the active 64-token CUDA training
-    geometry FLA is mandatory: an import/kernel failure is surfaced instead of
-    silently reintroducing the adaptive backend's pathological runtime.
+    ``configured_chunk_size`` is intentionally preserved as checkpoint/model
+    configuration because historical checkpoints record it. FLA's GDN-2
+    kernel itself is fixed to 64-token blocks. Since chunk size changes only
+    execution grouping and not the recurrence semantics, CUDA calls may use the
+    fixed FLA-64 kernel even when a checkpoint was created with the historical
+    adaptive ``gdn_chunk_size=32`` setting.
+
+    This distinction is what makes an existing 500M checkpoint load strictly
+    unchanged while still replacing the pathological CUDA calculator.
     """
 
     def __init__(
         self,
         *,
-        chunk_size: int = FLA_GDN2_CHUNK_SIZE,
+        chunk_size: int,
         fallback_backend: GDN2Backend,
         disable_recompute: bool = False,
     ) -> None:
+        if isinstance(chunk_size, bool) or not isinstance(chunk_size, int) or chunk_size <= 0:
+            raise ValueError(f"chunk_size must be a positive integer, got {chunk_size!r}")
         self.chunk_size = chunk_size
         self.fallback_backend = fallback_backend
-        self.fla_backend = (
-            FLAGDN2Backend(chunk_size=chunk_size, disable_recompute=disable_recompute)
-            if chunk_size == FLA_GDN2_CHUNK_SIZE
-            else None
-        )
+        self.fla_backend = FLAGDN2Backend(disable_recompute=disable_recompute)
 
     def uses_fla_for(self, q: Tensor) -> bool:
-        return q.device.type == "cuda" and self.fla_backend is not None
+        return q.device.type == "cuda"
 
     def __call__(
         self,
@@ -131,7 +125,6 @@ class FLAPreferredGDN2Backend:
         initial_state: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
         if self.uses_fla_for(q):
-            assert self.fla_backend is not None
             return self.fla_backend(
                 q,
                 k,
