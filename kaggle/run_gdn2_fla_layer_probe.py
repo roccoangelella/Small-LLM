@@ -115,11 +115,14 @@ def _layer_case(torch: Any, *, strong_decay: bool) -> dict[str, Any]:
     from model.gdn2_stable import AdaptiveChunkwiseGDN2Backend, StableGatedDeltaNet2
 
     label = "strong_decay_-6" if strong_decay else "normal_decay"
-    print(f"[layer] {label}")
-    config = ModelConfig.smoke(max_seq_len=64, gdn_chunk_size=64)
+    print(f"[layer] {label}  saved_config_chunk=32  FLA_runtime_chunk=64")
+    # This deliberately matches the existing 500M checkpoint configuration:
+    # adaptive/reference execution sees chunk 32, while CUDA candidate execution
+    # uses FLA's fixed 64-token kernel without changing the model config.
+    config = ModelConfig.smoke(max_seq_len=64, gdn_chunk_size=32)
     reference = StableGatedDeltaNet2(
         config,
-        backend=AdaptiveChunkwiseGDN2Backend(chunk_size=64),
+        backend=AdaptiveChunkwiseGDN2Backend(chunk_size=32),
     ).cuda().half()
     candidate = StableGatedDeltaNet2(config).cuda().half()
     candidate.load_state_dict(reference.state_dict(), strict=True)
@@ -144,7 +147,12 @@ def _layer_case(torch: Any, *, strong_decay: bool) -> dict[str, Any]:
     ref_x = source.detach().clone().requires_grad_(True)
     fla_x = source.detach().clone().requires_grad_(True)
 
-    result: dict[str, Any] = {"label": label, "passed": False}
+    result: dict[str, Any] = {
+        "label": label,
+        "saved_config_chunk_size": 32,
+        "fla_runtime_chunk_size": 64,
+        "passed": False,
+    }
     try:
         ref_output, ref_grads = _parameter_grads(torch, reference, ref_x, upstream)
         fla_output, fla_grads = _parameter_grads(torch, candidate, fla_x, upstream)
@@ -200,10 +208,6 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
         if not isinstance(model_state, dict) or not isinstance(model_config, dict):
             raise ValueError("expected trainer checkpoint fields `model` and `model_config`")
         config = ModelConfig(**model_config)
-        if config.gdn_chunk_size != 64:
-            raise ValueError(
-                f"checkpoint uses gdn_chunk_size={config.gdn_chunk_size}; integrated FLA path requires 64"
-            )
 
         candidate = SmallLLM(config)
         reference = SmallLLM(config)
@@ -238,6 +242,8 @@ def _checkpoint_case(torch: Any, checkpoint: Path, sequence: int) -> dict[str, A
             {
                 "passed": True,
                 "global_step": raw.get("global_step"),
+                "saved_config_chunk_size": config.gdn_chunk_size,
+                "fla_runtime_chunk_size": 64,
                 "sequence": actual_sequence,
                 "logit_errors": errors,
             }
@@ -300,7 +306,7 @@ def main() -> int:
         "layer_forward_backward_parity": layer_pass,
         "checkpoint_parity": None if report["checkpoint"] is None else checkpoint_pass,
         "verdict": (
-            "INTEGRATION QUALIFIED for checkpoint evaluation; fresh-training authorization remains separate."
+            "INTEGRATION QUALIFIED for checkpoint evaluation/resume geometry; fresh-training authorization remains separate."
             if passed
             else "NOT QUALIFIED; inspect failed layer/checkpoint parity before using FLA integration."
         ),
