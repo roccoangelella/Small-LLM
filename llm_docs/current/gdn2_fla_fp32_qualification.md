@@ -5,63 +5,149 @@ last_reviewed: 2026-08-08
 
 # GDN-2 FLA FP32 qualification — current gate
 
-Released FLA v0.5.1/v0.5.2 mixed-precision `chunk_gdn2` training remains blocked for the active 20M/500M trajectory because trainer-AMP backward failures overlap the real verified step-4000 decay regime.
+## Current conclusion
 
-A bounded diagnostic is authorized by ADR 0020: test whether forcing the complete FLA GDN-2 chunk execution to FP32 removes the synthetic decay-dependent backward failure without changing recurrence or learned-state semantics.
+The August 8 live Tesla T4 investigation found that the previously reported decay-dependent `fla-core` GDN-2 backward failures were being attributed by an invalid diagnostic oracle.
 
-Single notebook entry point:
+The old sweep called the adaptive PyTorch reference inside the trainer's CUDA FP16 autocast context. Although the reference explicitly converted recurrence tensors to FP32, eligible matrix multiplications inside the reference could still be autocast to FP16. The failing rows observed on the live notebook showed non-finite **reference** gradients while the corresponding FLA gradients were finite. The old sweep also did not reseed layer initialization per decay, so the reported non-monotonic pattern compared different random layers across rows.
+
+The corrected qualification now:
+
+- disables CUDA autocast only inside the adaptive recurrence oracle;
+- keeps the surrounding Small-LLM layer under the real trainer contract: FP32 parameters + CUDA FP16 autocast;
+- uses deterministic layer seed `20260808` and input/upstream seed `12345` for every row;
+- counts a failure against FLA only when the FP32 adaptive reference is itself finite;
+- persists the JSON report.
+
+Single synthetic entry point remains:
 
 ```text
 python kaggle/run_gdn2_fla_fp32.py
 ```
 
-The wrapper self-provisions the diagnostic runtime and then launches:
+Qualified runtime:
 
 ```text
-kaggle/run_gdn2_fla_fp32_qualification.py
+GPU: Tesla T4 / SM75
+PyTorch: 2.10.0+cu128
+CUDA runtime: 12.8
+Triton: 3.6.0
+fla-core: 0.5.2
+saved gdn_chunk_size: 32
+FLA runtime chunk: 64
 ```
 
-The scientific script:
+## Corrected synthetic result
 
-1. forces diagnostic `fla-core==0.5.2`;
-2. runs the known mixed-precision full-layer decay sweep as an in-run control;
-3. repeats the identical sweep with the FLA GDN-2 execution forced to FP32 internally;
-4. checks output finiteness/parity and every tested input/parameter gradient against the adaptive PyTorch reference;
-5. prints a bounded JSON report between `COPY_PASTE_REPORT_BEGIN` and `COPY_PASTE_REPORT_END`.
-
-The experiment is synthetic and does not load the checkpoint, start the trainer, or perform optimizer updates.
-
-Production remains blocked regardless of the synthetic result. A successful result requires:
+Decay sweep:
 
 ```text
-mixed-precision baseline: reproduces >=1 known failure
-full-FP32 candidate:       passes every tested decay point
+-0.25
+-0.5
+-0.75
+-1.0
+-1.25
+-1.5
+-2.0
+-3.0
+-4.0
+-5.0
+-6.0
 ```
 
-If that gate passes, the next required experiment is direct forward/backward gradient parity on the verified real step-4000 checkpoint and next real training microbatch. Only after that may a disposable optimizer-update test be considered.
+Result:
 
-## Notebook bootstrap history
+```text
+mixed FLA passing: all 11 points
+mixed FLA failing: []
 
-Two bootstrap-only failures occurred before any scientific FLA result was produced:
+full-FP32 FLA passing: all 11 points
+full-FP32 FLA failing: []
 
-1. the first entry point installed `fla-core==0.5.2 --no-deps` into a runtime without Triton, so import failed with `ModuleNotFoundError: No module named 'triton'`;
-2. the first self-provisioning wrapper then discovered that the notebook had `torch=2.11.0+cpu`, so there was no CUDA PyTorch/Triton stack to run FLA at all.
+invalid FP32 reference rows: []
+```
 
-Neither failure loaded the checkpoint or exercised FLA forward/backward correctness.
+Because mixed FLA no longer reproduces a candidate-specific failure against the corrected oracle, the evidence does **not** support the hypothesis that full-FP32 execution fixed a mixed-precision FLA kernel instability. Full-FP32 passes, but mixed FLA also passes.
 
-The wrapper is now pinned to repair this specific environment mismatch. When an NVIDIA GPU is visible but PyTorch is CPU-only, it installs the official CUDA 12.8 `torch==2.10.0` wheel, matching the previously qualified Tesla T4 stack (`torch 2.10.0+cu128`, Triton 3.6.0). It verifies CUDA in a fresh child process before launching the scientific diagnostic. If no NVIDIA GPU is visible, it stops and asks for a GPU runtime rather than modifying packages blindly.
+Raw evidence:
 
-## PiLink agent delegation
+```text
+llm_docs/evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json
+```
 
-The user has delegated the active FLA reliability investigation to an agent with PiLink access so that it can work directly against the live notebook/runtime instead of relying on copied logs. The agent should first recover any previously shared Kaggle/SSH endpoint from its authorized memory if available, connect to the live GPU runtime, and execute the existing FP32 qualification gate. If FP32 still fails, it should localize the first non-finite FLA backward intermediate and implement the narrowest exact-recurrence numerical fix, preserving checkpoint/model semantics and production safety boundaries. Any successful change must be committed to `main` with evidence under `llm_docs/`.
+## Real step-4000 gate
 
-Safe accepted production state remains:
+The verified remote checkpoint was restored and matched to the attached 500M dataset:
 
 ```text
 checkpoint: step-00004000
+global_step: 4000
 last_consumed_block_id: 3999
-next update: 4001
-no FLA update accepted
+next block: 4000
+next production update: 4001
+microbatch: 4
+block: 16 x 2048
+checkpoint GradScaler scale: 256.0
 ```
 
-The adapter's `force_fp32` mode remains opt-in. Default assembled-model behavior and production dependency pins are unchanged.
+`kaggle/run_gdn2_fla_step4000_parity.py` reproduced the real trainer forward/backward contract over the **entire next block**, including checkpoint loss scaling, while deliberately stopping before clipping or optimizer/scheduler/data mutation.
+
+Both candidates passed against the finite FP32 adaptive reference:
+
+```text
+mixed FLA:
+  forward parity: PASS
+  all gradients finite: PASS
+  all parameter gradient parity: PASS
+  gradient failures: 0
+
+full-FP32 FLA:
+  forward parity: PASS
+  all gradients finite: PASS
+  all parameter gradient parity: PASS
+  gradient failures: 0
+
+REAL_STEP_4000_PARITY: PASS
+optimizer step executed: NO
+```
+
+Raw evidence:
+
+```text
+llm_docs/evidence/gdn2_fla_step4000_parity_2026-08-08.json
+```
+
+## Warmed throughput
+
+On the true block 4000 after JIT/autotune warmup:
+
+```text
+adaptive FP32 recurrence: 1964.75 target tok/s
+FLA mixed:               22765.80 target tok/s   (11.587x adaptive)
+FLA full FP32:           21244.76 target tok/s   (10.813x adaptive)
+```
+
+All measured backward passes remained finite.
+
+Raw evidence:
+
+```text
+llm_docs/evidence/gdn2_fla_step4000_benchmark_2026-08-08.json
+```
+
+## Production implication
+
+The active exact-semantics backend selected by the evidence is **mixed FLA on `fla-core==0.5.2`**, not full-FP32 FLA:
+
+- it passes the corrected synthetic sweep;
+- it passes the real checkpoint/full-next-block forward and all-gradient parity gate;
+- it is the fastest tested backend;
+- it preserves the recurrence equation, learned decay, checkpoint keys, and saved `gdn_chunk_size=32`.
+
+The production dependency declaration is aligned to `fla-core==0.5.2` only after this qualification. No diagnostic executed or accepted update 4001.
+
+The detailed evidence and historical correction are in:
+
+```text
+llm_docs/evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md
+```

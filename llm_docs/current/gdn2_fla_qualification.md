@@ -7,194 +7,213 @@ last_reviewed: 2026-08-08
 
 ## Bottom line
 
-The active 20M/500M trajectory must **not** resume update 4001 with released FLA `chunk_gdn2` training.
+The active 20M/500M trajectory is now **qualified to resume from `step-00004000` with the mixed-precision FLA GDN-2 backend on `fla-core==0.5.2`**.
 
-Both tested released versions, v0.5.1 and v0.5.2, have trainer-AMP backward failures in decay regimes that overlap the real verified step-4000 checkpoint.
-
-Latest accepted state:
+The accepted trajectory point itself has not advanced during qualification:
 
 ```text
 checkpoint: step-00004000
 last_consumed_block_id: 3999
 next update: 4001
+update 4001 accepted by FLA: no
 ```
 
-No FLA experiment has committed update 4001.
+Qualification deliberately stopped before gradient clipping, optimizer/scheduler mutation, data acknowledgement, W&B writes, or checkpoint publication.
 
-For full chronology, implementation details, important commits, evidence list, and next engineering branches, read [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md).
+The production execution contract remains checkpoint-compatible:
+
+```text
+FP32 master parameters + CUDA FP16 autocast
+saved/model gdn_chunk_size: 32
+FLA internal runtime chunk: 64
+recurrence equation: unchanged
+learned decay parameterization: unchanged
+state-dict/checkpoint keys: unchanged
+decay clipping/bounding: none
+```
+
+For the full chronology, read [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md). The final live evidence is [`../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md`](../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md).
 
 ## Why FLA was investigated
 
-The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 target tok/s late while validation kept improving and data wait remained tiny. Controlled tests strongly support the diagnosis that stronger learned GDN-2 decay made the correctness-first adaptive PyTorch backend repeatedly subdivide chunks and synchronize with Python.
+The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 tok/s late while validation kept improving and data wait remained tiny. Controlled tests strongly support the diagnosis that stronger learned GDN-2 decay made the correctness-first adaptive PyTorch backend repeatedly subdivide chunks and synchronize with Python.
 
-Standalone FLA T4 tests were extremely fast and forward-correct, so FLA was investigated as a checkpoint-compatible execution replacement rather than clipping learned decay.
+Standalone FLA T4 tests were dramatically faster and forward-correct, so FLA was investigated as an execution replacement rather than changing learned decay semantics.
 
-## Historical checkpoint compatibility
+## Genuine integration failure that remains part of history
 
-The active checkpoint stores:
-
-```text
-gdn_chunk_size = 32
-```
-
-Preserve that model configuration for strict restore. The attempted CUDA FLA adapter kept saved/configured chunk 32 but used FLA's fixed internal chunk 64. This execution grouping added no learned parameters or state-dict keys.
-
-## Initial standalone v0.5.1 results
-
-```text
-Tesla T4 / SM75
-PyTorch 2.10.0+cu128
-CUDA 12.8
-Triton 3.6.0
-fla-core 0.5.1
-```
-
-Representative evidence:
-
-```text
-forward correctness: pass
-normal-decay backward gradient parity: pass
-normal forward speedup vs adaptive: 20.830x
-strong-decay forward speedup vs adaptive: 162.541x
-strong-decay forward+backward benchmark speedup: 135.441x
-```
-
-Important correction: the original strong-decay forward+backward benchmark timed `.backward()` but did not inspect the strong-decay gradients for finiteness/parity.
-
-## First integrated layer probe — insufficient precision coverage
-
-The first Small-LLM layer probe reported:
-
-```text
-layer_forward_backward_parity: True
-checkpoint_parity: None
-INTEGRATION QUALIFIED for checkpoint evaluation
-```
-
-But it used `model.half()`, not the real trainer contract of FP32 master parameters + CUDA FP16 autocast. It therefore missed a real mixed-dtype path and is not sufficient production qualification.
-
-## First 500M FLA resume attempt — failed before update 4001
-
-The launcher restored verified step 4000 correctly, but Triton compilation failed before update 4001 completed:
+The first real 500M FLA resume attempt restored verified step 4000 but failed before update 4001 completed with a Triton dtype assertion:
 
 ```text
 Both operands must be same dtype. Got fp32 and fp16
 b_u = tl.dot(b_A, b_vb)
 ```
 
-Under trainer AMP, q/k could reach FLA as FP32 while v/write were FP16. The Small-LLM adapter was changed to canonicalize ordinary FLA compute tensors to the same low-precision dtype while keeping log-decay and recurrent state FP32.
+Under trainer AMP, q/k could reach FLA as FP32 while v/write were FP16. The Small-LLM adapter was subsequently corrected to canonicalize ordinary FLA compute tensors to the same low-precision dtype while keeping log-decay and recurrent state FP32.
 
-The checkpoint remained untouched because no update 4001 completed.
+That compile failure was real. It occurred before any successful update 4001, so the checkpoint remained clean.
 
 Evidence: [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
 
-## Trainer-realistic AMP layer result
+## Correction to the later decay-dependent NaN diagnosis
 
-After the dtype fix, the revised probe used FP32 parameters + FP16 autocast.
+After the dtype fix, several historical trainer-AMP probes/sweeps were interpreted as evidence that FLA v0.5.1/v0.5.2 had decay-dependent backward NaNs. Those evidence files are intentionally preserved, but the live August 8 investigation found that the comparison oracle was invalid for attributing those failures to FLA.
 
-```text
-normal decay:
-  forward: pass
-  tested gradients: pass
+The key defect was that the adaptive PyTorch reference was called inside the outer CUDA FP16 autocast context. Although the recurrence implementation explicitly converted tensors to FP32, eligible matrix multiplications could still be autocast back to FP16. On the live notebook, the supposedly failing rows showed the opposite of the prior interpretation: the **adaptive reference gradients were non-finite while the FLA gradients were finite**.
 
-forced g=-6:
-  forward: pass
-  backward: fail with non-finite/incorrect gradients
-```
-
-A retained-intermediate test with `disable_recompute=True` failed too, ruling out backward recomputation as the sole cause.
-
-Evidence: [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
-
-## v0.5.1 trainer-AMP forced-decay sweep
-
-User-reported full-layer results:
+Representative old-harness row:
 
 ```text
-passing: [-0.25, -0.5]
-failing: [-0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
-first failing tested point: g=-0.75
-64-token cumulative magnitude at constant g=-0.75: 48.0
+g=-0.50:
+  x              ref_nonfinite=8192   fla_nonfinite=0
+  A_log          ref_nonfinite=1      fla_nonfinite=0
+  dt_bias        ref_nonfinite=6      fla_nonfinite=0
+  q_proj.weight  ref_nonfinite=16384  fla_nonfinite=0
 ```
 
-`g=-0.75` is the first tested failing point, not a proven exact threshold.
+A second harness defect made the earlier non-monotonic pattern less meaningful: source/upstream tensors were seeded, but layer initialization was not reset for every decay row, so different decay points used different random layers.
 
-Evidence: [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
+Therefore the historical v0.5.1/v0.5.2 sweep reports cannot be used as proof of an FLA-specific decay-dependent backward failure. They remain historical evidence of a failed qualification attempt, not evidence to delete or rewrite.
 
-## Real step-4000 telemetry — actual model overlaps tested failure region
+## Corrected deterministic FP32 oracle
 
-The diagnostic restored the verified remote checkpoint, required `step-00004000` with last consumed block `3999`, read real training block 4000, and measured actual GDN log-decay on a real 4x2048 microbatch.
+The current qualification script executes only the adaptive recurrence oracle with CUDA autocast disabled. The rest of the Small-LLM layer remains under the real trainer contract of FP32 parameters + FP16 autocast.
 
-User-reported summary:
+It also resets:
 
 ```text
-any_individual_g_le_minus_0.75: True
-any_64tok_mean_g_le_minus_0.75: True
-real checkpoint overlaps the tested FLA failure region; do not resume chunk-GDN2 training
+layer initialization seed: 20260808
+input/upstream seed: 12345
 ```
 
-This made the v0.5.1 production rejection decisive.
+A row can count as an FLA failure only if the FP32 adaptive reference is itself finite.
 
-Evidence: [`../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md`](../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md)
-
-## FLA v0.5.2 — also fails trainer-AMP backward
-
-Project memory initially missed that v0.5.2 had been released on 2026-07-27. It is 79 commits ahead of v0.5.1 and includes changes touching GDN/GDN-2/shared chunk infrastructure, so the exact same trainer-AMP sweep was rerun with `fla-core==0.5.2` forced.
-
-User-reported result:
+A separate reference-only T4 check confirmed finite outputs and finite gradients at all requested constant decay values:
 
 ```text
-fla_core_version: 0.5.2
-passing: [-0.25, -0.5, -1.0]
-failing: [-0.75, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
-first failing tested point: g=-0.75
-64-token cumulative magnitude at constant g=-0.75: 48.0
-VERDICT: v0.5.2 still has a tested trainer-AMP backward failure
+[-0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
 ```
 
-Important nuance: the v0.5.2 pattern is **non-monotonic** because `g=-1.0` passed while `g=-0.75` and `g=-1.25` failed. Do not model the failure as a simple threshold in `|g|`.
+## Corrected `fla-core==0.5.2` synthetic sweep
 
-The production conclusion is nevertheless unchanged: v0.5.2 still fails in a tested decay regime relevant to the real checkpoint and is not qualified for resumed training.
+Command:
 
-Evidence: [`../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md)
+```text
+python kaggle/run_gdn2_fla_fp32.py
+```
 
-## Checked upstream alternatives
+Environment:
 
-### FLA fused recurrent
+```text
+Tesla T4 / SM75
+PyTorch 2.10.0+cu128
+CUDA runtime 12.8
+Triton 3.6.0
+fla-core 0.5.2
+```
 
-`fused_recurrent_gdn2` is upstream's inference-time, forward-only recurrent kernel. It does not track gradients; upstream states that GDN-2 training uses the chunkwise kernel. It cannot serve as a pretraining fallback.
+Result:
 
-### FlashQLA
+```text
+mixed FLA passing:
+[-0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
 
-FLA v0.5.2 includes FlashQLA dispatch for an older gated-delta-rule/GDN backend, but its upstream verifier requires SM90/SM100-class hardware and K=V=128. The active GPU is Tesla T4 / SM75 and the active model uses GDN-2 geometry, so it is not the solution for this run.
+mixed FLA failing: []
 
-## Current production boundary
+full-FP32 FLA passing:
+[-0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
 
-- Do **not** resume the active 500M trajectory with FLA v0.5.1 `chunk_gdn2`.
-- Do **not** resume it with FLA v0.5.2 `chunk_gdn2`.
-- Do **not** rely on the old `layer_forward_backward_parity: True` result; later trainer-realistic AMP tests supersede it.
-- Do **not** use fused recurrent as a training backend.
-- Do **not** use FlashQLA as a T4/GDN-2 fallback.
-- Do **not** change saved `gdn_chunk_size=32` to 64.
-- Do **not** clip/bound learned decay merely to satisfy a kernel.
-- The verified step-4000 checkpoint remains clean and usable.
+full-FP32 FLA failing: []
+invalid reference rows: []
+```
 
-The next project decision must choose between:
+The corrected sweep does not establish that FP32 fixed an FLA mixed-precision problem, because mixed FLA itself passes every tested decay against the valid oracle.
 
-1. restoring the adaptive PyTorch production backend and resuming from step 4000 despite expected slowness; or
-2. engineering/researching and qualifying another exact differentiable GDN-2 training kernel suitable for Tesla T4 / SM75 and the real checkpoint's decay regime.
+Raw evidence: [`../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json`](../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json)
 
-## Evidence index
+## Real step-4000 / exact-next-block gate
 
-- [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
-- [`../evidence/gdn2_fla_layer_integration_2026-08-08.md`](../evidence/gdn2_fla_layer_integration_2026-08-08.md)
-- [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
-- [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
-- [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
-- [`../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md`](../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md)
-- [`../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md)
+The verified remote checkpoint was restored and matched to the attached 500M dataset:
 
-## Decisions
+```text
+checkpoint_id: step-00004000
+global_step: 4000
+last_consumed_block_id: 3999
+next block: 4000
+block geometry: 16 x 2048
+target tokens: 32768
+microbatch: 4
+checkpoint GradScaler scale: 256.0
+```
 
-- [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
-- [`../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`](../decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md) — prior authorization is operationally blocked by later failed qualification evidence; no resumed FLA update has been accepted.
+`kaggle/run_gdn2_fla_step4000_parity.py` then ran one complete accumulated forward/backward over the true next block using checkpoint loss scaling, but stopped before any optimizer-side mutation.
+
+Result:
+
+```text
+REAL_STEP_4000_PARITY: PASS
+
+mixed FLA:
+  forward parity: PASS
+  all gradients finite: PASS
+  all parameter gradient parity: PASS
+  gradient failures: 0
+  loss: 3.907714068889618
+  max full-logit abs diff: 0.078125
+  max parameter-gradient abs diff: 0.000125885009765625
+
+full-FP32 FLA:
+  forward parity: PASS
+  all gradients finite: PASS
+  all parameter gradient parity: PASS
+  gradient failures: 0
+  loss: 3.9077218174934387
+  max full-logit abs diff: 0.0625
+  max parameter-gradient abs diff: 0.000133514404296875
+
+FP32 adaptive reference loss: 3.9077656865119934
+optimizer step executed: NO
+```
+
+Raw evidence: [`../evidence/gdn2_fla_step4000_parity_2026-08-08.json`](../evidence/gdn2_fla_step4000_parity_2026-08-08.json)
+
+## Warmed real-block throughput
+
+After Triton compilation/autotuning was warm, the same real block was benchmarked without parity-copy instrumentation:
+
+```text
+adaptive FP32 recurrence: 1964.75 target tok/s
+FLA mixed:               22765.80 target tok/s   (11.587x adaptive)
+FLA full FP32:           21244.76 target tok/s   (10.813x adaptive)
+```
+
+All measured backward passes had finite gradients.
+
+Raw evidence: [`../evidence/gdn2_fla_step4000_benchmark_2026-08-08.json`](../evidence/gdn2_fla_step4000_benchmark_2026-08-08.json)
+
+## Selected production backend
+
+The qualified production choice is the existing **mixed FLA path on `fla-core==0.5.2`**:
+
+- it passes all corrected synthetic decay points;
+- it passes the real checkpoint/full-next-block forward and all-gradient parity gate;
+- it is the fastest tested exact-semantics backend;
+- it preserves checkpoint/model semantics.
+
+Full-FP32 FLA remains a useful diagnostic/fallback mode but is slower and is not required by the current evidence.
+
+The production dependency pin and adapter-declared version are aligned to `fla-core==0.5.2`. The active launcher is pinned to the implementation commit containing that qualified runtime.
+
+## Production boundary
+
+Production continuation from `step-00004000` is authorized under ADR 0021, but qualification itself did not execute update 4001.
+
+At resume:
+
+1. restore the verified step-4000 checkpoint;
+2. require cursor 3999 and next block 4000 as usual;
+3. run the ordinary fail-closed trainer on the qualified `fla-core==0.5.2` implementation;
+4. treat the first actually completed optimizer update 4001 as the first new accepted trajectory point;
+5. preserve the existing 250-update validation/checkpoint/remote-publication cadence.
+
+Do not change decay semantics, saved `gdn_chunk_size=32`, checkpoint keys, or recurrence equations.

@@ -8,11 +8,12 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-# This pinned worktree contains the checkpoint-compatible FLA GDN-2 backend
-# plus the real-trainer AMP dtype fix. Historical 500M checkpoints keep their
-# saved gdn_chunk_size=32 model config; CUDA recurrence execution uses FLA's
-# fixed 64-token kernel internally.
-PINNED_LAUNCH_COMMIT = "efa3d10327af1ade96db5363616e00c870b164dc"
+# This pinned worktree contains the checkpoint-compatible FLA GDN-2 backend,
+# the real-trainer AMP dtype fix, the corrected finite FP32 reference gate, and
+# the production pin to the T4-qualified fla-core==0.5.2 runtime. Historical
+# 500M checkpoints keep their saved gdn_chunk_size=32 model config; CUDA
+# recurrence execution uses FLA's fixed 64-token kernel internally.
+PINNED_LAUNCH_COMMIT = "c0214d00047c61a290d9a138a6bd94ed5701337c"
 WANDB_INIT_TIMEOUT_SECONDS = "30"
 WANDB_RUN_ID = "20m-500m-data-001"
 DURABILITY_EVERY_STEPS = 250

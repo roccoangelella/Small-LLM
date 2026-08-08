@@ -3,25 +3,35 @@ status: current
 last_reviewed: 2026-08-08
 ---
 
-# Current blocker — FLA GDN-2 strong-decay AMP backward
+# FLA GDN-2 AMP blocker — resolved by corrected qualification
 
-The 20M/500M FLA migration is **not currently qualified for resumed training**.
+This file records the disposition of the former strong-decay AMP blocker. It is **not an active production block**.
 
-Latest verified training checkpoint remains `step-00004000`. A real resume restored that checkpoint successfully but failed before update 4001 completed, so no checkpoint rollback is required.
-
-After fixing the initial FP32/FP16 Triton input mismatch, the AMP-realistic full-layer probe (FP32 parameters + CUDA FP16 autocast) produced:
+The trajectory remains clean at:
 
 ```text
-normal_decay_amp: all layer outputs and parameter/input gradients PASS
-strong_decay_-6_amp: layer output PASS, backward gradient comparison FAIL with NaNs
-layer_forward_backward_parity: False
-trainer_amp_contract_tested: True
+checkpoint: step-00004000
+last_consumed_block_id: 3999
+next update: 4001
 ```
 
-This is the first test that actually inspects strong-decay gradients. The earlier standalone strong-decay forward+backward benchmark timed `.backward()` but did not validate stress-case gradient finiteness/parity.
+The original first production FLA resume did encounter a genuine mixed-dtype Triton compilation failure before update 4001. That integration issue was fixed by canonicalizing ordinary FLA compute tensors to a common low-precision dtype under AMP while keeping decay/state FP32.
 
-The next isolated test is `kaggle/run_gdn2_fla_strong_decay_amp_probe.py`. It tests FLA with `disable_recompute=True`, matching the retained-intermediate mode used by the original standalone probe, and reports non-finite gradients separately for the adaptive reference and FLA candidate.
+The later `strong_decay_-6_amp` and forced-decay sweep failures were subsequently treated as evidence of a separate FLA backward numerical instability. The final live T4 investigation found that those comparisons used an invalid adaptive-reference contract: the FP32 reference recurrence was itself called inside CUDA FP16 autocast. On reproduced failing rows, the adaptive reference gradients were non-finite while the FLA gradients were finite. Layer initialization was also not reset per decay row.
 
-Do not resume the 500M run with FLA until that strong-decay AMP gradient gate passes.
+The corrected deterministic reference disables autocast only inside the adaptive recurrence. With that correction, `fla-core==0.5.2` mixed FLA and full-FP32 FLA both pass all requested constant decays:
 
-Evidence: `llm_docs/evidence/gdn2_fla_amp_strong_decay_failure_2026-08-08.md`.
+```text
+[-0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
+```
+
+Both modes also pass the complete true step-4000 / block-4000 forward and all-gradient parity gate using checkpoint GradScaler scale 256, with no optimizer step executed.
+
+The qualified production path is mixed FLA on `fla-core==0.5.2`. See:
+
+- `llm_docs/current/gdn2_fla_qualification.md`
+- `llm_docs/current/gdn2_fla_fp32_qualification.md`
+- `llm_docs/evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md`
+- ADR 0021
+
+Historical failed evidence remains preserved and should be interpreted through this later correction rather than deleted.

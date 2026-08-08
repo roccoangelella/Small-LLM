@@ -179,7 +179,7 @@ CUDA FLA runtime:                fixed chunk = 64
 
 Chunk size is an execution grouping and does not add/change learned model parameters. FLA introduces no state-dict entries, so no checkpoint tensor conversion is required.
 
-The pinned worktree includes `fla-core==0.5.1` in the `model` runtime extra already used by the trainer command.
+The pinned worktree includes the T4-qualified `fla-core==0.5.2` in the `model` runtime extra already used by the trainer command.
 
 ### Fixed identities/defaults
 
@@ -282,7 +282,7 @@ Do not proceed if:
 - Kaggle finds zero or multiple matching 500M datasets;
 - a 100M dataset is attached instead of the 500M identity;
 - the real trainer command does not use microbatch 4;
-- `fla-core==0.5.1` cannot be resolved/imported on the CUDA training path;
+- `fla-core==0.5.2` cannot be resolved/imported on the CUDA training path;
 - checkpoint strict restore fails;
 - a restored checkpoint disagrees with the attached 500M manifest;
 - W&B does not use `20m-500m-data-001`;

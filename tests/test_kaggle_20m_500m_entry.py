@@ -8,6 +8,9 @@ import sys
 from pathlib import Path
 
 
+QUALIFIED_FLA_IMPLEMENTATION_COMMIT = "c0214d00047c61a290d9a138a6bd94ed5701337c"
+
+
 def test_500m_entry_rewrites_only_the_qualification_report_module() -> None:
     root = Path(__file__).resolve().parents[1]
     kaggle = root / "kaggle"
@@ -38,3 +41,22 @@ print(json.dumps([entry._rewrite_profile_command(command) for command in command
         "--output-dir",
         "/data",
     ]
+
+
+def test_500m_entry_pins_the_live_t4_qualified_fla_implementation() -> None:
+    root = Path(__file__).resolve().parents[1]
+    kaggle = root / "kaggle"
+    script = r'''
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+import run_20m_500m as entry
+print(json.dumps({"commit": entry.PINNED_LAUNCH_COMMIT}))
+'''
+    output = subprocess.check_output(
+        [sys.executable, "-c", script, str(kaggle)],
+        cwd=root,
+        text=True,
+    )
+    payload = json.loads(output.strip().splitlines()[-1])
+    assert payload["commit"] == QUALIFIED_FLA_IMPLEMENTATION_COMMIT
