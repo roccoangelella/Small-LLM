@@ -51,7 +51,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-install",
         action="store_true",
-        help="Do not auto-install flash-linear-attention==0.5.1 if missing.",
+        help="Do not auto-install fla-core==0.5.1 if the GDN-2 ops are missing.",
     )
     parser.add_argument(
         "--benchmark-batch",
@@ -87,15 +87,40 @@ def _package_version(name: str) -> str | None:
         return None
 
 
-def _ensure_fla(*, allow_install: bool) -> str:
+def _clear_fla_modules() -> None:
+    """Drop partially imported FLA modules after installing the split core wheel."""
+    for name in tuple(sys.modules):
+        if name == "fla" or name.startswith("fla."):
+            sys.modules.pop(name, None)
+    importlib.invalidate_caches()
+
+
+def _gdn2_ops_importable() -> tuple[bool, str | None]:
     try:
-        import fla  # noqa: F401
-    except Exception as first_error:
+        from fla.ops.gdn2 import chunk_gdn2  # noqa: F401
+    except Exception as error:
+        return False, f"{type(error).__name__}: {error}"
+    return True, None
+
+
+def _ensure_fla(*, allow_install: bool) -> dict[str, str | None]:
+    """Ensure the split FLA core package exposing fla.ops.gdn2 is present.
+
+    Since FLA v0.3.2 the PyPI distribution is split: ``fla-core`` contains the
+    customized kernels/ops, while ``flash-linear-attention`` adds layers/models.
+    This probe only needs the core package. We install it with --no-deps so the
+    notebook's existing Torch/Triton stack is never silently replaced.
+    """
+    ok, first_error = _gdn2_ops_importable()
+    if not ok:
         if not allow_install:
-            raise RuntimeError("FLA is not importable and --no-install was requested.") from first_error
+            raise RuntimeError(
+                "fla.ops.gdn2 is not importable and --no-install was requested. "
+                f"Import error: {first_error}"
+            )
         print(
-            f"[setup] installing flash-linear-attention=={FLA_VERSION} --no-deps "
-            "(PyTorch will NOT be changed)"
+            f"[setup] installing fla-core=={FLA_VERSION} --no-deps "
+            "(PyTorch/Triton will NOT be changed)"
         )
         subprocess.run(
             [
@@ -105,29 +130,34 @@ def _ensure_fla(*, allow_install: bool) -> str:
                 "install",
                 "--quiet",
                 "--no-deps",
-                f"flash-linear-attention=={FLA_VERSION}",
+                f"fla-core=={FLA_VERSION}",
             ],
             check=True,
         )
-        importlib.invalidate_caches()
-        try:
-            import fla  # noqa: F401
-        except Exception as second_error:
+        _clear_fla_modules()
+        ok, second_error = _gdn2_ops_importable()
+        if not ok:
             raise RuntimeError(
-                "FLA still cannot import after the no-deps install. The existing Kaggle "
-                "Torch/Triton/dependency stack is incompatible. This probe intentionally "
-                "does not upgrade PyTorch automatically."
-            ) from second_error
+                "fla-core installed but fla.ops.gdn2 still cannot import. The existing "
+                "Kaggle Torch/Triton/dependency stack may be incompatible. This probe "
+                "intentionally does not upgrade PyTorch or Triton automatically. "
+                f"Import error: {second_error}"
+            )
 
-    version = _package_version("flash-linear-attention") or "unknown"
-    if version != FLA_VERSION:
+    core_version = _package_version("fla-core")
+    extension_version = _package_version("flash-linear-attention")
+    if core_version != FLA_VERSION:
         print(
-            f"[setup] warning: installed FLA is {version}; probe was authored against {FLA_VERSION}."
+            f"[setup] warning: installed fla-core is {core_version}; "
+            f"probe was authored against {FLA_VERSION}."
         )
-    return version
+    return {
+        "fla_core": core_version,
+        "flash_linear_attention": extension_version,
+    }
 
 
-def _environment(torch: Any, fla_version: str) -> dict[str, Any]:
+def _environment(torch: Any, fla_packages: dict[str, str | None]) -> dict[str, Any]:
     try:
         import triton
 
@@ -143,7 +173,8 @@ def _environment(torch: Any, fla_version: str) -> dict[str, Any]:
         "python": sys.version.split()[0],
         "torch": torch.__version__,
         "triton": triton_version,
-        "flash_linear_attention": fla_version,
+        "fla_core": fla_packages["fla_core"],
+        "flash_linear_attention": fla_packages["flash_linear_attention"],
         "cuda_runtime": torch.version.cuda,
         "device": props.name,
         "compute_capability": f"{capability[0]}.{capability[1]}",
@@ -461,14 +492,15 @@ def main() -> int:
     print(f"[env] gpu={torch.cuda.get_device_name(torch.cuda.current_device())}")
     print(f"[env] compute_capability={torch.cuda.get_device_capability()}")
 
-    fla_version = _ensure_fla(allow_install=not args.no_install)
+    fla_packages = _ensure_fla(allow_install=not args.no_install)
     from fla.ops.gdn2 import chunk_gdn2
     from model.gdn2 import gdn2_recurrent_reference
     from model.gdn2_stable import AdaptiveChunkwiseGDN2Backend
 
-    env = _environment(torch, fla_version)
+    env = _environment(torch, fla_packages)
     print(
-        f"[env] triton={env['triton']} fla={env['flash_linear_attention']} "
+        f"[env] triton={env['triton']} fla-core={env['fla_core']} "
+        f"flash-linear-attention={env['flash_linear_attention']} "
         f"vram={env['vram_gib']:.1f}GiB"
     )
 
