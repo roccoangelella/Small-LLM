@@ -51,6 +51,10 @@ Neither failure loaded the checkpoint or exercised FLA forward/backward correctn
 
 The wrapper is now pinned to repair this specific environment mismatch. When an NVIDIA GPU is visible but PyTorch is CPU-only, it installs the official CUDA 12.8 `torch==2.10.0` wheel, matching the previously qualified Tesla T4 stack (`torch 2.10.0+cu128`, Triton 3.6.0). It verifies CUDA in a fresh child process before launching the scientific diagnostic. If no NVIDIA GPU is visible, it stops and asks for a GPU runtime rather than modifying packages blindly.
 
+## PiLink agent delegation
+
+The user has delegated the active FLA reliability investigation to an agent with PiLink access so that it can work directly against the live notebook/runtime instead of relying on copied logs. The agent should first recover any previously shared Kaggle/SSH endpoint from its authorized memory if available, connect to the live GPU runtime, and execute the existing FP32 qualification gate. If FP32 still fails, it should localize the first non-finite FLA backward intermediate and implement the narrowest exact-recurrence numerical fix, preserving checkpoint/model semantics and production safety boundaries. Any successful change must be committed to `main` with evidence under `llm_docs/`.
+
 Safe accepted production state remains:
 
 ```text
