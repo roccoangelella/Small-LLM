@@ -40,17 +40,19 @@ saved gdn_chunk_size: 32
 
 The checkpoint is clean. No FLA migration attempt has committed a successful update 4001.
 
-## FLA v0.5.1 training status — BLOCKED
+## Released FLA chunk training status — BLOCKED
 
-Trainer-realistic AMP testing found a decay-dependent backward failure in FLA v0.5.1:
+Trainer-realistic FP32-master + FP16-autocast testing found decay-dependent backward failures in both released FLA versions tested.
+
+### v0.5.1
 
 ```text
 passing forced constant g: [-0.25, -0.5]
-failing forced constant g: [-0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
+failing: [-0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
 first failing tested point: g=-0.75
 ```
 
-Real `step-00004000` telemetry then reported:
+Real step-4000 telemetry then reported:
 
 ```text
 any_individual_g_le_minus_0.75: True
@@ -58,34 +60,49 @@ any_64tok_mean_g_le_minus_0.75: True
 real checkpoint overlaps the tested FLA failure region
 ```
 
-Therefore FLA v0.5.1 `chunk_gdn2` is not qualified for resumed training of this trajectory.
+### v0.5.2
 
-## Latest upstream correction — test FLA v0.5.2 next
+A later repeat forced `fla-core==0.5.2` and still failed:
 
-FLA v0.5.2 was released on 2026-07-27 and is newer than the v0.5.1 build currently integrated in Small-LLM. A dedicated T4 qualification probe now forces v0.5.2 and repeats the exact trainer-AMP decay sweep:
-
-```bash
-python kaggle/run_gdn2_fla_052_amp_decay_sweep.py
+```text
+passing: [-0.25, -0.5, -1.0]
+failing: [-0.75, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
+first failing tested point: g=-0.75
+VERDICT: v0.5.2 still has a tested trainer-AMP backward failure
 ```
 
-Do not change the production launcher to v0.5.2 until that test passes.
+The v0.5.2 pattern is non-monotonic because `g=-1.0` passed while `g=-0.75` and `g=-1.25` failed. Do not describe the issue as a simple magnitude threshold. The production conclusion is still decisive: released FLA chunk training has backward failures in a decay regime that overlaps the actual step-4000 model.
 
-Upstream GDN-2 `fused_recurrent_gdn2` is inference-only/forward-only and explicitly does not track gradients, so it is not a pretraining fallback. FlashQLA in v0.5.2 targets the older gated-delta-rule path and requires SM90/SM100-class hardware, so it is not applicable to the Tesla T4 active run.
+Therefore neither FLA v0.5.1 nor v0.5.2 `chunk_gdn2` is qualified for resumed training of this trajectory.
 
-Detailed backend source of truth: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md).
+Upstream `fused_recurrent_gdn2` is inference-only/forward-only and does not track gradients, so it is not a pretraining fallback. FlashQLA is not applicable to the active Tesla T4 / SM75 GDN-2 setup.
 
-## Immediate next gate
+## Immediate production boundary
 
-Run the v0.5.2 decay sweep.
+Do **not** run the active 500M production continuation with the currently integrated FLA chunk backend.
 
-- If v0.5.2 still fails in the real checkpoint's decay region, reject released FLA chunk training for this trajectory. Then choose between continuing with the adaptive PyTorch backend or engineering/qualifying another exact differentiable training kernel.
-- If v0.5.2 passes through the entire synthetic range to `g=-6`, run a direct real step-4000 forward/backward finite-gradient parity test before production integration.
+The current launcher had previously been repinned for FLA integration, so it must not be treated as safe to resume until a new backend decision is implemented.
 
-Do not clip/bound learned decay merely to make a kernel pass.
+Safe accepted state remains:
+
+```text
+step-00004000
+last consumed block 3999
+next update 4001
+```
+
+## Next decision
+
+Choose between:
+
+1. restoring the adaptive PyTorch backend for production and resuming from step 4000 despite expected late-run slowness; or
+2. engineering/researching and qualifying another exact differentiable GDN-2 training kernel that supports Tesla T4 / SM75 and the real step-4000 decay distribution.
+
+Do not clip/bound learned decay merely to make a kernel pass. That would change model/training semantics and requires a separate explicit decision.
 
 ## Frozen/accepted decisions still in force
 
-- Preserve the checkpoint's historical `gdn_chunk_size=32` model configuration.
+- Preserve checkpoint/model config `gdn_chunk_size=32`.
 - The latest accepted 500M checkpoint is `step-00004000`.
 - Keep the adaptive PyTorch backend as the correctness/reference implementation.
 - Do not clip/bound GDN-2 decay solely because of backend runtime behavior.
@@ -93,12 +110,14 @@ Do not clip/bound learned decay merely to make a kernel pass.
 - Validate/checkpoint/publish every 250 successful 500M updates.
 - Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
+- Fresh FLA-from-update-1 training remains unauthorized while released FLA backward is unqualified.
 
 ## Current source of truth
 
-- Final 100M W&B evidence: [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
-- FLA backend state: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
-- Decay sweep evidence: [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
-- Real step-4000 overlap evidence: [`../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md`](../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md)
-- 500M procedure: [`../runbooks/20m_500m_runbook.md`](../runbooks/20m_500m_runbook.md)
+- Consolidated long-chat handoff: [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md)
+- Detailed FLA qualification state: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
+- v0.5.1 decay sweep: [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
+- Real step-4000 decay overlap: [`../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md`](../evidence/gdn2_step4000_real_decay_overlap_2026-08-08.md)
+- v0.5.2 decay sweep: [`../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_052_amp_decay_sweep_2026-08-08.md)
+- Final 100M evidence: [`../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md`](../evidence/20m_100m/100m_wandb_final_result_2026-08-07.md)
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
