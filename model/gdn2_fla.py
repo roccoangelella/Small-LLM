@@ -36,6 +36,34 @@ def _load_chunk_gdn2() -> Callable[..., tuple[Tensor, Tensor | None]]:
     return chunk_gdn2
 
 
+def _fla_compute_tensors(
+    q: Tensor,
+    k: Tensor,
+    v: Tensor,
+    erase_gate: Tensor,
+    write_gate: Tensor,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+    """Give FLA one common compute dtype for its Tensor-Core dot operands.
+
+    Small-LLM training keeps parameters in FP32 and uses CUDA autocast.  Under
+    that real trainer path, q/k can emerge from L2 normalization in FP32 while
+    v and the write-side projection are FP16.  FLA's WY recompute allocates its
+    solved matrix with k.dtype and later dots it with a v/write block; Triton
+    requires those dot operands to have the same dtype.
+
+    The standalone qualification used FP16 q/k/v/erase/write and FP32 log
+    decay/state.  Canonicalizing the five ordinary compute tensors to v.dtype
+    reproduces that qualified mixed-precision contract.  log_decay and the
+    recurrent state deliberately remain FP32 outside this helper.
+    """
+
+    dtype = v.dtype
+    return tuple(
+        tensor if tensor.dtype == dtype else tensor.to(dtype=dtype)
+        for tensor in (q, k, v, erase_gate, write_gate)
+    )  # type: ignore[return-value]
+
+
 class FLAGDN2Backend:
     """Evaluate the existing GDN-2 recurrence with FLA's Triton training kernel."""
 
@@ -61,14 +89,17 @@ class FLAGDN2Backend:
         if sequence == 0:
             raise ValueError("FLA GDN-2 requires a non-empty sequence")
 
+        q_fla, k_fla, v_fla, erase_fla, write_fla = _fla_compute_tensors(
+            q, k, v, erase_gate, write_gate
+        )
         chunk_gdn2 = _load_chunk_gdn2()
         output, final_state = chunk_gdn2(
-            q=q,
-            k=k,
-            v=v,
+            q=q_fla,
+            k=k_fla,
+            v=v_fla,
             g=log_decay,
-            b=erase_gate,
-            w=write_gate,
+            b=erase_fla,
+            w=write_fla,
             scale=1.0 / math.sqrt(q.shape[-1]),
             initial_state=initial_state,
             output_final_state=True,
@@ -81,6 +112,11 @@ class FLAGDN2Backend:
         )
         if final_state is None:
             raise RuntimeError("FLA GDN-2 did not return the requested final recurrent state")
+        # Preserve the Small-LLM backend contract seen by the rest of the layer;
+        # the internal cast remains differentiable and gradients flow back to
+        # the original autocast-produced tensors/FP32 parameters.
+        if output.dtype != q.dtype:
+            output = output.to(dtype=q.dtype)
         return _validate_backend_result((output, final_state), q, v, initial_state)
 
 
