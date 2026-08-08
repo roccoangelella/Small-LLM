@@ -8,7 +8,10 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-PINNED_LAUNCH_COMMIT = "01d562ea1845d0dd128a0458e613c9e677b7381d"
+# This pinned worktree contains the checkpoint-compatible FLA GDN-2 backend.
+# Historical 500M checkpoints keep their saved gdn_chunk_size=32 model config;
+# CUDA recurrence execution uses FLA's fixed 64-token kernel internally.
+PINNED_LAUNCH_COMMIT = "a1471472ca9b5d07f70c844460acffe5c96c5200"
 WANDB_INIT_TIMEOUT_SECONDS = "30"
 WANDB_RUN_ID = "20m-500m-data-001"
 DURABILITY_EVERY_STEPS = 250
@@ -57,8 +60,10 @@ def _run_500m_profile(command: Sequence[str], *args: Any, **kwargs: Any) -> dict
 common.run = _run_500m_profile
 
 # Attempt every remaining update in the exact finite 500M one-pass plan in each
-# invocation. Fresh training starts directly at microbatch 4; the profile records
-# the intentionally skipped microbatch probe instead of executing probe updates.
+# invocation. Fresh training starts directly at microbatch 4; resumed training
+# restores the latest verified 500M checkpoint and keeps its exact optimizer,
+# scheduler, scaler, RNG, data cursor, and saved model configuration. Only GDN-2
+# CUDA recurrence execution changes to the qualified FLA backend.
 # Kaggle/runtime interruption is handled by the verified 250-update
 # validation/local-checkpoint/remote-publication protocol. The optional session
 # cap remains available only for deliberate diagnostics.
