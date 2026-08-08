@@ -5,11 +5,11 @@ last_reviewed: 2026-08-08
 
 # Current GDN-2 backend qualification status
 
-## Diagnosis now strongly supported
+## Diagnosis
 
-The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 target tok/s late, with validation slowing by almost the same factor. Data loading was not the bottleneck. Controlled FLA tests on the same Tesla T4 strongly support the explanation that stronger learned GDN-2 decay exposed pathological chunk subdivision / synchronization in the correctness-first adaptive PyTorch backend rather than a need to clip learned decay.
+The completed approximately-20M / 100M run slowed from roughly 3,830 target tok/s early to roughly 445 target tok/s late while validation kept improving. Controlled FLA tests on the same Tesla T4 strongly support the explanation that stronger learned GDN-2 decay exposed pathological chunk subdivision / synchronization in the correctness-first adaptive PyTorch backend rather than a need to clip learned decay.
 
-## Standalone T4 qualification
+## Standalone FLA operator qualification — PASSED
 
 Environment:
 
@@ -22,7 +22,7 @@ fla-core 0.5.1
 flash-linear-attention 0.5.1
 ```
 
-Qualification summary:
+Key results:
 
 ```text
 forward_correctness: True
@@ -34,35 +34,11 @@ FLA strong-decay forward retention: 0.671x
 FLA speedup over adaptive, strong-decay forward+backward: 135.441x
 ```
 
-At batch 4 / context 2,048:
-
-```text
-normal:
-  adaptive forward:             177,861 tok/s
-  FLA forward:                3,704,843 tok/s
-  adaptive forward+backward:    58,623 tok/s
-  FLA forward+backward:       1,062,705 tok/s
-
-strong log_decay=-6:
-  adaptive forward:              15,296 tok/s
-  FLA forward:                2,486,218 tok/s
-  adaptive forward+backward:      6,050 tok/s
-  FLA forward+backward:         819,392 tok/s
-```
-
 FLA therefore preserves the same recurrence while removing most of the catastrophic strong-decay runtime collapse. Decay clipping/bounding is not justified by the slowdown evidence.
 
-## Full Small-LLM integration result
+## First full-layer integration probe — PASSED, but precision coverage was incomplete
 
-FLA is integrated below the existing `StableGatedDeltaNet2` layer. The Small-LLM projections, convolutions, learned decay, erase/write gates, output path, parameter names, and checkpoint tensors remain unchanged.
-
-The user ran:
-
-```bash
-python kaggle/run_gdn2_fla_layer_probe.py
-```
-
-and reported:
+The first integrated layer probe reported:
 
 ```text
 layer_forward_backward_parity: True
@@ -70,69 +46,95 @@ checkpoint_parity: None
 INTEGRATION QUALIFIED for checkpoint evaluation; fresh-training authorization remains separate.
 ```
 
-This qualifies the complete layer forward/backward path. The optional checkpoint branch was not run in that invocation.
+However, that probe converted the whole candidate/reference layer to FP16 with `model.half()`. It did not reproduce the real trainer precision contract of FP32 master parameters plus CUDA FP16 autocast.
+
+That distinction became material in the first resumed 500M attempt.
+
+## First 500M FLA resume attempt — FAILED CLOSED BEFORE UPDATE 4001
+
+The launcher successfully restored the verified step-4000 checkpoint and attempted global steps 4001–15264. The first resumed update did not complete. Triton compilation failed inside FLA WY recomputation:
+
+```text
+Both operands must be same dtype. Got fp32 and fp16
+b_u = tl.dot(b_A, b_vb)
+```
+
+No successful update 4001 was produced, so the latest verified checkpoint remains step 4000. Model weights, optimizer state, scheduler/WSD position, scaler, RNG state, and data cursor remain intact at that checkpoint.
+
+Root cause: under the real trainer's FP32-master + FP16-autocast path, normalized q/k can enter the FLA adapter as FP32 while v/write are FP16. FLA v0.5.1 allocates its solved WY matrix with `k.dtype`, then dots it with a v/write block. Triton requires both dot operands to use the same dtype.
+
+This is an adapter precision-contract bug, not a recurrence mismatch, checkpoint mismatch, strong-decay failure, or T4 incompatibility.
+
+Detailed evidence: [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
+
+## AMP-safe adapter fix on main
+
+`model/gdn2_fla.py` now canonicalizes the ordinary FLA compute tensors:
+
+```text
+q, k, v, erase, write -> v.dtype
+```
+
+In the active trainer this gives the already-qualified FP16 compute contract. Log-decay and recurrent state remain FP32. The FLA result is cast back to the original Small-LLM q dtype before returning, and the internal casts remain differentiable.
+
+The integration probe has also been corrected. It now keeps model parameters in FP32 and executes both reference and FLA paths under CUDA FP16 autocast, matching the real trainer instead of blanket-casting the model to FP16.
 
 ## Historical chunk-32 checkpoint vs FLA64 runtime
 
-The active 20M/500M trainer historically passes and serializes:
+The active 20M/500M checkpoint stores:
 
 ```text
 gdn_chunk_size = 32
 ```
 
-Trainer restore compares model configuration strictly, so changing the resumed CLI/config to 64 would reject the existing checkpoint.
+That configuration remains unchanged for strict checkpoint restore. CUDA recurrence execution uses FLA's fixed internal chunk size 64. CPU/reference execution keeps the historical adaptive chunk 32. Chunk size is execution grouping, not learned model state.
 
-The checkpoint-compatible integration now separates the two concepts:
+## 500M launcher wiring
 
-```text
-saved checkpoint/model config: gdn_chunk_size = 32
-adaptive CPU/reference fallback: chunk 32
-CUDA FLA recurrence execution: fixed chunk 64
-```
-
-This is valid because chunk size changes execution grouping, not the mathematical GDN-2 recurrence or learned parameters. `kaggle/run_gdn2_fla_layer_probe.py` has been refined to test exactly this chunk-32-config / FLA64-runtime path and to accept historical chunk-32 checkpoints.
-
-## 500M resume wiring
-
-The 500M wrapper is fail-closed and creates a detached training worktree at a pinned commit, so changing `model/` on `main` alone would not migrate the training subprocess.
-
-The normal entry point now pins the FLA-integrated implementation commit:
+The normal wrapper creates a detached training worktree, so changing `model/` on current `main` alone is insufficient. The wrapper is now repinned to the implementation containing the AMP-safe FLA adapter and revised probe:
 
 ```text
-a1471472ca9b5d07f70c844460acffe5c96c5200
+efa3d10327af1ade96db5363616e00c870b164dc
 ```
 
-That worktree contains:
+The pinned worktree also includes `fla-core==0.5.1` in the `model` runtime extra. The trainer still passes `--gdn-chunk-size 32` so historical checkpoint configuration remains strict-load compatible.
 
-- checkpoint-compatible FLA CUDA recurrence execution;
-- `fla-core==0.5.1` in the `model` runtime extra used by the existing trainer command;
-- unchanged model/state-dict structure;
-- support for historical saved `gdn_chunk_size=32` while running FLA64 internally on CUDA.
+## Mandatory gate before retrying 500M resume
 
-The ordinary command remains:
+Run on the T4:
+
+```bash
+git pull --ff-only
+python kaggle/run_gdn2_fla_layer_probe.py
+```
+
+Require:
+
+```text
+layer_forward_backward_parity: True
+trainer_amp_contract_tested: True
+```
+
+Only after that revised AMP-realistic probe passes should the ordinary resume command be retried:
 
 ```bash
 python kaggle/run_20m_500m.py
 ```
 
-It still restores only the latest verified remote 500M checkpoint, verifies the dataset/Drive-manifest cursor, and strict-loads model weights, optimizer, scheduler, scaler, RNG state, consumed-token position, and WSD position. After restore, GDN-2 CUDA execution uses FLA.
-
-This is an explicit implementation migration inside the existing 500M trajectory. Exact bitwise continuation versus a hypothetical all-adaptive continuation is not expected because floating-point operation ordering differs.
-
-## Packaging/autotuning
-
-`fla-core==0.5.1` now belongs to the model runtime extra so normal CUDA training cannot accidentally start without the required backend. On Tesla T4, first backward execution may still trigger CPU-heavy Triton autotuning because no matching packaged tuning profile exists; steady-state execution is fast after tuning.
-
 ## Current decision boundary
 
-- Do **not** clip/bound GDN-2 decay based on this slowdown.
-- FLA is accepted for checkpoint evaluation and for resuming the active 500M trajectory.
-- Preserve `gdn_chunk_size=32` in existing checkpoint/model configuration.
-- A fresh 500M run from update 1 with FLA remains a separate later decision if a clean single-backend scientific reference is desired.
+- Do **not** clip/bound GDN-2 decay based on the slowdown.
+- Standalone FLA operator qualification remains passed.
+- The first layer probe was insufficient for the real trainer precision contract.
+- The active 500M trajectory remains safely resumable from verified step 4000; no update was committed by the failed FLA attempt.
+- Retry the 500M resume only after the revised AMP-realistic integration probe passes.
+- Preserve `gdn_chunk_size=32` in the existing checkpoint/model configuration while FLA uses fixed chunk 64 internally on CUDA.
+- A fresh 500M FLA-from-update-1 run remains a separate later decision.
 
 Evidence:
 - [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
 - [`../evidence/gdn2_fla_layer_integration_2026-08-08.md`](../evidence/gdn2_fla_layer_integration_2026-08-08.md)
+- [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
 
 Decisions:
 - [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
