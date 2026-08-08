@@ -96,6 +96,23 @@ This rules out backward recomputation as the sole cause. The strong-decay AMP fa
 
 Detailed evidence: [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
 
+## Trainer-AMP decay sweep — first tested failure at g=-0.75
+
+The user ran a full-layer forced-decay sweep under FP32 parameters + CUDA FP16 autocast.
+
+```text
+passing: [-0.25, -0.5]
+failing: [-0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
+first failing tested point: g=-0.75
+64-token cumulative magnitude at constant g=-0.75: 48.0
+```
+
+This is much closer to the learned-decay regime that could plausibly have caused the adaptive backend slowdown than the original `g=-6` stress point. FLA v0.5.1 chunk backward therefore remains blocked until the actual step-4000 checkpoint is measured on real training data.
+
+Detailed evidence: [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
+
+A forward-only probe now exists at `kaggle/run_gdn2_step4000_decay_telemetry.py`. It loads the real checkpoint, reads train block 4000 from the attached 500M manifest/shard, uses the first four 2048-token sequences (matching one training microbatch), records each GDN layer's log-decay tensor, and computes per-token quantiles plus 64-token cumulative-magnitude/mean statistics. It uses FLA only for the already-qualified forward path and does no backward/optimizer/checkpoint mutation.
+
 ## Historical chunk-32 checkpoint vs FLA64 runtime
 
 The active 20M/500M checkpoint stores:
@@ -112,14 +129,12 @@ Do not retry the 500M resume with FLA chunk training yet.
 
 The valid trajectory remains safely resumable from verified step 4000. The FLA experiments have not committed update 4001.
 
-Before deciding whether FLA can still be used without changing model semantics, determine whether the forced constant `log_decay=-6` stress case overlaps the model's real learned regime:
+Next gate:
 
-1. sweep forced log-decay values around the adaptive danger region (for example `-0.5, -0.75, -1, -1.5, -2, -4, -6`) under FP32 parameters + FP16 autocast and check finite gradient parity;
-2. instrument the real step-4000 checkpoint on representative training data and record per-token log-decay quantiles plus 64-token cumulative decay spans per GDN layer;
-3. compare the actual distribution with the FLA backward failure boundary;
-4. benchmark/qualify FLA's fused-recurrent GDN-2 implementation as an exact-recurrence fallback before changing learned decay semantics.
-
-Why this matters: the old adaptive backend begins splitting when cumulative log-decay span exceeds roughly 60. Over 64 tokens, a constant log-decay around `-1` is already enough to cross that threshold; the synthetic constant `-6` test corresponds to a much larger cumulative span (~384). Failure at `-6` therefore does not yet prove failure at the actual checkpoint's decay values.
+1. run `kaggle/run_gdn2_step4000_decay_telemetry.py` on the restored step-4000 checkpoint and attached 500M dataset;
+2. compare actual per-layer 64-token mean/cumulative decay against the synthetic passing `g=-0.5` and first-failing `g=-0.75` points;
+3. if real data overlaps the failing region, reject FLA v0.5.1 chunk backward for this trajectory and qualify an exact-recurrence alternative (for example FLA fused recurrent) before considering any decay bound;
+4. if real data stays clearly outside the failing region, still require a direct real-checkpoint forward/backward finite-gradient test before resuming training.
 
 ## Upstream context
 
@@ -129,17 +144,18 @@ As of 2026-08-08, FLA v0.5.1 is still the latest release. A later upstream PR (`
 
 - Do **not** clip/bound learned GDN-2 decay solely because the old adaptive backend slows down.
 - FLA v0.5.1 forward remains strongly qualified and normal-decay AMP backward parity passes.
-- FLA v0.5.1 strong-decay AMP chunk backward is **not qualified**.
+- FLA v0.5.1 AMP chunk backward passes tested constant `g=-0.5` but fails by tested constant `g=-0.75`.
 - `disable_recompute=True` does not fix the strong-decay backward failure.
-- Do **not** resume the active 500M trajectory with FLA chunk training until the decay failure boundary and real checkpoint decay distribution are measured.
+- Do **not** resume the active 500M trajectory with FLA chunk training until real step-4000 decay telemetry and a subsequent real-checkpoint backward gate are evaluated.
 - The latest verified usable training checkpoint remains step 4000.
-- A fresh FLA-from-update-1 run remains unauthorized while the same strong-decay backward issue is unresolved.
+- A fresh FLA-from-update-1 run remains unauthorized while the same backward issue is unresolved.
 
 Evidence:
 - [`../evidence/gdn2_fla_t4_full_probe_2026-08-08.md`](../evidence/gdn2_fla_t4_full_probe_2026-08-08.md)
 - [`../evidence/gdn2_fla_layer_integration_2026-08-08.md`](../evidence/gdn2_fla_layer_integration_2026-08-08.md)
 - [`../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md`](../evidence/gdn2_fla_500m_resume_amp_dtype_failure_2026-08-08.md)
 - [`../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md`](../evidence/gdn2_fla_strong_decay_amp_retained_failure_2026-08-08.md)
+- [`../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md`](../evidence/gdn2_fla_amp_decay_sweep_2026-08-08.md)
 
 Decisions:
 - [`../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`](../decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md)
