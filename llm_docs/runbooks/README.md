@@ -1,21 +1,24 @@
 # Runbooks
 
-Runbooks contain executable procedures, prerequisites, expected artifacts, checks, and recovery steps.
+Runbooks contain executable or intentionally reproducible procedures, prerequisites, expected artifacts, checks, and recovery steps. A document that is only a superseded plan belongs in archive instead.
 
 ## Active
 
-- [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` command surface for registered dataset publication and exact-resume training profiles.
-- [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run; VPS build, private Kaggle publication, exact-resume T4 training, and final evaluation.
+- [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` publication/training command surface for registered finite-data profiles.
+- [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run.
 - [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — build, verify, fast, and full evaluation.
-- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — prompt-only compatibility procedure.
-- [`100m_kagglehub_publication_suite.md`](100m_kagglehub_publication_suite.md) — reproducible private dataset publication process reused by the finite scaling publishers.
+- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — canonical post-pretraining qualitative prompt procedure.
+- [`100m_kagglehub_publication_suite.md`](100m_kagglehub_publication_suite.md) — reusable private finite-dataset publication procedure documented from the original 100M implementation.
 
-## Prior scaling-stage procedures
+## Completed-stage reproduction procedures
 
-- [`20m_500m_runbook.md`](20m_500m_runbook.md) — completed 500M-stage build/training procedure; retained for exact historical operations and resume interpretation.
-- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 100M-stage training and reproduction procedure.
-- [`20m_100m_data_scaling_plan.md`](20m_100m_data_scaling_plan.md) — historical planning-stage pointer; the original pre-final assumptions remain in Git history rather than as executable commands.
+These are retained because they still describe reproducible completed experiment profiles using the current unified launcher. They are not authorization to change those completed experiments.
 
-The unrun 1B procedure was superseded by ADR 0023 and is no longer an active runbook. Git history preserves its exact former contents.
+- [`20m_500m_runbook.md`](20m_500m_runbook.md) — completed 500M-stage reproduction/resume interpretation.
+- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 100M-stage reproduction procedure.
 
-Completed qualification procedures moved to `../archive/20m_qualification/`; their results are in `../evidence/20m/`.
+The obsolete 100M planning document moved to [`../archive/20m_100m/20m_100m_data_scaling_plan.md`](../archive/20m_100m/20m_100m_data_scaling_plan.md).
+
+The unrun 1B procedure was superseded by ADR 0023 and is not an active run target. Git history preserves its former contents.
+
+Completed 20M/10M qualification procedures live under `../archive/20m_qualification/`; their observed results are under `../evidence/20m/`.
