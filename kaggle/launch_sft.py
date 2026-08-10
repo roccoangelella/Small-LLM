@@ -21,9 +21,8 @@ _MULTIPLIERS = {
     "T": Decimal(1_000_000_000_000),
 }
 
-# Reachable commit containing the complete first operational SFT implementation.
-# Repin only to a main ancestor that already contains every launch-critical fix.
-_SFT_IMPLEMENTATION_COMMIT = "3470c149e98d177c905016c77b0e3a4f2d4ad50f"
+# Reachable main ancestor containing the complete operational SFT implementation.
+_SFT_IMPLEMENTATION_COMMIT = "56f9854ba5059a383837b082e377cf4e99570a60"
 _PARENT_CHECKPOINT_RUN_IDS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
     (20_000_000, 2_000_000_000): "20m-2b-dataset-001",
