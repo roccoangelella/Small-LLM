@@ -8,10 +8,9 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-# Replaced with a real immutable commit after the complete 2B launch surface is
-# committed. The pinned worktree must contain this profile's qualification
-# module plus the T4-qualified mixed FLA GDN-2 runtime.
-PINNED_LAUNCH_COMMIT = "__PIN_20M_2B_LAUNCH_COMMIT__"
+# This immutable worktree contains the complete 2B qualification surface plus
+# the T4-qualified mixed FLA GDN-2 implementation and fla-core==0.5.2 runtime.
+PINNED_LAUNCH_COMMIT = "3c920a7b682382181d4dc7557e217e6509d0dabe"
 WANDB_INIT_TIMEOUT_SECONDS = "30"
 WANDB_RUN_ID = "20m-2b-data-001"
 DURABILITY_EVERY_STEPS = 250
