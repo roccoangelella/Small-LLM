@@ -189,6 +189,31 @@ def _state_matches(
     )
 
 
+def _complete_roundtrip_state(
+    state: Mapping[str, object],
+    *,
+    state_path: Path,
+    summary_path: Path,
+    summary: Mapping[str, object],
+    handle: str,
+    roundtrip: Path,
+    expected: Mapping[str, object],
+    timeout_seconds: int,
+) -> int:
+    remote = _roundtrip(
+        handle,
+        destination=roundtrip,
+        expected=expected,
+        timeout_seconds=timeout_seconds,
+    )
+    verified = {**dict(state), "status": "verified", "remote": remote}
+    _write_json(state_path, verified)
+    completed = {**dict(summary), "status": "completed", "remote": remote}
+    _write_json(summary_path, completed)
+    print(json.dumps(completed, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-dir", type=Path, required=True)
@@ -231,22 +256,38 @@ def main(argv: Sequence[str] | None = None) -> int:
         "staged_identity": staged_identity,
     }
     previous = _read_json(state_path, label="SFT publication state") if state_path.is_file() else {}
-    if (
-        not args.force_upload
-        and _state_matches(
-            previous,
-            handle=args.handle,
-            identity=staged_identity,
-            bundle_manifest_sha256=bundle_hash,
-        )
-        and previous.get("status") == "verified"
-    ):
-        if _anonymous_access(args.handle):
-            raise PublishFailure("previously published SFT Kaggle dataset became public")
-        summary.update(status="already_published", remote=previous.get("remote"))
-        _write_json(summary_path, summary)
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
+    matching_previous = _state_matches(
+        previous,
+        handle=args.handle,
+        identity=staged_identity,
+        bundle_manifest_sha256=bundle_hash,
+    )
+    if not args.force_upload and matching_previous:
+        status = previous.get("status")
+        if status == "verified":
+            if _anonymous_access(args.handle):
+                raise PublishFailure("previously published SFT Kaggle dataset became public")
+            summary.update(status="already_published", remote=previous.get("remote"))
+            _write_json(summary_path, summary)
+            print(json.dumps(summary, indent=2, sort_keys=True))
+            return 0
+        if status in {"upload_attempting", "upload_submitted"}:
+            try:
+                return _complete_roundtrip_state(
+                    previous,
+                    state_path=state_path,
+                    summary_path=summary_path,
+                    summary=summary,
+                    handle=args.handle,
+                    roundtrip=roundtrip,
+                    expected=staged_identity,
+                    timeout_seconds=args.remote_ready_timeout_seconds,
+                )
+            except PublishFailure:
+                if status == "upload_submitted":
+                    raise
+                # upload_attempting may have been recorded before the request was
+                # accepted remotely. Fall through to one idempotent upload attempt.
 
     if _anonymous_access(args.handle):
         raise PublishFailure(f"refusing publicly readable Kaggle handle: {args.handle}")
@@ -272,22 +313,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     submitted = {**attempt, "status": "upload_submitted"}
     _write_json(state_path, submitted)
-    remote = _roundtrip(
-        args.handle,
-        destination=roundtrip,
+    return _complete_roundtrip_state(
+        submitted,
+        state_path=state_path,
+        summary_path=summary_path,
+        summary=summary,
+        handle=args.handle,
+        roundtrip=roundtrip,
         expected=staged_identity,
         timeout_seconds=args.remote_ready_timeout_seconds,
     )
-    verified = {**submitted, "status": "verified", "remote": remote}
-    _write_json(state_path, verified)
-    summary.update(status="completed", remote=remote)
-    _write_json(summary_path, summary)
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["PublishFailure", "build_parser", "main", "tree_identity"]
+__all__ = [
+    "PublishFailure",
+    "_state_matches",
+    "build_parser",
+    "main",
+    "tree_identity",
+]
