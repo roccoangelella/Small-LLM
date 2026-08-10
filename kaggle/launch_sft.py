@@ -22,7 +22,7 @@ _MULTIPLIERS = {
 }
 
 # Reachable main ancestor containing the complete operational SFT implementation.
-_SFT_IMPLEMENTATION_COMMIT = "56f9854ba5059a383837b082e377cf4e99570a60"
+_SFT_IMPLEMENTATION_COMMIT = "181e6a2a72a0e021134f7ea7809588aa4e1b48a9"
 _PARENT_CHECKPOINT_RUN_IDS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
     (20_000_000, 2_000_000_000): "20m-2b-dataset-001",
