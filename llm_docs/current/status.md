@@ -48,7 +48,9 @@ The validation-selected `best` checkpoint (`step-00015264`) completed the frozen
 
 The model clearly learned English surface structure, local lexical associations, dialogue/Q&A formatting, and visible text schemas, but open-ended capability remains weak at this scale. The run showed pervasive semantic drift, tautological restatement, and greedy repetition; the `Germany |` structured relation collapsed to repeated `Rome |`; and under a strict direct-answer reading none of the 12 simple factual/arithmetic probes contained the expected answer (`0 / 12`). Several Q&A cases reproduced the `Question: ... Answer:` format instead of supplying the requested fact.
 
-This evidence should be read as a separation between next-token/validation progress and free-generation capability, not as proof that the architecture itself is the sole limiting factor. The fresh 20M / 2B point should rerun the same frozen suite before attributing the failure pattern to capacity or architecture.
+The qualitative result is nevertheless materially encouraging for continued data scaling. Compared with the earlier smoke-scale evidence, the 500M checkpoint more consistently produces answer-shaped continuations, preserves the Alice/Ben speaker schema, and emits a plausible sentiment class before later degeneration. The early checkpoint had already shown some Q/A surface-format imitation, so the important longitudinal signal is stronger schema continuation rather than the first appearance of Q/A syntax.
+
+Project interpretation under ADR 0027: the combination of continued validation improvement and stronger conditional text-schema behavior is sufficient evidence to keep the approximately-20M model size fixed through the already-authorized 2B token probe. This is not treated as proof of unlimited gains from token scaling; the 2B point is the next controlled test for continued improvement versus diminishing returns or capacity saturation.
 
 Canonical evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
 
@@ -72,7 +74,7 @@ Corrected qualification established that all requested synthetic constant-decay 
 
 ## Authorized next experiment — fresh 20M / 2B run
 
-ADR 0023 supersedes the unrun 1B plan and authorizes a new independent approximately-2B-token data-scaling trajectory for the same 20M model.
+ADR 0023 supersedes the unrun 1B plan and authorizes a new independent approximately-2B-token data-scaling trajectory for the same 20M model. ADR 0027 records the 500M qualitative evidence as additional justification for keeping model size fixed through this 2B point.
 
 Fixed identities:
 
@@ -126,10 +128,12 @@ Current operational state: **the 2B launch surface is prepared in the active cha
 - Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
 - New finite scaling trajectories start fresh rather than continuing through a previous run's terminal WSD decay unless a later ADR explicitly changes that rule.
+- Keep the approximately-20M model size fixed through the planned 2B probe; revisit further fixed-size token scaling only after the frozen 2B comparison.
 
 ## Current source of truth
 
 - 500M qualitative evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
+- 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 2B runbook: [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
