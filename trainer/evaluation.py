@@ -26,7 +26,8 @@ def evaluate_batches(
 
     Masked variable-length SFT blocks use the same dynamic microbatch cropping
     as training, so padding to the longest record in an optimizer block is never
-    needlessly transferred to the accelerator.
+    needlessly transferred to the accelerator. Both ``validation`` and ``test``
+    are accepted as held-out splits; training blocks are rejected.
     """
 
     if maximum_batches is not None and maximum_batches <= 0:
@@ -47,10 +48,15 @@ def evaluate_batches(
         torch.cuda.empty_cache()
 
     total_loss, total_tokens, block_count = 0.0, 0, 0
+    observed_split: str | None = None
     try:
         for batch in batches:
-            if batch.split != "validation":
-                raise ValueError("evaluation requires validation-split batches")
+            if batch.split not in {"validation", "test"}:
+                raise ValueError("evaluation requires validation- or test-split batches")
+            if observed_split is None:
+                observed_split = batch.split
+            elif batch.split != observed_split:
+                raise ValueError("one held-out evaluation cannot mix validation and test batches")
 
             input_ids, labels = _ordered_batch_tensors(batch)
             for start in range(0, batch.sequence_count, microbatch_size):
@@ -70,7 +76,7 @@ def evaluate_batches(
                         reduction="sum",
                     )
                 if not torch.isfinite(loss):
-                    raise FloatingPointError("non-finite validation loss")
+                    raise FloatingPointError("non-finite held-out loss")
                 total_loss += float(loss.float())
                 total_tokens += int(microbatch_labels.ne(-100).sum().item())
                 del logits, loss, microbatch_inputs, microbatch_labels
@@ -84,9 +90,11 @@ def evaluate_batches(
             torch.cuda.empty_cache()
 
     if total_tokens == 0:
-        raise RuntimeError("validation source yielded no active targets")
+        raise RuntimeError("held-out source yielded no active targets")
     mean = total_loss / total_tokens
-    if engine.best_validation_loss is None or mean < engine.best_validation_loss:
+    if observed_split == "validation" and (
+        engine.best_validation_loss is None or mean < engine.best_validation_loss
+    ):
         engine.best_validation_loss = mean
     return {
         "loss": mean,
