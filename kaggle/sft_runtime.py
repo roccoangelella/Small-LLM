@@ -16,7 +16,7 @@ KAGGLE_DIR = Path(__file__).resolve().parent
 REPO = KAGGLE_DIR.parent
 WORK = Path("/kaggle/working")
 INPUT = Path("/kaggle/input")
-PINNED_LAUNCH_COMMIT = "4d17e123fe78959f0bd52e30dde3f567e9ea59a6"
+PINNED_LAUNCH_COMMIT = "9bf652e74ca9ffb6ff00c988dad955f57382518f"
 
 
 class RuntimeFailure(RuntimeError):
