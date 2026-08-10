@@ -4,6 +4,8 @@ _Last updated: 2026-08-10 Europe/Rome_
 
 This runbook is the canonical human procedure for the first operational supervised-fine-tuning lane. The completed 20M/500M checkpoint is the qualification parent. As soon as the fresh 20M/2B checkpoint is complete and post-pretraining-qualified, use the same lane with the 2B profile.
 
+ADR 0034 makes the SFT data lane machine-agnostic: prefer the VPS for `prepare`/`publish` when the verified replay dataset already lives there, and reserve Kaggle accelerator sessions primarily for `train`/`eval`.
+
 ## 1. Canonical launcher
 
 Use only:
@@ -33,30 +35,54 @@ python kaggle/launch_sft.py train --model 20M --tokens 500M --dry-run
 
 The 500M parent checkpoint namespace is `20m-500m-dataset-001`. The 2B parent namespace is `20m-2b-dataset-001`. These are checkpoint/dataset run IDs, not W&B run IDs.
 
-## 2. Required Kaggle environment
+## 2. Environment split and credentials
 
-Use an NVIDIA T4 notebook with Internet enabled.
+### VPS or ordinary Linux host — preferred for prepare/publish
 
-Required secrets/environment for live SFT training and private bundle publication:
+`prepare` and `publish` do not require a GPU or a Kaggle filesystem. Run them from a normal repository clone when the verified pretraining replay dataset is already local.
+
+The runtime chooses its work root in this order:
+
+```text
+SMALL_LLM_WORK_DIR if explicitly set
+/kaggle/working if that directory actually exists
+<repository-parent>/small-llm-work otherwise
+```
+
+For the usual VPS clone at `~/Projects/Small-LLM`, the no-override default is therefore:
+
+```text
+~/Projects/small-llm-work
+```
+
+If `/data` is the desired large persistent volume, set for example:
+
+```bash
+export SMALL_LLM_WORK_DIR=/data/small-llm/sft-work
+```
+
+Private Kaggle publication requires:
+
+```text
+KAGGLE_API_TOKEN
+KAGGLE_USERNAME
+```
+
+Instead of `KAGGLE_USERNAME`, an explicit `--kaggle-dataset-handle owner/dataset` or `SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE` may provide the destination identity.
+
+Source preparation also needs ordinary Internet access for the pinned instruction dataset/package resolution.
+
+### Kaggle T4 — preferred for train/eval
+
+Use an NVIDIA T4 notebook with Internet enabled for the actual SFT training and GPU qualification path.
+
+Required secrets/environment for live SFT training:
 
 ```text
 GITHUB_TOKEN
 WANDB_API_KEY
 HF_TOKEN
-KAGGLE_API_TOKEN
 SMALL_LLM_HF_REPO_ID
-```
-
-For automatic private Kaggle dataset naming, set:
-
-```text
-KAGGLE_USERNAME
-```
-
-Alternatively pass `--kaggle-dataset-handle owner/dataset` or set:
-
-```text
-SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE
 ```
 
 Recommended separate private repository for SFT checkpoints:
@@ -71,9 +97,11 @@ Optional:
 WANDB_ENTITY
 ```
 
-For bundle construction, attach the exact verified pretraining dataset that supplies the frozen 15% replay stream. For the first qualification this is the accepted private 500M dataset. Do not attach multiple ambiguous replay datasets.
+When `train` or `eval` is given no `--dataset-dir`, the launcher keeps the Kaggle convenience of discovering exactly one SFT bundle under `/kaggle/input`. On another machine either pass `--dataset-dir` explicitly or set `SMALL_LLM_INPUT_DIR` to an alternative implicit input root.
 
-## 3. Build and privately publish the 500M qualification bundle
+For bundle construction, `--replay-root` always means the exact verified pretraining **dataset directory containing `manifest.json`**, never the `manifest.json` file itself.
+
+## 3. Build and privately publish the 500M qualification bundle from the VPS
 
 The completed parent consumed exactly:
 
@@ -87,17 +115,25 @@ The 4% requested SFT ceiling is therefore:
 20,006,256 loss-bearing SFT targets
 ```
 
-From the current repository clone:
+On the current VPS layout, use:
 
 ```bash
-cd /kaggle/working/Small-LLM
+cd ~/Projects/Small-LLM
 git switch main
 git pull --ff-only
 
 python kaggle/launch_sft.py publish \
   --model 20M \
   --tokens 500M \
-  --replay-root /kaggle/input/<exact-500m-pretraining-dataset>
+  --replay-root /data/small-llm/20m-500m-ops/kaggle-dataset
+```
+
+The replay path above is the directory that contains `manifest.json`. Do **not** append `/manifest.json`.
+
+If desired, put SFT work products on the `/data` volume before launching:
+
+```bash
+export SMALL_LLM_WORK_DIR=/data/small-llm/sft-work
 ```
 
 `publish` performs the full durable bundle path:
@@ -114,15 +150,20 @@ pinned SmolTalk preparation
   -> anonymous-access denial check
 ```
 
-Default local outputs before publication are:
+Default local outputs are rooted under the selected work root. For example, with `SMALL_LLM_WORK_DIR=/data/small-llm/sft-work`:
 
 ```text
 prepared pinned instruction source:
-/kaggle/working/small-llm-sft-smoltalk-pinned
+/data/small-llm/sft-work/small-llm-sft-smoltalk-pinned
 
 immutable 500M-parent SFT bundle:
-/kaggle/working/small-llm-20m-500m-sft-bundle
+/data/small-llm/sft-work/small-llm-20m-500m-sft-bundle
+
+publication state/round-trip work:
+/data/small-llm/sft-work/small-llm-20m-500m-sft/bundle-publication
 ```
+
+On Kaggle the same launcher automatically retains `/kaggle/working` as its work root when that directory exists.
 
 If you only need to construct/inspect the bundle without publishing it, use the same command with action `prepare`.
 
@@ -145,7 +186,7 @@ If the notebook contains other bundle-like inputs, identify the exact attached r
 python kaggle/launch_sft.py train \
   --model 20M \
   --tokens 500M \
-  --dataset-dir /kaggle/input/<private-sft-dataset>/<bundle-root> \
+  --dataset-dir /kaggle/input/private-sft-dataset/bundle-root \
   --max-steps-this-session 20
 ```
 
@@ -278,23 +319,26 @@ Do not select the SFT checkpoint from SFT loss alone and do not select it from p
 
 ## 8. Switch to the 2B parent
 
-When the fresh 2B pretraining run is complete and its final/best checkpoint is accepted, obtain the verified exact parent consumed-target counter and publish the new SFT bundle:
+When the fresh 2B pretraining run is complete and its final/best checkpoint is accepted, obtain the verified exact parent consumed-target counter and publish the new SFT bundle from whichever ordinary machine already holds the verified 2B replay dataset, normally the VPS:
 
 ```bash
 python kaggle/launch_sft.py publish \
   --model 20M \
   --tokens 2B \
-  --parent-consumed-tokens <verified-final-parent-target-count> \
-  --replay-root /kaggle/input/<exact-2b-pretraining-dataset>
+  --parent-consumed-tokens 2000000000 \
+  --replay-root /path/to/verified-2b-pretraining-dataset
 ```
 
-Then use the same `train` and `eval` commands with `--tokens 2B`.
+The `2000000000` value above is only an example of command shape. Replace it with the verified final parent consumed-target counter; do not use the nominal label if the completed counter differs.
+
+Then attach the published SFT bundle on Kaggle and use the same `train` and `eval` commands with `--tokens 2B`.
 
 The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest and trainer gate use the exact verified completed parent counter rather than the nominal `2B` label.
 
 ## 9. Evidence required before calling the SFT lane qualified
 
 - repository SFT tests pass;
+- VPS/ordinary-host 500M `publish` path succeeds without any root-level `/kaggle` filesystem dependency;
 - prepared-source and bundle identities verify;
 - private Kaggle bundle publication and byte-identical round trip pass;
 - anonymous bundle access is denied;
@@ -304,4 +348,4 @@ The nominal SFT horizon is approximately 80M loss-bearing targets, but the immut
 - fast and full comprehensive reports are produced for parent and SFT checkpoints;
 - no unresolved identity mismatch, non-finite event, runaway-generation regression, or severe base-capability collapse remains unexplained.
 
-Related decisions: ADR 0032 and ADR 0033.
+Related decisions: ADR 0032, ADR 0033, and ADR 0034.
