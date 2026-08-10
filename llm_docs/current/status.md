@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-08
+last_reviewed: 2026-08-10
 ---
 
 # Current project status
@@ -20,29 +20,35 @@ final validation perplexity: 70.29906475797992
 final checkpoint: step-00003053
 ```
 
-The run stayed trainable but suffered an approximately 8.6x throughput collapse, from roughly 3,830 target tok/s early to roughly 445 tok/s late. Data wait remained negligible. Controlled backend experiments strongly support the diagnosis that stronger learned GDN-2 decay exposed pathological subdivision and synchronization in the adaptive PyTorch chunk backend.
+The run stayed trainable but suffered a large late-run throughput collapse in the old adaptive PyTorch GDN-2 backend. That runtime problem motivated the later FLA qualification work.
 
-## Active 20M / 500M experiment
+## Completed 20M / 500M pretraining experiment
 
-The 500M run is an independent seed-17 trajectory, not a continuation of the completed 100M run.
+The independent seed-17 500M trajectory has completed.
 
-Latest accepted trajectory point:
+Latest final checkpoint metadata supplied by the completed run/prompt-suite handoff:
 
 ```text
-checkpoint: step-00004000
-last_consumed_block_id: 3999
-next intended update: 4001
 W&B run ID: 20m-500m-data-001
-context: 2048
-microbatch: 4
-saved gdn_chunk_size: 32
+final checkpoint: step-00015264
+consumed training target tokens: 500,156,416
+architecture: gdn2_hybrid
+d_model: 256
+d_ff: 704
+layers: 8
+context: 2,048
+precision: FP16 autocast with FP32 master parameters
 ```
 
-The checkpoint is clean. No FLA migration or qualification diagnostic has committed update 4001.
+The 500M trajectory is **not** a clean single-backend curve: the accepted checkpoint chain reached step 4000 under the adaptive backend, then production continuation was authorized with the mathematically compatible mixed FLA GDN-2 CUDA backend. Interpret throughput and any very fine-grained loss-curve discontinuity with that migration boundary in mind.
 
-## FLA GDN-2 training status — QUALIFIED ON T4
+The final frozen post-pretraining evaluation/scorecard should remain the source of truth for model-quality comparison; do not infer a final validation metric from prompt-suite metadata that was not explicitly labeled as held-out validation loss.
 
-The final live August 8 qualification used:
+## Qualified GDN-2 production backend
+
+The production CUDA backend is **mixed FLA on `fla-core==0.5.2`** under the trainer contract of FP32 master parameters plus CUDA FP16 autocast.
+
+Qualified T4 stack:
 
 ```text
 GPU: Tesla T4 / SM75
@@ -50,115 +56,79 @@ PyTorch: 2.10.0+cu128
 CUDA runtime: 12.8
 Triton: 3.6.0
 fla-core: 0.5.2
-trainer contract: FP32 master parameters + CUDA FP16 autocast
-saved GDN chunk: 32
+saved/configured gdn_chunk_size: 32
 FLA internal runtime chunk: 64
 ```
 
-The previously reported v0.5.1/v0.5.2 decay-dependent backward failures were found to have been attributed through an invalid adaptive-reference harness. The reference was executed inside CUDA FP16 autocast, so eligible reference matrix operations could be downcast even after explicit FP32 tensor conversion. The old sweep also did not reset layer initialization per decay row.
+Corrected qualification established:
 
-On the live notebook, the old failing rows showed non-finite gradients on the **reference** side while FLA gradients were finite. Historical evidence remains preserved, but it is no longer valid evidence of an FLA-specific decay-dependent backward bug.
+- all requested synthetic constant-decay rows pass against the finite FP32 adaptive oracle;
+- the exact real step-4000 next-block forward/backward gate passes with finite, parity-matching gradients;
+- warmed true-block throughput measured 22,765.80 target tok/s for mixed FLA versus 1,964.75 target tok/s for the adaptive FP32 recurrence;
+- full-FP32 FLA is retained as a diagnostic/fallback mode, not the selected production path.
 
-A corrected deterministic oracle now disables autocast only inside the adaptive recurrence while leaving the surrounding layer under the actual trainer AMP contract.
+Detailed evidence remains under the August 8 GDN-2/FLA qualification documents and ADR 0021.
 
-### Corrected synthetic decay qualification
+## Authorized next experiment — fresh 20M / 1B run
 
-Requested constant-decay sweep:
+ADR 0022 authorizes a new independent approximately-1B-token data-scaling trajectory for the same 20M model.
 
-```text
-[-0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -2.0, -3.0, -4.0, -5.0, -6.0]
-```
-
-Result:
-
-```text
-mixed FLA passing: all 11
-mixed FLA failing: []
-
-full-FP32 FLA passing: all 11
-full-FP32 FLA failing: []
-
-invalid reference rows: []
-```
-
-### Real step-4000 / exact-next-block parity
-
-The verified remote checkpoint was restored with cursor 3999, and the exact next training block 4000 was used in a complete accumulated forward/backward gate:
+Fixed identities:
 
 ```text
-block: 16 x 2048
-microbatch: 4
-target tokens: 32768
-checkpoint GradScaler scale: 256.0
+profile: 20m-1b-data-scaling-v1
+dataset run ID: 20m-1b-dataset-001
+W&B run ID: 20m-1b-data-001
+target accepted source tokens: 1,000,000,000
+minimum: 900,000,000
+maximum: 1,100,000,000
+producer durable checkpoint cadence: 40,000,000 source tokens
+fresh initialization seed: 17
+training microbatch: 4
+training durability / validation / remote publication cadence: 250 updates
 ```
 
-The diagnostic reproduced trainer FP16 autocast and checkpoint loss scaling but deliberately stopped before clipping, optimizer/scheduler mutation, data acknowledgement, W&B writes, or checkpoint publication.
+The 1B trajectory does **not** continue the 500M checkpoint. It starts from fresh seed-17 initialization and uses qualified mixed FLA on CUDA from optimizer update 1.
 
-Result:
+### Dataset transport
+
+The selected operational path is:
 
 ```text
-REAL_STEP_4000_PARITY: PASS
-
-mixed FLA:
-  forward parity: PASS
-  all gradients finite: PASS
-  all parameter gradient parity: PASS
-  gradient failures: 0
-
-full-FP32 FLA:
-  forward parity: PASS
-  all gradients finite: PASS
-  all parameter gradient parity: PASS
-  gradient failures: 0
+pinned Nemotron-ClimbMix source
+        ↓
+VPS deterministic production build
+        ↓
+local immutable uint16 shards + verified Google Drive mirror
+        ↓
+private Kaggle publication + round-trip byte verification
+        ↓
+attached Kaggle dataset
+        ↓
+GPU training from Kaggle-local input
 ```
 
-### Warmed real-block throughput
+Do not stream the source corpus live during GPU training. The complete 1B prepared payload is small enough for this path, while prebuilding preserves deterministic manifest/block identity and removes source-network variability from the T4 critical path.
 
-```text
-adaptive FP32 recurrence: 1964.75 target tok/s
-FLA mixed:               22765.80 target tok/s   (11.587x adaptive)
-FLA full FP32:           21244.76 target tok/s   (10.813x adaptive)
-```
-
-All benchmark backward passes remained finite.
-
-The selected production backend is therefore **mixed FLA on `fla-core==0.5.2`**. Full-FP32 FLA is qualified as a diagnostic/fallback mode but is slower and unnecessary for the observed trajectory.
-
-## Production resume boundary
-
-Production continuation from the clean `step-00004000` checkpoint is authorized under ADR 0021 using the qualified `fla-core==0.5.2` implementation.
-
-This authorization does not claim update 4001 has already happened. Qualification performed no optimizer step. The first newly accepted trajectory point remains the first actually completed production update 4001.
-
-The production launcher is pinned to the implementation commit containing:
-
-- the existing checkpoint-compatible FLA adapter and AMP dtype canonicalization;
-- `fla-core==0.5.2` as the production model runtime dependency;
-- unchanged saved `gdn_chunk_size=32` with FLA internal chunk 64;
-- no learned-state or recurrence changes.
-
-At production resume, keep the existing fail-closed restore and durability behavior and the normal 250-update validation/checkpoint/verified-remote-publication cadence.
+Current operational state: **the 1B launch surface is being prepared; dataset production and optimizer update 1 have not yet been accepted as completed evidence.**
 
 ## Frozen/accepted decisions still in force
 
-- Preserve checkpoint/model config `gdn_chunk_size=32`.
-- The latest accepted 500M checkpoint before resume is `step-00004000`.
-- Keep the adaptive PyTorch backend as the correctness/reference implementation.
-- Do not clip/bound GDN-2 decay solely because of backend runtime behavior.
-- Start/resume the 500M experiment at microbatch 4.
-- Validate/checkpoint/publish every 250 successful 500M updates.
+- Keep the existing pinned source revision, GPT-2 token IDs, and programming-cluster-11 exclusion policy.
+- Preserve context length 2,048 for this 20M scaling series.
+- Preserve checkpoint/model config `gdn_chunk_size=32`; CUDA FLA executes its fixed internal chunk 64.
+- Keep the adaptive PyTorch backend as the correctness/reference fallback.
+- Do not clip/bound learned GDN-2 decay solely for backend runtime behavior.
+- Use microbatch 4 on the qualified T4 training path.
 - Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
-- The qualified production FLA runtime is `fla-core==0.5.2` on Tesla T4 / SM75.
-- Historical failed qualification evidence is retained; changed conclusions are recorded in later evidence/ADRs rather than rewriting earlier records.
+- New finite scaling trajectories start fresh rather than continuing through a previous run's terminal WSD decay unless a later ADR explicitly changes that rule.
 
 ## Current source of truth
 
-- Consolidated handoff: [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md)
-- Detailed qualification: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
-- FP32/corrected-oracle gate: [`gdn2_fla_fp32_qualification.md`](gdn2_fla_fp32_qualification.md)
-- Final live evidence: [`../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md`](../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md)
-- Corrected synthetic JSON: [`../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json`](../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json)
-- Real parity JSON: [`../evidence/gdn2_fla_step4000_parity_2026-08-08.json`](../evidence/gdn2_fla_step4000_parity_2026-08-08.json)
-- Warmed benchmark JSON: [`../evidence/gdn2_fla_step4000_benchmark_2026-08-08.json`](../evidence/gdn2_fla_step4000_benchmark_2026-08-08.json)
+- 1B decision: [`../decisions/0022-run-1b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0022-run-1b-20m-probe-via-vps-kaggle-dataset.md)
+- 1B runbook: [`../runbooks/20m_1b_runbook.md`](../runbooks/20m_1b_runbook.md)
+- Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
+- FLA consolidated handoff: [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md)
+- FLA qualification: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
