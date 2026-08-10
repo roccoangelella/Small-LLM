@@ -1,220 +1,110 @@
 # 20M Model / 100M-Token Experiment Runbook
 
-_Last updated: 2026-08-06 10:25 Europe/Rome_
+_Last updated: 2026-08-10 Europe/Rome_
 
-This runbook uses one VPS command to build, verify, and privately publish the fixed 100M-token dataset, followed by one Kaggle command that attempts the complete remaining finite one-pass schedule. Verified remote checkpoints preserve exact resume when Kaggle interrupts the invocation.
+The 20M/100M experiment is completed historical evidence. This runbook records its fixed identities and the **current reproduction command surface**. Separate 100M launcher/publisher wrappers have been removed; use `kaggle/launch.py`.
 
-## Part A — Configure the VPS once
+## Fixed identity
 
-From the Small-LLM repository, copy the template values into the ignored `.env` file:
-
-```env
-KAGGLE_API_TOKEN=<token from Kaggle settings>
-KAGGLE_USERNAME=<your Kaggle owner slug>
-SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
-SMALL_LLM_DRIVE_FOLDER_ID=<existing qualified Drive folder ID>
+```text
+profile: 20m-100m-data-scaling-v1
+dataset run ID: 20m-100m-dataset-001
+W&B run ID: 20m-100m-data-004
+launch commit: 8e3cd9cb149facc5fa28e8108a70304c1f8c1c15
+model parameters: 20,637,592
+fresh seed: 17
+context: 2,048
+training microbatch: 4
+local checkpoint cadence: 250 updates
+held-out validation cadence: 250 updates
+verified remote publication cadence: 250 updates
 ```
 
-Instead of `KAGGLE_USERNAME`, an exact handle may be used:
+Dataset production identity:
 
-```env
-SMALL_LLM_KAGGLE_DATASET_HANDLE=owner/small-llm-20m-100m-dataset-001
+```text
+target accepted source tokens: 100,000,000
+minimum: 90,000,000
+maximum: 110,000,000
+producer durable checkpoint cadence: 20,000,000 source tokens
+context length: 2,048
+sequences per optimizer block: 16
+target shard size: 8 MiB
+remote durability: required
 ```
 
-Reference template:
+## VPS environment
+
+Use the ignored repository `.env`; reference values remain in:
 
 ```text
 kaggle/100m-publish.env.example
 ```
 
-Default paths:
+Required publication credentials include `KAGGLE_API_TOKEN`, Google Drive authorization, and the Drive folder ID. `KAGGLE_USERNAME` may derive the handle, or set:
 
-```text
-mixture weights: /data/climbmix-mixture-calibration/climbmix_code_free_weights.json
-producer output: /data/small-llm/20m-100m-dataset-001
-operations/evidence: /data/small-llm/20m-100m-ops
+```env
+SMALL_LLM_KAGGLE_DATASET_HANDLE=owner/small-llm-20m-100m-dataset-001
 ```
 
-Optional path overrides are documented in the environment template.
+The unified Python launcher replaces the removed shell wrapper and automatically re-executes publication through `uv` with Python 3.13, `.env`, and `kaggle/requirements-100m-publish.txt`.
 
-## Part B — Build and privately publish with one command
+## Build, verify, and privately publish
 
 ```bash
 cd /path/to/Small-LLM
 git switch main
 git pull --ff-only
-bash kaggle/build_and_push_100m.sh
+python kaggle/launch.py publish --model 20M --tokens 100M
 ```
 
-The command:
+The path preserves deterministic build/resume, full local verification, exact qualification-plan derivation, private Kaggle publication, fresh round-trip download, byte-identical verification, and denied anonymous access.
 
-1. loads `.env` without printing secrets;
-2. pins Python 3.13 and `kagglehub==1.0.2`;
-3. starts `dataset.qualification_100m` when no producer output exists;
-4. automatically resumes an interrupted producer directory;
-5. skips production when the fixed completed manifest already exists;
-6. runs a literal full local shard scan;
-7. derives and verifies `qualification_plan.json`;
-8. stages exactly:
-   - `manifest.json`
-   - `drive_manifest.json`
-   - `qualification_plan.json`
-   - `train/`
-   - `validation/`
-9. refuses a Kaggle handle already readable anonymously;
-10. uploads with `kagglehub.dataset_upload` as a private dataset;
-11. downloads the complete Kaggle dataset back to the VPS;
-12. requires a byte-identical tree, another full scan, and denied anonymous access;
-13. records a verified receipt and avoids duplicate versions on identical reruns.
+Rerun the identical command after interruption. Publication resume is automatic; do not pass `--resume`.
 
-The producer remains fixed at:
-
-```text
-run ID: 20m-100m-dataset-001
-accepted-source-token target: 100,000,000
-minimum: 90,000,000
-hard maximum: 110,000,000
-context length: 2,048
-sequences per optimizer block: 16
-target shard size: 8 MiB
-producer durable checkpoint cadence: 20,000,000 source tokens
-remote durability: required
-```
-
-Successful publication requires:
+Successful publication evidence remains:
 
 ```text
 /data/small-llm/20m-100m-ops/build-and-push-summary.json
-  status: completed or already_published
-
 /data/small-llm/20m-100m-ops/kaggle-publish-state.json
-  status: verified
 ```
 
-Rerun the same command after an interruption. The producer and publisher are idempotent. Use `--force-upload` only when an intentional new Kaggle version is required.
+## Kaggle training / exact resume
 
-## Part C — Configure the Kaggle notebook
-
-Notebook settings:
+Configure an NVIDIA T4 notebook with Internet enabled, attach the exact verified private 100M dataset, and provide:
 
 ```text
-Accelerator: NVIDIA T4
-Internet: On
-Attached input: the private small-llm-20m-100m-dataset-001 dataset
-```
-
-Required Kaggle secrets:
-
-```text
-GITHUB_TOKEN
 WANDB_API_KEY
 HF_TOKEN
 SMALL_LLM_HF_REPO_ID
+optional: WANDB_ENTITY
 ```
 
-Optional:
-
-```text
-WANDB_ENTITY
-```
-
-Attach the exact private Kaggle Dataset version used by the qualification plan. Training reads immutable local shards; it does not stream the dataset from Drive or Hugging Face.
-
-## Part D — Run or resume training
+Run:
 
 ```bash
 cd /kaggle/working/Small-LLM
 git switch main
 git pull --ff-only
-python kaggle/run_20m_100m.py
+python kaggle/launch.py train --model 20M --tokens 100M
 ```
 
-Do not pass `--launch-commit`. The wrapper pins a verified worktree commit containing the bounded-validation hotfix.
+The profile preserves the original 100M fresh-start behavior: on a fresh namespace the microbatch-1 versus microbatch-4 T4 gate runs before real training. Verified resume restores the exact model, optimizer, WSD scheduler, FP16 scaler, RNG state, data/block cursor, and consumed-token cursor.
 
-Operational defaults:
-
-```text
-training microbatch: 4 sequences
-validation microbatch: 1 sequence
-local checkpoint cadence: 250 updates
-held-out validation cadence: 250 updates
-verified remote publication cadence: 250 updates
-W&B run ID: 20m-100m-data-004
-allocator safeguard: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-repository default session cap: none within the finite qualification plan
-```
-
-The first fresh invocation performs the microbatch-1 versus microbatch-4 T4 training gate and starts from seed 17 only if microbatch 4 passes. The launcher then requests every remaining update in the exact finite one-pass plan rather than stopping at update 749.
-
-Validation is independent of the training microbatch. It runs under `torch.inference_mode()` one sequence at a time, releases optimizer gradients before evaluation, and clears unused CUDA allocator cache before and after evaluation. Do not increase the validation microbatch until a controlled T4 memory probe demonstrates safe headroom.
-
-At every 250-update boundary, the trainer runs held-out validation, writes the local joint checkpoint, and publishes a verified remote checkpoint. If Kaggle interrupts the run, rerun the identical command. It restores the latest verified private Hugging Face checkpoint, checks the attached Drive-manifest identity, and resumes the same model, optimizer, scheduler, scaler, RNG, data cursor, and finite schedule.
-
-The optional underlying flag remains available for an intentionally bounded diagnostic:
+For a deliberate bounded diagnostic only:
 
 ```bash
-python kaggle/run_20m_100m.py --max-steps-this-session 250
+python kaggle/launch.py train --model 20M --tokens 100M --max-steps-this-session 250
 ```
 
-Do not use that override for the normal corrected run.
-
-Completion requires:
+## Canonical completed result
 
 ```text
-status: completed
-remaining_steps: 0
+optimizer updates: 3,053
+consumed training target tokens: 100,018,176
+final validation loss: 4.252758495143203
+final validation perplexity: 70.29906475797992
+final checkpoint: step-00003053
 ```
 
-## Evidence locations
-
-VPS dataset publication:
-
-```text
-/data/small-llm/20m-100m-ops/logs/
-/data/small-llm/20m-100m-ops/kaggle-dataset/
-/data/small-llm/20m-100m-ops/kaggle-roundtrip/
-/data/small-llm/20m-100m-ops/kaggle-publish-state.json
-/data/small-llm/20m-100m-ops/build-and-push-summary.json
-```
-
-Kaggle training:
-
-```text
-/kaggle/working/small-llm-20m-100m-data-scaling/evidence-<UTC timestamp>/
-/kaggle/working/small_llm_20m_100m_data_scaling_summary.json
-```
-
-Incident record:
-
-```text
-llm_docs/evidence/20m_100m/validation_oom_step_500_2026-08-06.md
-```
-
-## First corrected-run checks
-
-At update 250 require:
-
-```text
-validation completed without CUDA OOM
-local checkpoint: step-00000250
-verified remote publication: step-00000250
-```
-
-At update 500 require the same three events for `step-00000500`. Passing update 749 without a launcher exit confirms that the old artificial session stop is no longer active.
-
-## Stop conditions
-
-Do not proceed if:
-
-- dataset production, local verification, upload, round-trip verification, or privacy verification fails;
-- the local and Drive manifests disagree;
-- the uploaded tree differs from the staged tree;
-- Kaggle training finds zero or multiple matching datasets;
-- microbatch 4 fails throughput, numerical, overflow, or memory gates;
-- validation still approaches unsafe T4 memory or emits a CUDA OOM;
-- a restored checkpoint disagrees with the attached dataset;
-- W&B refuses the configured run identity;
-- a scheduled boundary exits without a verified remote publication;
-- the trainer attempts to consume beyond the exact finite one-pass plan.
-
-A failed gate is evidence to review, not permission to silently change the experiment.
+The late-run throughput collapse belongs to the historical adaptive PyTorch GDN-2 execution path; it motivated the later FLA backend qualification. Reproduction through the current command surface still uses the frozen launch commit recorded above for this historical profile.

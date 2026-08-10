@@ -14,7 +14,9 @@ INDEXES = (
     DOCS / "reference" / "README.md",
     DOCS / "runbooks" / "README.md",
     DOCS / "research" / "README.md",
+    DOCS / "plans" / "README.md",
     DOCS / "evidence" / "README.md",
+    DOCS / "archive" / "README.md",
 )
 
 REQUIRED_PATHS = (
@@ -23,6 +25,8 @@ REQUIRED_PATHS = (
     DOCS / "current" / "roadmap.md",
     DOCS / "decisions" / "template.md",
     DOCS / "research" / "project_memory_research.md",
+    DOCS / "research" / "agent_memory_and_documentation_2026-08-10.md",
+    DOCS / "plans" / "README.md",
     DOCS / "archive" / "README.md",
 )
 
@@ -36,6 +40,9 @@ REMOVED_PATHS = (
     ROOT / "kaggle" / "run_20m_remote_recovery_from_clone.py",
     ROOT / "llm_test_trace.json",
 )
+
+CURRENT_FILES = ("roadmap.md", "status.md")
+STRICT_ADR_SHAPE_FROM = 31
 
 
 def local_markdown_links(path: Path) -> tuple[str, ...]:
@@ -58,6 +65,10 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
         markdown_files = sorted(path.name for path in DOCS.glob("*.md"))
         self.assertEqual(markdown_files, ["README.md"])
 
+    def test_current_is_only_high_freshness_working_memory(self) -> None:
+        markdown_files = sorted(path.name for path in (DOCS / "current").glob("*.md"))
+        self.assertEqual(markdown_files, list(CURRENT_FILES))
+
     def test_index_relative_markdown_links_resolve(self) -> None:
         docs_root = DOCS.resolve()
         for index in INDEXES:
@@ -74,11 +85,11 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
                         f"broken index link: {index} -> {target}",
                     )
 
-    def test_adrs_use_numbered_single_decision_shape(self) -> None:
+    def test_adrs_have_metadata_and_new_adrs_use_standard_shape(self) -> None:
         decisions = DOCS / "decisions"
         adrs = sorted(decisions.glob("[0-9][0-9][0-9][0-9]-*.md"))
         self.assertGreaterEqual(len(adrs), 3)
-        required_headings = (
+        strict_headings = (
             "## Context and problem statement",
             "## Considered options",
             "## Decision outcome",
@@ -86,10 +97,13 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
         )
         for adr in adrs:
             text = adr.read_text(encoding="utf-8")
+            number = int(adr.name[:4])
             with self.subTest(adr=adr):
                 self.assertTrue(text.startswith("---\n"), "ADR needs YAML metadata")
-                for heading in required_headings:
-                    self.assertIn(heading, text)
+                self.assertIn("## Consequences", text)
+                if number >= STRICT_ADR_SHAPE_FROM:
+                    for heading in strict_headings:
+                        self.assertIn(heading, text)
 
     def test_agent_map_stays_small_and_points_to_current_memory(self) -> None:
         text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
@@ -97,6 +111,7 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
         self.assertIn("llm_docs/current/status.md", text)
         self.assertIn("llm_docs/current/roadmap.md", text)
         self.assertIn("llm_docs/decisions/README.md", text)
+        self.assertIn("llm_docs/plans/", text)
 
     def test_removed_legacy_paths_do_not_return(self) -> None:
         for path in REMOVED_PATHS:

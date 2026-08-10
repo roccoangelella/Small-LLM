@@ -1,77 +1,44 @@
-# 20M Model / 500M-Token Final Probe Runbook
+# 20M Model / 500M-Token Experiment Runbook
 
-_Last updated: 2026-08-08 11:34 Europe/Rome_
+_Last updated: 2026-08-10 Europe/Rome_
 
-This is the final planned data-scaling probe for the approximately-20M-parameter GDN-2 hybrid. It uses the separately identified approximately-500M-token finite dataset and its own seed-17 one-pass WSD trajectory. It does not initialize from the completed 100M checkpoint.
+The independent seed-17 20M/500M trajectory is completed historical evidence. This runbook records its fixed identity and the current reproduction/resume command surface. Separate 500M launcher, training-overlay, publisher-overlay, and shell-wrapper files have been removed; use `kaggle/launch.py`.
 
-The active 500M trajectory now has an explicitly authorized execution-backend migration: existing verified 500M checkpoints keep their historical model configuration and resume with FLA GDN-2 CUDA recurrence execution. This does not change learned parameters or checkpoint keys, but future updates are not expected to be bitwise identical to a hypothetical continuation using the old adaptive PyTorch backend.
-
-## Part A — No whole ClimbMix download is required
-
-Do not download the Nemotron-ClimbMix source corpus locally first.
-
-The production path already implements deterministic source streaming correctly:
-
-- the source repository is pinned to immutable revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`;
-- only metadata is listed up front to freeze the exact root source-file work plan;
-- source content is fetched through deterministic HTTP byte-range requests;
-- complete JSONL record boundaries are recovered around range edges;
-- selected GPT-2 token IDs are materialized into the fixed local binary training cache;
-- production state is checkpointed and crash-safe/resumable;
-- finalized shards are mirrored to Google Drive under the run-specific folder `20m-500m-dataset-001`.
-
-Training consumes the completed finite Kaggle dataset rather than reading a live Hugging Face stream. That preserves a hashed manifest, exact one-pass schedule, deterministic data cursor, and checkpoint/resume identity.
-
-## Part B — Fixed 500M dataset contract
+## Fixed dataset identity
 
 ```text
 profile: 20m-500m-data-scaling-v1
-run ID: 20m-500m-dataset-001
-accepted-source-token target: 500,000,000
+dataset run ID: 20m-500m-dataset-001
+target accepted source tokens: 500,000,000
 minimum: 450,000,000
-hard maximum: 550,000,000
+maximum: 550,000,000
 producer durable checkpoint cadence: 20,000,000 source tokens
 context length: 2,048
 sequences per optimizer block: 16
 target shard size: 8 MiB
-remote durability: required
 source revision: 5eaa64b9c0c85b7f56af01d7dffdb0795816b12b
-tokenizer: existing GPT-2 token IDs, reused verbatim
-cluster policy: unchanged from production corpus policy
+tokenizer: existing GPT-2 token IDs
+programming cluster 11: excluded
+remote durability: required
 ```
 
-At 20,637,592 model parameters, the nominal 500M source-token point is approximately 24.2 accepted source tokens per parameter.
+The finite dataset is built deterministically on the VPS, mirrored durably to Drive, privately published to Kaggle, round-trip verified, and then consumed from Kaggle-local immutable shards. Do not live-stream the source corpus during GPU training.
 
-The exact number of train target tokens and optimizer updates is derived from the completed manifest after validation/EOD packing. A rough expectation is about 15.2k optimizer updates at 32,768 target tokens per full block.
+## VPS environment
 
-## Part C — VPS configuration
-
-Use the existing `.env` credentials. The 500M-specific template is:
+Reference template:
 
 ```text
 kaggle/500m-publish.env.example
 ```
 
-Required values remain:
-
-```env
-KAGGLE_API_TOKEN=<token from Kaggle settings>
-KAGGLE_USERNAME=<your Kaggle owner slug>
-SMALL_LLM_GOOGLE_OAUTH_TOKEN=.secrets/google-drive-authorized-user.json
-SMALL_LLM_DRIVE_FOLDER_ID=<existing qualified Drive parent folder ID>
-```
-
-The same Drive parent folder is safe because the backend creates a distinct child folder named by `run_id`.
-
-Instead of `KAGGLE_USERNAME`, a dedicated exact handle may be set:
+Use `KAGGLE_USERNAME` or the dedicated handle namespace:
 
 ```env
 SMALL_LLM_500M_KAGGLE_DATASET_HANDLE=owner/small-llm-20m-500m-dataset-001
 ```
 
-Do not reuse `SMALL_LLM_KAGGLE_DATASET_HANDLE` from the 100M publication.
-
-Optional path overrides:
+Optional profile-specific path overrides remain:
 
 ```env
 SMALL_LLM_500M_WEIGHTS_FILE=/data/climbmix-mixture-calibration/climbmix_code_free_weights.json
@@ -80,119 +47,39 @@ SMALL_LLM_500M_OPS_DIR=/data/small-llm/20m-500m-ops
 SMALL_LLM_KAGGLE_READY_TIMEOUT_SECONDS=900
 ```
 
-Default local paths:
+The unified Python launcher replaces the removed shell wrapper and self-bootstraps publication with `uv`, Python 3.13, `.env`, and `kaggle/requirements-100m-publish.txt`.
 
-```text
-mixture weights: /data/climbmix-mixture-calibration/climbmix_code_free_weights.json
-producer output: /data/small-llm/20m-500m-dataset-001
-operations/evidence: /data/small-llm/20m-500m-ops
-```
-
-## Part D — Build and privately publish with one command
+## Build, verify, and privately publish
 
 ```bash
 cd /path/to/Small-LLM
 git switch main
 git pull --ff-only
-bash kaggle/build_and_push_500m.sh
+python kaggle/launch.py publish --model 20M --tokens 500M
 ```
 
-This command performs the same production gates as the 100M publication suite: deterministic production/resume, full local scan, exact qualification plan, private Kaggle publication, full round-trip download, byte-identical verification, and denied anonymous access.
+Rerun the identical command after interruption. Build/publish resume is automatic and fail-closed.
 
-Rerun the same command after VPS/network interruption. Do not delete the production directory; `--resume` is selected automatically.
-
-Successful publication requires:
+Successful evidence remains under:
 
 ```text
-/data/small-llm/20m-500m-ops/build-and-push-summary.json
-  status: completed or already_published
-
-/data/small-llm/20m-500m-ops/kaggle-publish-state.json
-  status: verified
+/data/small-llm/20m-500m-ops/
 ```
 
-## Part E — Relationship to the completed 100M run
+with `build-and-push-summary.json` completed/already-published and `kaggle-publish-state.json` verified.
 
-The 500M trajectory is independent of the completed 100M model checkpoint. It starts from seed 17 with its own one-pass WSD plan.
-
-The current FLA migration concerns **resuming the existing 500M checkpoint chain**, not initializing 500M from the 100M final checkpoint.
-
-## Part F — Configure the Kaggle notebook
-
-```text
-Accelerator: NVIDIA T4
-Internet: On
-Attached input: the private small-llm-20m-500m-dataset-001 dataset
-```
-
-Required Kaggle secrets:
-
-```text
-GITHUB_TOKEN
-WANDB_API_KEY
-HF_TOKEN
-SMALL_LLM_HF_REPO_ID
-```
-
-Optional:
-
-```text
-WANDB_ENTITY
-```
-
-Attach the exact private Kaggle dataset version that passed the VPS round-trip verification.
-
-## Part G — Run or resume the 500M training
-
-Use the same normal command:
-
-```bash
-cd /kaggle/working/Small-LLM
-git switch main
-git pull --ff-only
-python kaggle/run_20m_500m.py
-```
-
-Do not pass `--launch-commit`. The wrapper now pins the FLA-integrated implementation worktree at:
-
-```text
-a1471472ca9b5d07f70c844460acffe5c96c5200
-```
-
-### Checkpoint-compatible FLA migration
-
-Historical 500M checkpoints were saved with:
-
-```text
-gdn_chunk_size: 32
-```
-
-Do **not** change the trainer CLI/model configuration to 64 for resume. Trainer checkpoint restore compares model configuration strictly.
-
-The integrated backend instead uses:
-
-```text
-saved/model config:             gdn_chunk_size = 32
-adaptive CPU/reference fallback: chunk = 32
-CUDA FLA runtime:                fixed chunk = 64
-```
-
-Chunk size is an execution grouping and does not add/change learned model parameters. FLA introduces no state-dict entries, so no checkpoint tensor conversion is required.
-
-The pinned worktree includes the T4-qualified `fla-core==0.5.2` in the `model` runtime extra already used by the trainer command.
-
-### Fixed identities/defaults
+## Fixed training identity
 
 ```text
 model parameters: 20,637,592
 architecture: gdn2_hybrid
 fresh initialization seed: 17
 context: 2,048
-precision: FP16
+precision: FP16 autocast with FP32 master parameters
 optimizer: hybrid Muon + AdamW
 learning rate: 3e-4
 weight decay: 0.1
-schedule: one-pass WSD derived from the 500M qualification plan
+schedule: one-pass WSD from the verified 500M plan
 training microbatch: 4
 saved/configured GDN chunk: 32
 CUDA FLA runtime chunk: 64
@@ -201,100 +88,45 @@ held-out validation cadence: 250 updates
 verified remote publication cadence: 250 updates
 W&B run ID: 20m-500m-data-001
 W&B run name: 20M model on 500M tokens
-repository default session cap: none within the finite plan
+launch commit: c0214d00047c61a290d9a138a6bd94ed5701337c
 ```
 
-### Resume behavior
+The 500M trajectory is independent of the completed 100M checkpoint. It started from seed 17. Its accepted checkpoint chain later migrated from the adaptive GDN-2 backend to the checkpoint-compatible qualified mixed FLA backend; saved model configuration remains `gdn_chunk_size=32` while FLA executes its internal fixed chunk 64.
 
-Every invocation first checks the existing remote 500M checkpoint namespace. If a verified checkpoint exists, the launcher restores it and resumes:
+## Kaggle launch / exact resume
+
+Attach the exact verified private 500M dataset to an NVIDIA T4 notebook with Internet enabled. Required training secrets are:
 
 ```text
-model weights
-optimizer state
-scheduler / WSD position
-FP16 scaler
-RNG state
-data/block cursor
-consumed-token cursor
+WANDB_API_KEY
+HF_TOKEN
+SMALL_LLM_HF_REPO_ID
+optional: WANDB_ENTITY
 ```
 
-The next optimizer update then runs with FLA GDN-2 CUDA recurrence execution.
+Run:
 
-The launcher still requires the restored checkpoint's Drive manifest to match the attached 500M dataset. It resumes W&B run `20m-500m-data-001` with `must` semantics when a checkpoint is restored.
-
-This migration is mathematically recurrence-compatible but not bitwise replay-compatible with the hypothetical old-backend continuation because the floating-point operation ordering changes.
-
-At every 250-successful-update boundary require:
-
-```text
-held-out validation completed
-local checkpoint saved
-verified remote checkpoint publication completed
+```bash
+cd /kaggle/working/Small-LLM
+git switch main
+git pull --ff-only
+python kaggle/launch.py train --model 20M --tokens 500M
 ```
+
+Fresh 500M training skips the old microbatch probe because microbatch 4 was already qualified for this model/T4 path. Resume checks only the `20m-500m-dataset-001` remote checkpoint namespace and restores exact model, optimizer, scheduler, FP16 scaler, RNG, and data-cursor state.
 
 For a deliberate bounded diagnostic only:
 
 ```bash
-python kaggle/run_20m_500m.py --max-steps-this-session 250
+python kaggle/launch.py train --model 20M --tokens 500M --max-steps-this-session 250
 ```
 
-Do not use that override for the normal run.
-
-Completion requires:
+## Canonical completed checkpoint
 
 ```text
-status: completed
-remaining_steps: 0
+final checkpoint: step-00015264
+consumed training target tokens: 500,156,416
+W&B run ID: 20m-500m-data-001
 ```
 
-### Optional checkpoint behavior probe
-
-The integrated layer probe can strict-load an existing trainer checkpoint into an adaptive-reference model and the FLA model:
-
-```bash
-python kaggle/run_gdn2_fla_layer_probe.py --checkpoint /path/to/checkpoint.pt
-```
-
-The probe now supports historical `gdn_chunk_size=32` checkpoints while executing FLA64 internally on CUDA.
-
-## Part H — Final comparison
-
-After completion, run the same frozen evaluation bundle used for the 100M checkpoint. Preserve at minimum:
-
-```text
-final held-out loss and perplexity
-fixed eval_core_v1 fast/full results
-teacher-forced confidence/rank diagnostics
-fixed free-generation prompt outputs and degeneration metrics
-training loss-versus-token curve
-throughput, overflow, and memory telemetry
-exact dataset/manifest/checkpoint identities
-```
-
-Because the active trajectory contains an explicit backend migration, record the migration point when interpreting the final training curve. If a later fresh FLA-from-update-1 run is authorized, that run will be the clean single-backend reference.
-
-## Stop conditions
-
-Do not proceed if:
-
-- source/dataset identity changes;
-- local and Drive manifests disagree;
-- Kaggle finds zero or multiple matching 500M datasets;
-- a 100M dataset is attached instead of the 500M identity;
-- the real trainer command does not use microbatch 4;
-- `fla-core==0.5.2` cannot be resolved/imported on the CUDA training path;
-- checkpoint strict restore fails;
-- a restored checkpoint disagrees with the attached 500M manifest;
-- W&B does not use `20m-500m-data-001`;
-- validation, FP16, memory, or numerical safety gates fail;
-- any 250-update durability boundary lacks held-out validation, local checkpoint, or verified remote publication;
-- the trainer attempts to consume beyond the exact finite one-pass plan.
-
-A failed gate is evidence to inspect, not permission to silently alter the experiment.
-
-## Related decisions/evidence
-
-- `llm_docs/decisions/0018-integrate-fla-gdn2-as-checkpoint-compatible-cuda-backend.md`
-- `llm_docs/decisions/0019-resume-500m-checkpoint-with-fla-gdn2-execution.md`
-- `llm_docs/evidence/gdn2_fla_t4_full_probe_2026-08-08.md`
-- `llm_docs/evidence/gdn2_fla_layer_integration_2026-08-08.md`
+Use the frozen evaluation/prompt suites for comparison rather than changing the training contract during historical reproduction.

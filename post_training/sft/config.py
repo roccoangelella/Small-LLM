@@ -88,8 +88,12 @@ class SFTDataConfig:
         result = {
             source: self.instruction_share * float(share)
             for source, share in self.instruction_source_shares.items()
+            if self.instruction_share * float(share) > 0
         }
-        result["climbmix-replay"] = self.replay_share
+        if self.replay_share > 0:
+            result["climbmix-replay"] = self.replay_share
+        if not result:
+            raise ValueError("SFT source mixture has no positive shares")
         return result
 
     def as_dict(self) -> dict[str, object]:
@@ -118,25 +122,25 @@ class SFTSchedulePlan:
         if not block_target_counts or any(value <= 0 for value in block_target_counts):
             raise ValueError("block_target_counts must be positive and non-empty")
         steps = len(block_target_counts)
+        # WSD requires a non-empty decay phase. Tiny deterministic smoke runs
+        # may have fewer than the normal 16 warmup updates, so reserve the
+        # final update for decay rather than allowing warmup and decay to overlap.
         warmup_steps = min(
-            steps,
+            max(steps - 1, 0),
             max(minimum_warmup_updates, math.ceil(steps * warmup_fraction)),
         )
         remaining = steps - warmup_steps
-        decay_steps = min(remaining, math.ceil(steps * decay_fraction))
+        decay_steps = min(
+            remaining,
+            max(1, math.ceil(steps * decay_fraction)),
+        )
         stable_steps = steps - warmup_steps - decay_steps
 
         warmup_tokens = sum(block_target_counts[:warmup_steps])
         stable_tokens = sum(
             block_target_counts[warmup_steps : warmup_steps + stable_steps]
         )
-        decay_tokens = sum(block_target_counts[-decay_steps:]) if decay_steps else 0
-        if decay_tokens <= 0:
-            decay_tokens = block_target_counts[-1]
-            if stable_tokens >= decay_tokens:
-                stable_tokens -= decay_tokens
-            elif warmup_tokens > decay_tokens:
-                warmup_tokens -= decay_tokens
+        decay_tokens = sum(block_target_counts[-decay_steps:])
         if warmup_tokens + stable_tokens + decay_tokens != sum(block_target_counts):
             raise RuntimeError("SFT schedule plan does not cover every target token")
         return cls(
@@ -154,8 +158,10 @@ def build_s0_trainer_config(
     precision: str = "fp16",
     seed: int = 17,
     learning_rate: float = 3e-5,
+    checkpoint_every_steps: int = 0,
+    evaluation_every_steps: int = 0,
 ) -> TrainerConfig:
-    """Preserve the pretraining optimizer/scheduler mechanics with S0 values."""
+    """Preserve the pretraining optimizer/scheduler mechanics with SFT values."""
 
     return TrainerConfig(
         optimizer="hybrid_muon_adamw",
@@ -176,6 +182,8 @@ def build_s0_trainer_config(
         stable_tokens=schedule.stable_tokens,
         decay_tokens=schedule.decay_tokens,
         minimum_lr_ratio=0.1,
+        checkpoint_every_steps=checkpoint_every_steps,
+        evaluation_every_steps=evaluation_every_steps,
         seed=seed,
     )
 

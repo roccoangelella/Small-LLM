@@ -25,6 +25,8 @@ post-training = [
 small-llm-eval-data = "dataset.eval_core:main"
 small-llm-eval = "trainer.eval_entrypoint:main"
 small-llm-sft-data = "post_training.sft.cli:main"
+small-llm-sft-train = "post_training.sft.train_cli:main"
+small-llm-sft-eval = "post_training.sft.eval_suite:main"
 
 [build-system]
 requires = ["setuptools>=68"]

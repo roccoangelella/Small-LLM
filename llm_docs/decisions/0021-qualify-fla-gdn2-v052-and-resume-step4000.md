@@ -130,9 +130,8 @@ Production must fail closed if the pinned implementation cannot be restored, if 
 
 ## Links
 
-- [`../current/gdn2_fla_qualification.md`](../current/gdn2_fla_qualification.md)
-- [`../current/gdn2_fla_fp32_qualification.md`](../current/gdn2_fla_fp32_qualification.md)
-- [`../current/gdn2_fla_investigation_handoff.md`](../current/gdn2_fla_investigation_handoff.md)
+- [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
+- [`../archive/gdn2_fla_investigation/gdn2_fla_investigation_handoff.md`](../archive/gdn2_fla_investigation/gdn2_fla_investigation_handoff.md)
 - [`../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md`](../evidence/gdn2_fla_corrected_oracle_and_step4000_qualification_2026-08-08.md)
 - [`../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json`](../evidence/gdn2_fla_fp32_qualification_corrected_2026-08-08.json)
 - [`../evidence/gdn2_fla_step4000_parity_2026-08-08.json`](../evidence/gdn2_fla_step4000_parity_2026-08-08.json)

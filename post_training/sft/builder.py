@@ -65,15 +65,9 @@ class SFTDatasetBuilder:
             maximum_context_tokens=config.context_length,
             maximum_assistant_tokens=config.maximum_assistant_tokens,
         )
-        self.audit = {
-            source: SourceAudit()
-            for source in config.instruction_source_shares
-        }
+        self.audit = {source: SourceAudit() for source in config.instruction_source_shares}
 
-    def _fit_and_tokenize(
-        self,
-        record: ConversationRecord,
-    ) -> TokenizedSFTRecord | None:
+    def _fit_and_tokenize(self, record: ConversationRecord) -> TokenizedSFTRecord | None:
         """Drop oldest complete dialogue pairs until the target fits."""
 
         messages = list(record.messages)
@@ -111,9 +105,7 @@ class SFTDatasetBuilder:
         for record in records:
             audit.seen += 1
             if record.source != source:
-                raise ValueError(
-                    f"instruction stream {source!r} yielded {record.source!r}"
-                )
+                raise ValueError(f"instruction stream {source!r} yielded {record.source!r}")
             decision = self.record_filter.evaluate(record)
             if not decision.accepted:
                 audit.rejected[decision.reason] += 1
@@ -135,22 +127,23 @@ class SFTDatasetBuilder:
     ) -> dict[str, object]:
         configured = set(self.config.instruction_source_shares)
         if set(instruction_sources) != configured:
-            raise ValueError(
-                "instruction_sources must exactly match configured source shares"
-            )
+            raise ValueError("instruction_sources must exactly match configured source shares")
 
         mixed_sources: dict[str, Iterable[TokenizedSFTRecord]] = {}
         for source, records in instruction_sources.items():
+            if self.config.complete_source_shares.get(source, 0.0) <= 0:
+                continue
             mixed_sources[source] = BufferedShuffle(
                 self._instruction_records(source, records),
                 seed=_stable_seed(self.config.seed, source),
                 buffer_size=self.config.shuffle_buffer_records,
             )
-        mixed_sources["climbmix-replay"] = BufferedShuffle(
-            replay_source,
-            seed=_stable_seed(self.config.seed, "climbmix-replay"),
-            buffer_size=self.config.shuffle_buffer_records,
-        )
+        if self.config.replay_share > 0:
+            mixed_sources["climbmix-replay"] = BufferedShuffle(
+                replay_source,
+                seed=_stable_seed(self.config.seed, "climbmix-replay"),
+                buffer_size=self.config.shuffle_buffer_records,
+            )
 
         mixed = TargetTokenMixer(
             mixed_sources,
@@ -168,33 +161,18 @@ class SFTDatasetBuilder:
         maximum_expected_shortfall = self.config.context_length
         if total < self.config.target_loss_tokens - maximum_expected_shortfall:
             shutil.rmtree(Path(output_dir), ignore_errors=True)
-            raise RuntimeError(
-                "SFT sources were exhausted before the configured target-token horizon"
-            )
+            raise RuntimeError("SFT sources were exhausted before the configured target-token horizon")
 
         report_without_hash = {
             "schema": "small-llm-sft-build-report",
             "manifest_identity": manifest["manifest_sha256"],
-            "source_audit": {
-                source: audit.as_dict()
-                for source, audit in sorted(self.audit.items())
-            },
+            "source_audit": {source: audit.as_dict() for source, audit in sorted(self.audit.items())},
             "actual_source_target_tokens": manifest["totals"]["source_target_tokens"],  # type: ignore[index]
         }
-        encoded = json.dumps(
-            report_without_hash,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        report = {
-            **report_without_hash,
-            "report_sha256": hashlib.sha256(encoded).hexdigest(),
-        }
+        encoded = json.dumps(report_without_hash, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        report = {**report_without_hash, "report_sha256": hashlib.sha256(encoded).hexdigest()}
         report_path = Path(output_dir) / "build-report.json"
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return {"manifest": manifest, "report": report}
 
 
