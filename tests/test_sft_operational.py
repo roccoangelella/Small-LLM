@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 import unittest
 
 import torch
 
+from kaggle import sft_runtime
 from post_training.sft.behavior_eval import BehaviorCase, verify_response
 from post_training.sft.bundle import (
     IdentitySplitPolicy,
@@ -26,6 +29,39 @@ from tests.trainer_fixtures import TinyLM
 class SFTOperationalTests(unittest.TestCase):
     def test_500m_budget_uses_exact_parent_counter(self) -> None:
         self.assertEqual(sft_budget_from_parent(500_156_416), 20_006_256)
+
+    def test_portable_work_root_defaults_beside_repo_off_kaggle(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repo = root / "Small-LLM"
+            repo.mkdir()
+            resolved = sft_runtime._portable_work_root(
+                None,
+                kaggle_work=root / "missing-kaggle-working",
+                repo=repo,
+            )
+            self.assertEqual(resolved, (root / "small-llm-work").resolve())
+
+    def test_portable_work_root_honors_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            configured = root / "custom-work"
+            resolved = sft_runtime._portable_work_root(
+                str(configured),
+                kaggle_work=root / "missing-kaggle-working",
+                repo=root / "Small-LLM",
+            )
+            self.assertEqual(resolved, configured.resolve())
+
+    def test_replay_root_requires_dataset_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            dataset = Path(temporary) / "dataset"
+            dataset.mkdir()
+            manifest = dataset / "manifest.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            self.assertEqual(sft_runtime._resolve_replay_root(str(dataset)), dataset.resolve())
+            with self.assertRaisesRegex(sft_runtime.RuntimeFailure, "must be the pretraining dataset directory"):
+                sft_runtime._resolve_replay_root(str(manifest))
 
     def test_prompt_derivatives_share_split_group(self) -> None:
         first = ConversationRecord(
