@@ -50,7 +50,7 @@ PROFILES: dict[tuple[int, int], Profile] = {
         model_parameters=20_000_000,
         training_tokens=100_000_000,
         train_module="run_20m_100m",
-        publish_module="build_and_push_100m",
+        publish_module="build_and_push_100m_entry",
     ),
     (20_000_000, 500_000_000): Profile(
         model_parameters=20_000_000,
