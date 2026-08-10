@@ -7,23 +7,24 @@ Use this file as a map, not as the project encyclopedia.
 1. Read [`llm_docs/current/status.md`](llm_docs/current/status.md).
 2. Read [`llm_docs/current/roadmap.md`](llm_docs/current/roadmap.md).
 3. Check [`llm_docs/decisions/README.md`](llm_docs/decisions/README.md) for accepted decisions.
-4. Open only the relevant reference document or runbook from [`llm_docs/README.md`](llm_docs/README.md).
+4. Open only the relevant reference, runbook, research note, evidence record, or active plan from [`llm_docs/README.md`](llm_docs/README.md).
 
 ## Sources of truth
 
-- `llm_docs/current/`: what is true now and what happens next.
-- `llm_docs/decisions/`: one accepted, proposed, or superseded decision per ADR.
-- `llm_docs/reference/`: durable technical contracts and system descriptions.
-- `llm_docs/runbooks/`: commands and operational procedures.
-- `llm_docs/research/`: investigations and external comparisons.
-- `llm_docs/evidence/`: immutable completed-run evidence.
-- `llm_docs/archive/`: superseded plans and historical scaffolding; never treat it as current guidance.
+- `llm_docs/current/`: only `status.md` and `roadmap.md`; high-freshness working memory.
+- `llm_docs/decisions/`: one accepted, proposed, superseded, or rejected durable choice per ADR.
+- `llm_docs/reference/`: current technical contracts and system descriptions.
+- `llm_docs/runbooks/`: executable/reproducible commands and operational procedures.
+- `llm_docs/research/`: investigations and external comparisons; not authorization.
+- `llm_docs/plans/`: resumable execution plans for complex work; completed plans are history.
+- `llm_docs/evidence/`: immutable measured/observed results.
+- `llm_docs/archive/`: superseded plans, completed handoffs, and historical design records; never current guidance.
 - `journals/`: informal study notes and personal reasoning, not authoritative project state.
 
 When documents conflict, use this precedence order:
 
 ```text
-current status -> accepted ADR -> current reference/runbook -> evidence -> archive/journals
+current status -> accepted ADR -> current reference/runbook -> evidence -> research -> archive/journals
 ```
 
 ## Working rules
@@ -32,16 +33,21 @@ current status -> accepted ADR -> current reference/runbook -> evidence -> archi
 - Do not authorize a larger model, new mixer, or architecture baseline without an explicit user decision.
 - Keep dataset, tokenizer, model, checkpoint, and evaluation identities deterministic and fail closed on drift.
 - Do not duplicate the qualitative prompt list; `trainer.post_pretraining_prompt_suite.PROMPT_CASES` is the source of truth.
-- Prefer deleting dead code over retaining executable historical copies. Preserve completed results as evidence and rely on Git history for removed implementations.
+- Prefer deleting dead executable code and redundant documentation snapshots over retaining several competing copies. Preserve measurements as evidence and historical decisions/handoffs in archive when they remain useful.
 
 ## Documentation maintenance
 
+- Keep `llm_docs/` root to `README.md` only.
+- Keep `llm_docs/current/` to `status.md` and `roadmap.md` only.
 - Update `current/status.md` when an operational fact changes.
 - Update `current/roadmap.md` when priorities or gates change.
 - Add or supersede an ADR when the user makes a durable decision.
-- Update the relevant reference or runbook in the same commit as behavior changes.
-- Do not rewrite evidence except to correct a factual transcription error; record the correction explicitly.
-- Move superseded plans to `archive/` instead of leaving them mixed with active guidance.
+- Update the relevant reference or runbook in the same change as behavior when practical.
+- Put unresolved analysis in research, not in current or an accepted ADR.
+- Put measured incidents/results in evidence; do not rewrite them to fit later conclusions.
+- Use an active execution plan for genuinely complex/resumable work, then move it to completed.
+- Move superseded plans and completed investigation handoffs to archive.
+- After a major experiment or investigation changes lifecycle, garden the documentation and run the memory-structure tests.
 
 ## Verification commands
 
