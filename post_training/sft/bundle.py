@@ -25,7 +25,7 @@ from .template import TiktokenGPT2Encoder
 SMOL_SMOLTALK_DATASET = "HuggingFaceTB/smol-smoltalk"
 SMOL_SMOLTALK_DATA_REVISION = "f80219b491a28e79600fa320e075752f1ea0303e"
 SMOL_SMOLTALK_LICENSE = "apache-2.0"
-SPLIT_POLICY_VERSION = 1
+SPLIT_POLICY_VERSION = 2
 BUNDLE_SCHEMA_VERSION = 1
 
 
@@ -84,18 +84,32 @@ def _canonical_messages(messages: Iterable[ChatMessage], *, assistant: bool) -> 
     return result
 
 
+def _identity_context(messages: Iterable[ChatMessage]) -> list[dict[str, str]]:
+    """Return conservative source-independent prompt identity for split grouping."""
+
+    result: list[dict[str, str]] = []
+    for message in messages:
+        if message.role == "assistant":
+            continue
+        result.append(
+            {
+                "role": message.role,
+                "content": " ".join(message.content.casefold().split()),
+            }
+        )
+    return result
+
+
 def conversation_content_hash(record: ConversationRecord) -> str:
-    return canonical_hash(
-        {"source": record.source, "messages": _canonical_messages(record.messages, assistant=True)}
-    )
+    """Hash exact normalized conversation content independently of source labels."""
+
+    return canonical_hash({"messages": _canonical_messages(record.messages, assistant=True)})
 
 
 def conversation_group_id(record: ConversationRecord) -> str:
-    """Group prompt derivatives before splitting by excluding assistant labels."""
+    """Group prompt derivatives globally before splitting, excluding assistant labels."""
 
-    return canonical_hash(
-        {"source": record.source, "context": _canonical_messages(record.messages, assistant=False)}
-    )
+    return canonical_hash({"context": _identity_context(record.messages)})
 
 
 def _normalized_probe(text: str) -> str:
@@ -440,20 +454,38 @@ def build_bundle(
         raise
 
 
+def _read_manifest(path: Path, *, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeError(f"{label} is missing or invalid") from error
+    if not isinstance(payload, Mapping):
+        raise RuntimeError(f"{label} must be an object")
+    return dict(payload)
+
+
 def verify_bundle(root: Path | str) -> dict[str, object]:
     bundle = Path(root)
-    try:
-        manifest = json.loads((bundle / "bundle-manifest.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError) as error:
-        raise RuntimeError("SFT bundle manifest is missing or invalid") from error
-    if not isinstance(manifest, Mapping):
-        raise RuntimeError("SFT bundle manifest must be an object")
+    manifest = _read_manifest(bundle / "bundle-manifest.json", label="SFT bundle manifest")
     supplied = manifest.get("manifest_sha256")
     without_hash = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
     if supplied != canonical_hash(without_hash):
         raise RuntimeError("SFT bundle manifest self-hash mismatch")
     if manifest.get("schema") != "small-llm-sft-bundle":
         raise RuntimeError("unsupported SFT bundle schema")
+
+    source_manifest = _read_manifest(
+        bundle / "source-manifest.json",
+        label="SFT source provenance manifest",
+    )
+    source_supplied = source_manifest.get("manifest_sha256")
+    source_without_hash = {
+        key: value for key, value in source_manifest.items() if key != "manifest_sha256"
+    }
+    if source_supplied != canonical_hash(source_without_hash):
+        raise RuntimeError("SFT source provenance manifest self-hash mismatch")
+    if source_supplied != manifest.get("prepared_source_manifest_sha256"):
+        raise RuntimeError("SFT bundle source provenance identity mismatch")
 
     splits = manifest.get("splits")
     if not isinstance(splits, Mapping):
@@ -463,19 +495,39 @@ def verify_bundle(root: Path | str) -> dict[str, object]:
         row = splits.get(split)
         if not isinstance(row, Mapping):
             raise RuntimeError(f"SFT bundle has no {split} split")
-        reader = SFTShardReader(bundle / str(row["path"]), split=split)
+        split_root = bundle / str(row["path"])
+        reader = SFTShardReader(split_root, split=split)
         total = sum(reader.block_target_counts)
         if reader.manifest_identity != row.get("manifest_sha256"):
             raise RuntimeError(f"SFT bundle {split} manifest identity mismatch")
         if total != row.get("loss_bearing_target_tokens"):
             raise RuntimeError(f"SFT bundle {split} target-token total mismatch")
-        blocks = list(reader.iter_from_start())
+
+        report = _read_manifest(split_root / "build-report.json", label=f"SFT {split} build report")
+        report_supplied = report.get("report_sha256")
+        report_without_hash = {key: value for key, value in report.items() if key != "report_sha256"}
+        if report_supplied != canonical_hash(report_without_hash):
+            raise RuntimeError(f"SFT bundle {split} build-report self-hash mismatch")
+        if report_supplied != row.get("build_report_sha256"):
+            raise RuntimeError(f"SFT bundle {split} build-report identity mismatch")
+        if report.get("manifest_identity") != reader.manifest_identity:
+            raise RuntimeError(f"SFT bundle {split} build-report manifest mismatch")
+
+        block_count = 0
+        for _ in reader.iter_from_start():
+            block_count += 1
         verified[split] = {
             "manifest_sha256": reader.manifest_identity,
-            "blocks": len(blocks),
+            "build_report_sha256": report_supplied,
+            "blocks": block_count,
             "loss_bearing_target_tokens": total,
         }
-    return {"status": "verified", "bundle_manifest_sha256": supplied, "splits": verified}
+    return {
+        "status": "verified",
+        "bundle_manifest_sha256": supplied,
+        "source_manifest_sha256": source_supplied,
+        "splits": verified,
+    }
 
 
 def sft_budget_from_parent(
