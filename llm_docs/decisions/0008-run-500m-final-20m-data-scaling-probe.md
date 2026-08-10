@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-07
 supersedes: null
+superseded_by: 0022
 ---
 
 # 0008 — Run a 500M-token final data-scaling probe for the 20M model
