@@ -31,6 +31,45 @@ def _load_weights(path: Path) -> dict[str, object]:
     return payload
 
 
+def _builder_resume_mode(output_dir: Path) -> bool:
+    """Return whether the cache builder has a durable checkpoint to resume.
+
+    The CLI freezes ``work_plan.json`` before remote authentication. If auth or
+    another bootstrap step fails after that write but before the builder starts,
+    a later wrapper invocation legitimately arrives with ``--resume`` even
+    though no ``progress.json`` exists yet. Reuse that immutable work plan but
+    start the cache builder from empty state.
+
+    Fail closed if any other dataset artifacts are present without progress:
+    those could be uncheckpointed producer output and must not be guessed away.
+    """
+
+    progress_path = output_dir / config.PROGRESS_FILENAME
+    if progress_path.is_file():
+        return True
+
+    manifest_path = output_dir / config.MANIFEST_FILENAME
+    if manifest_path.exists():
+        raise RuntimeError(
+            f"resume requested without {config.PROGRESS_FILENAME}, but a manifest exists in {output_dir}"
+        )
+
+    allowed = {config.WORK_PLAN_FILENAME}
+    present = {path.name for path in output_dir.iterdir()} if output_dir.is_dir() else set()
+    unexpected = sorted(present - allowed)
+    if unexpected:
+        raise RuntimeError(
+            f"resume requested without {config.PROGRESS_FILENAME}, and {output_dir} contains "
+            f"unexpected pre-checkpoint artifacts: {unexpected}"
+        )
+
+    logging.info(
+        "Resume requested before the first durable dataset checkpoint; reusing %s and starting the cache builder from empty state",
+        config.WORK_PLAN_FILENAME,
+    )
+    return False
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Build or resume the production schema-v2 Nemotron cache."
@@ -124,8 +163,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
         plan_path = output_dir / config.WORK_PLAN_FILENAME
+        builder_resume = False
         if args.resume:
             plan = load_work_plan(plan_path)
+            builder_resume = _builder_resume_mode(output_dir)
         else:
             if plan_path.exists() or (output_dir / config.PROGRESS_FILENAME).exists():
                 raise FileExistsError(
@@ -161,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
                 source, config.DATASET_REPOSITORY, config.DATASET_REVISION
             ),
             remote_store=remote_store,
-            resume=args.resume,
+            resume=builder_resume,
             simulate_crash_after_documents=args.simulate_crash_after_documents,
         )
         # Keep the completed manifest directly self-describing for trainer and
