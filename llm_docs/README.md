@@ -44,6 +44,7 @@ Informal personal study notes remain in the repository-level `journals/` directo
 
 - [`runbooks/unified_kaggle_launcher.md`](runbooks/unified_kaggle_launcher.md)
 - [`runbooks/20m_2b_runbook.md`](runbooks/20m_2b_runbook.md)
+- [`runbooks/sft_s0_runbook.md`](runbooks/sft_s0_runbook.md)
 - [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md)
 - [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md)
 
@@ -60,7 +61,7 @@ Completed scaling-stage reproduction procedures remain indexed from [`runbooks/R
 - Complex resumable execution work may use `plans/active/`; completed plans move to `plans/completed/`.
 - Measurements and observed incidents go in `evidence/` and are not rewritten to make later interpretation cleaner.
 - Superseded plans, completed investigation handoffs, and obsolete design packets move to `archive/`.
-- Prefer links over copying the same facts into multiple layers.
+- Prefer links over copying the same facts across layers.
 - Garden memory when an experiment, investigation, architecture migration, or major plan changes lifecycle.
 - Update documentation with the code/operational change it describes whenever practical.
 
