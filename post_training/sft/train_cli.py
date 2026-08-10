@@ -6,19 +6,21 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import tempfile
 import time
 from typing import Mapping, Sequence
 
 import torch
 
-from dataset.src.joint_checkpoint import CheckpointCoordinator
+from dataset.src.joint_checkpoint import CheckpointCoordinator, verify_local_manifest
 from dataset.src.remote import HuggingFaceCheckpointStore, TwoPhaseCheckpointPublisher
 from trainer.engine import TrainerEngine, seed_everything
 from trainer.session import TrainingSession
 
 from .behavior_eval import evaluate_behavior
-from .bundle import verify_bundle
+from .bundle import sft_budget_from_parent, verify_bundle
 from .checkpoints import (
     download_parent_checkpoint,
     load_verified_native_checkpoint,
@@ -31,6 +33,7 @@ from .storage import SFTShardReader
 CHECKPOINT_EVERY = 250
 EVALUATION_EVERY = 250
 REMOTE_EVERY = 250
+_CHECKPOINT_ID = re.compile(r"^step-(\d{8})$")
 
 
 def _read_mapping(path: Path, *, label: str) -> dict[str, object]:
@@ -55,6 +58,13 @@ def _non_negative_int(value: str) -> int:
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be non-negative")
     return parsed
+
+
+def _checkpoint_step(checkpoint_id: str) -> int:
+    match = _CHECKPOINT_ID.fullmatch(checkpoint_id)
+    if match is None:
+        raise RuntimeError(f"invalid SFT checkpoint ID: {checkpoint_id!r}")
+    return int(match.group(1))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,7 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     remote.add_argument(
         "--no-automatic-resume",
         action="store_true",
-        help="disable the default verified resume from run/<sft-run-id>/latest.json",
+        help="disable verified local/remote automatic resume",
     )
 
     wandb = parser.add_argument_group("Weights & Biases")
@@ -125,10 +135,68 @@ def _resolve_parent(args: argparse.Namespace, token: str | None) -> tuple[Path, 
     return root, {"transport": "remote", **remote}
 
 
+def _validate_resume_checkpoint(
+    root: Path,
+    *,
+    expected_hashes: tuple[str, str, str],
+    expected_identity: Mapping[str, object],
+) -> tuple[str, int]:
+    verify_local_manifest(root)
+    payload = _read_mapping(root / "checkpoint.json", label="SFT resume checkpoint")
+    checkpoint_id = payload.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str):
+        raise RuntimeError("SFT resume checkpoint has no checkpoint_id")
+    step = _checkpoint_step(checkpoint_id)
+    if root.name != checkpoint_id:
+        raise RuntimeError("SFT checkpoint directory name disagrees with checkpoint_id")
+    observed_hashes = (
+        payload.get("configuration_hash"),
+        payload.get("source_hash"),
+        payload.get("schema_hash"),
+    )
+    if observed_hashes != expected_hashes:
+        raise RuntimeError(f"SFT resume checkpoint identity mismatch: {checkpoint_id}")
+    pipeline = payload.get("pipeline_state")
+    if not isinstance(pipeline, Mapping) or pipeline.get("sft_identity") != expected_identity:
+        raise RuntimeError(f"SFT resume pipeline identity mismatch: {checkpoint_id}")
+    return checkpoint_id, step
+
+
+def _local_resume(
+    args: argparse.Namespace,
+    *,
+    expected_hashes: tuple[str, str, str],
+    expected_identity: Mapping[str, object],
+) -> tuple[Path, dict[str, object]] | None:
+    if args.no_automatic_resume or not args.checkpoint_dir.is_dir():
+        return None
+    candidates: list[tuple[int, Path, str]] = []
+    for path in sorted(args.checkpoint_dir.iterdir()):
+        if not path.is_dir() or _CHECKPOINT_ID.fullmatch(path.name) is None:
+            continue
+        checkpoint_id, step = _validate_resume_checkpoint(
+            path,
+            expected_hashes=expected_hashes,
+            expected_identity=expected_identity,
+        )
+        candidates.append((step, path, checkpoint_id))
+    if not candidates:
+        return None
+    step, path, checkpoint_id = max(candidates, key=lambda item: item[0])
+    return path, {
+        "transport": "local",
+        "checkpoint_id": checkpoint_id,
+        "step": step,
+        "path": str(path),
+    }
+
+
 def _remote_resume(
     args: argparse.Namespace,
     *,
     token: str | None,
+    expected_hashes: tuple[str, str, str],
+    expected_identity: Mapping[str, object],
 ) -> tuple[Path, dict[str, object]] | None:
     if args.no_automatic_resume or not args.checkpoint_repo_id:
         return None
@@ -153,7 +221,39 @@ def _remote_resume(
         pointer_name="latest",
         destination=destination,
     )
-    return root, dict(remote)
+    checkpoint_id, step = _validate_resume_checkpoint(
+        root,
+        expected_hashes=expected_hashes,
+        expected_identity=expected_identity,
+    )
+    return root, {"transport": "remote", **dict(remote), "checkpoint_id": checkpoint_id, "step": step}
+
+
+def _select_resume(
+    args: argparse.Namespace,
+    *,
+    token: str | None,
+    expected_hashes: tuple[str, str, str],
+    expected_identity: Mapping[str, object],
+) -> tuple[Path, dict[str, object]] | None:
+    local = _local_resume(
+        args,
+        expected_hashes=expected_hashes,
+        expected_identity=expected_identity,
+    )
+    remote = _remote_resume(
+        args,
+        token=token,
+        expected_hashes=expected_hashes,
+        expected_identity=expected_identity,
+    )
+    if local is None:
+        return remote
+    if remote is None:
+        return local
+    local_step = int(local[1]["step"])
+    remote_step = int(remote[1]["step"])
+    return remote if remote_step > local_step else local
 
 
 def _wandb_run(
@@ -162,6 +262,7 @@ def _wandb_run(
     parent_identity: Mapping[str, object],
     bundle_manifest: Mapping[str, object],
     trainer_config: Mapping[str, object],
+    resumed: bool,
 ):
     if args.wandb_mode == "disabled":
         return None
@@ -188,7 +289,7 @@ def _wandb_run(
     }
     if args.wandb_run_id:
         kwargs["id"] = args.wandb_run_id
-        kwargs["resume"] = "allow"
+        kwargs["resume"] = "must" if resumed else "allow"
     run = wandb.init(**kwargs)
     if run is None:
         raise RuntimeError("wandb.init did not return a run")
@@ -252,6 +353,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parent_model, model_config, parent_identity = load_verified_native_checkpoint(parent_root, device="cpu")
     parent_identity = {**parent_identity, "transport": parent_transport}
 
+    parent_consumed = parent_identity.get("consumed_tokens")
+    if isinstance(parent_consumed, bool) or not isinstance(parent_consumed, int):
+        raise RuntimeError("verified parent has no integer consumed-token count")
+    expected_sft_targets = sft_budget_from_parent(parent_consumed)
+    requested_sft_targets = bundle_manifest.get("train_target_tokens_requested")
+    if requested_sft_targets != expected_sft_targets:
+        raise RuntimeError(
+            "SFT bundle does not implement the frozen 4% budget for this parent: "
+            f"parent={parent_consumed}, expected={expected_sft_targets}, "
+            f"bundle_requested={requested_sft_targets}"
+        )
+
     hashes = sft_checkpoint_hashes(
         parent_identity=parent_identity,
         bundle_manifest=bundle_manifest,
@@ -270,16 +383,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         bundle_manifest=bundle_manifest,
     )
 
-    resumed = _remote_resume(args, token=token)
-    resume_remote: dict[str, object] | None = None
+    resumed = _select_resume(
+        args,
+        token=token,
+        expected_hashes=hashes,
+        expected_identity=identity,
+    )
+    resume_info: dict[str, object] | None = None
+    remotely_present_checkpoint: str | None = None
     if resumed is not None:
-        resume_root, resume_remote = resumed
-        checkpoint_id = str(resume_remote["checkpoint_id"])
+        resume_root, resume_info = resumed
+        checkpoint_id = str(resume_info["checkpoint_id"])
         target = args.checkpoint_dir / checkpoint_id
-        if not target.exists():
-            import shutil
-
-            shutil.copytree(resume_root, target)
+        if resume_info.get("transport") == "remote":
+            remotely_present_checkpoint = checkpoint_id
+            if not target.exists():
+                shutil.copytree(resume_root, target)
         pipeline = session.load_checkpoint(coordinator, checkpoint_id)
         if pipeline.get("sft_identity") != identity:
             raise RuntimeError("SFT resume identity does not match parent/data/objective")
@@ -287,6 +406,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "resume": {
+                        "transport": resume_info.get("transport"),
                         "checkpoint_id": checkpoint_id,
                         "global_step": engine.global_step,
                         "consumed_targets": engine.consumed_tokens,
@@ -315,9 +435,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         parent_identity=parent_identity,
         bundle_manifest=bundle_manifest,
         trainer_config=trainer_config.as_dict(),
+        resumed=resumed is not None,
     )
     saved: set[str] = set()
     published: set[str] = set()
+    if resumed is not None:
+        saved.add(str(resume_info["checkpoint_id"]))
+    if remotely_present_checkpoint is not None:
+        published.add(remotely_present_checkpoint)
     validation: dict[str, object] | None = None
     behavior: dict[str, object] | None = None
 
@@ -414,6 +539,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "sft_run_id": args.sft_run_id,
             "parent": parent_identity,
             "bundle": verification,
+            "budget": {
+                "parent_consumed_tokens": parent_consumed,
+                "fraction": 0.04,
+                "requested_loss_bearing_target_tokens": expected_sft_targets,
+            },
             "global_step": engine.global_step,
             "total_steps": total_steps,
             "consumed_loss_bearing_target_tokens": engine.consumed_tokens,
@@ -421,7 +551,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "checkpoint_id": checkpoint_id,
             "validation": validation,
             "behavior": behavior["summary"] if behavior else None,
-            "resume": resume_remote,
+            "resume": resume_info,
         }
         summary_path = args.checkpoint_dir / "sft-summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -445,4 +575,10 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_parser", "main"]
+__all__ = [
+    "_checkpoint_step",
+    "_select_resume",
+    "_validate_resume_checkpoint",
+    "build_parser",
+    "main",
+]
