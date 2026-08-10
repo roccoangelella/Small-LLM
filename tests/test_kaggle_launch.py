@@ -1,11 +1,14 @@
 """Tests for the single Kaggle launch front door."""
 from __future__ import annotations
 
+from contextlib import redirect_stdout
+import io
 import json
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 KAGGLE = ROOT / "kaggle"
@@ -13,6 +16,7 @@ if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 
 import launch  # noqa: E402
+import launch_sft  # noqa: E402
 import runtime  # noqa: E402
 
 
@@ -28,6 +32,25 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
             profile.launch_commit,
             "3c920a7b682382181d4dc7557e217e6509d0dabe",
         )
+
+    def test_sft_train_launch_log_matches_pretraining_exactly(self) -> None:
+        argv = ["train", "--model", "20M", "--tokens", "500M"]
+
+        pretraining_stdout = io.StringIO()
+        with mock.patch.object(runtime, "train", return_value=0), redirect_stdout(
+            pretraining_stdout
+        ):
+            self.assertEqual(launch.main(argv), 0)
+
+        sft_stdout = io.StringIO()
+        with mock.patch.object(launch_sft.sft_runtime, "train", return_value=0), redirect_stdout(
+            sft_stdout
+        ):
+            self.assertEqual(launch_sft.main(argv), 0)
+
+        expected = "[launch] action=train model=20M tokens=500M resume=automatic_verified\n"
+        self.assertEqual(pretraining_stdout.getvalue(), expected)
+        self.assertEqual(sft_stdout.getvalue(), expected)
 
     def test_train_dry_run_exposes_profile_contract(self) -> None:
         result = subprocess.run(
