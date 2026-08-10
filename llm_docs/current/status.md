@@ -42,6 +42,16 @@ precision: FP16 autocast with FP32 master parameters
 
 The 500M trajectory is not a clean single-backend curve: the accepted checkpoint chain reached step 4000 under the adaptive backend, then production continuation was authorized with the mathematically compatible mixed FLA GDN-2 CUDA backend. Interpret throughput and very fine-grained loss-curve discontinuities with that migration boundary in mind.
 
+### Canonical full-suite qualitative result
+
+The validation-selected `best` checkpoint (`step-00015264`) completed the frozen deterministic full qualitative suite on CUDA/FP16 with greedy decoding and a 32-token cap.
+
+The model clearly learned English surface structure, local lexical associations, dialogue/Q&A formatting, and visible text schemas, but open-ended capability remains weak at this scale. The run showed pervasive semantic drift, tautological restatement, and greedy repetition; the `Germany |` structured relation collapsed to repeated `Rome |`; and under a strict direct-answer reading none of the 12 simple factual/arithmetic probes contained the expected answer (`0 / 12`). Several Q&A cases reproduced the `Question: ... Answer:` format instead of supplying the requested fact.
+
+This evidence should be read as a separation between next-token/validation progress and free-generation capability, not as proof that the architecture itself is the sole limiting factor. The fresh 20M / 2B point should rerun the same frozen suite before attributing the failure pattern to capacity or architecture.
+
+Canonical evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
+
 ## Qualified GDN-2 production backend
 
 The production CUDA backend is **mixed FLA on `fla-core==0.5.2`** under the trainer contract of FP32 master parameters plus CUDA FP16 autocast.
@@ -119,6 +129,7 @@ Current operational state: **the 2B launch surface is prepared in the active cha
 
 ## Current source of truth
 
+- 500M qualitative evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 2B runbook: [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
