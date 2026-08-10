@@ -33,7 +33,8 @@ Restore `llm_docs/` to a high-signal progressive-disclosure memory system for hu
 - Added `reference/post_training_sft.md` to separate current implementation capability from future run authorization.
 - Moved the obsolete 100M data-scaling plan out of runbooks.
 - Rebuilt root/category maps and updated `AGENTS.md`.
-- Strengthened `tests/test_project_memory.py` to enforce the root/current/index contracts.
+- Repaired accepted ADR links that pointed at the former FLA `current/` locations without changing their historical decisions.
+- Strengthened `tests/test_project_memory.py` to enforce the root/current/index contracts while respecting legacy ADR heading shapes.
 
 ## Discoveries
 
@@ -42,6 +43,7 @@ Restore `llm_docs/` to a high-signal progressive-disclosure memory system for hu
 - Completed FLA qualification documents remained in `current/` even after the investigation had closed and the 500M trajectory had completed.
 - The repository already had a test asserting that the documentation root should contain only `README.md`; later root files were regressions against the intended design.
 - Historical S0 decisions were explicitly scoped to the 20M/100M base, so keeping them visible at root risked accidental reuse after later pretraining scaling.
+- The old ADR-shape test expected modern headings from legacy ADRs that predated that exact template. The test now preserves legacy wording and enforces the standardized shape from ADR 0031 onward.
 
 ## Resulting memory model
 
@@ -60,16 +62,22 @@ llm_docs/
   archive/
 ```
 
-## Validation
+## Validation outcome
 
-Required final checks:
+Confirmed from the repository state/tree comparison:
 
-- root contains only `README.md` Markdown;
-- current contains only `status.md` and `roadmap.md`;
-- all category index links resolve;
-- ADR 0031 is indexed;
-- project-memory unit tests reflect the new plan lane/current invariant;
-- no active source-of-truth link points to deleted FLA/current or root SFT documents;
-- current 2B status/runbook remains unchanged in scientific intent.
+- `llm_docs/` has no substantive root Markdown additions beyond `README.md`.
+- `llm_docs/current/` contains only `status.md` and `roadmap.md`.
+- ADR 0031 is present and indexed.
+- category maps were updated for reference, runbooks, research, plans, evidence, and archive.
+- the 100M historical plan exists under archive rather than runbooks.
+- the canonical FLA handoff exists under archive and the current FLA contract exists under reference.
+- the historical S0 packet exists under archive and current SFT implementation semantics are separated into reference.
+- the project-memory test source now enforces root/current structure, index-link resolution, concise `AGENTS.md`, and standardized ADR shape for new ADRs.
+- direct source-of-truth links in current status and the affected FLA ADRs were repaired to the new locations.
 
-Any validation gap should be recorded explicitly rather than treated as passed by assumption.
+Validation boundary:
+
+- The GitHub combined-status endpoint reported no checks/statuses for the final main-branch commits during this cleanup.
+- Therefore this record does **not** claim that GitHub Actions or the full repository unit suite executed successfully after the documentation refactor.
+- Structural validation was performed through direct GitHub file inspection and tree/commit comparison. The ordinary repository test suite remains the next independent automated check when CI runs.
