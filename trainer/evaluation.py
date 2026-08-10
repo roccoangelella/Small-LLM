@@ -10,6 +10,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from .precision import autocast_context
+from .step import _microbatch_to_device, _ordered_batch_tensors
 from .types import TokenBatch
 
 
@@ -23,9 +24,9 @@ def evaluate_batches(
 ) -> dict[str, float | int]:
     """Evaluate held-out blocks with a separately bounded inference microbatch.
 
-    Validation defaults to one sequence at a time. This is intentionally
-    independent of the training microbatch because full-vocabulary logits and
-    cross-entropy workspaces dominate evaluation memory at long context.
+    Masked variable-length SFT blocks use the same dynamic microbatch cropping
+    as training, so padding to the longest record in an optimizer block is never
+    needlessly transferred to the accelerator.
     """
 
     if maximum_batches is not None and maximum_batches <= 0:
@@ -51,13 +52,16 @@ def evaluate_batches(
             if batch.split != "validation":
                 raise ValueError("evaluation requires validation-split batches")
 
-            input_ids = batch.input_ids.to(device=engine.device, non_blocking=True)
-            labels = batch.labels.to(device=engine.device, non_blocking=True)
-
+            input_ids, labels = _ordered_batch_tensors(batch)
             for start in range(0, batch.sequence_count, microbatch_size):
                 stop = min(batch.sequence_count, start + microbatch_size)
-                microbatch_inputs = input_ids[start:stop]
-                microbatch_labels = labels[start:stop]
+                microbatch_inputs, microbatch_labels = _microbatch_to_device(
+                    input_ids,
+                    labels,
+                    start=start,
+                    stop=stop,
+                    device=engine.device,
+                )
                 with autocast_context(engine.config.precision, engine.device):
                     logits = engine.model(microbatch_inputs)
                     loss = F.cross_entropy(
@@ -69,9 +73,8 @@ def evaluate_batches(
                     raise FloatingPointError("non-finite validation loss")
                 total_loss += float(loss.float())
                 total_tokens += int(microbatch_labels.ne(-100).sum().item())
-                del logits, loss
+                del logits, loss, microbatch_inputs, microbatch_labels
 
-            del input_ids, labels
             block_count += 1
             if maximum_batches is not None and block_count >= maximum_batches:
                 break
@@ -119,3 +122,6 @@ def generate_token_ids(
     finally:
         model.train(was_training)
     return output
+
+
+__all__ = ["evaluate_batches", "generate_token_ids"]
