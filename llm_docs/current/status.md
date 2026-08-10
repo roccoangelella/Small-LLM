@@ -5,11 +5,9 @@ last_reviewed: 2026-08-10
 
 # Current project status
 
-## Completed 20M / 100M pretraining experiment
+This file is high-freshness working memory. Detailed measurements and investigation chronology live in evidence/reference/archive and are linked rather than duplicated here.
 
-The approximately-20M-parameter GDN-2 hybrid completed its fixed approximately-100M-token pretraining schedule.
-
-Canonical final evidence:
+## Completed 20M / 100M pretraining
 
 ```text
 W&B run ID: 20m-100m-data-004
@@ -20,13 +18,9 @@ final validation perplexity: 70.29906475797992
 final checkpoint: step-00003053
 ```
 
-The run stayed trainable but suffered a large late-run throughput collapse in the old adaptive PyTorch GDN-2 backend. That runtime problem motivated the later FLA qualification work.
+The trajectory remained trainable but suffered a large late-run throughput collapse in the old adaptive PyTorch GDN-2 backend. Historical operating records are archived under `../archive/20m_100m/`; measured incidents/results are under `../evidence/20m_100m/`.
 
-## Completed 20M / 500M pretraining experiment
-
-The independent seed-17 500M trajectory has completed.
-
-Latest final checkpoint metadata supplied by the completed run/prompt-suite handoff:
+## Completed 20M / 500M pretraining
 
 ```text
 W&B run ID: 20m-500m-data-001
@@ -40,28 +34,18 @@ context: 2,048
 precision: FP16 autocast with FP32 master parameters
 ```
 
-The 500M trajectory is not a clean single-backend curve: the accepted checkpoint chain reached step 4000 under the adaptive backend, then production continuation was authorized with the mathematically compatible mixed FLA GDN-2 CUDA backend. Interpret throughput and very fine-grained loss-curve discontinuities with that migration boundary in mind.
+The accepted 500M checkpoint chain used the adaptive backend through step 4000 and mixed FLA for the accepted continuation. Treat throughput and very fine loss-curve comparisons across that boundary accordingly.
 
-### Canonical full-suite qualitative result
+The frozen post-pretraining qualitative suite showed materially stronger answer-shaped/schema continuation than the earlier smoke-scale evidence, including stable Q/A and Alice/Ben surface structure, while factual/arithmetic answering and open-ended semantic stability remained weak. Under ADR 0027 this is enough evidence to keep the approximately-20M model fixed through the already-authorized 2B probe, not evidence for unlimited token scaling.
 
-The validation-selected `best` checkpoint (`step-00015264`) completed the frozen deterministic full qualitative suite on CUDA/FP16 with greedy decoding and a 32-token cap.
-
-The model clearly learned English surface structure, local lexical associations, dialogue/Q&A formatting, and visible text schemas, but open-ended capability remains weak at this scale. The run showed pervasive semantic drift, tautological restatement, and greedy repetition; the `Germany |` structured relation collapsed to repeated `Rome |`; and under a strict direct-answer reading none of the 12 simple factual/arithmetic probes contained the expected answer (`0 / 12`). Several Q&A cases reproduced the `Question: ... Answer:` format instead of supplying the requested fact.
-
-The qualitative result is nevertheless materially encouraging for continued data scaling. Compared with the earlier smoke-scale evidence, the 500M checkpoint more consistently produces answer-shaped continuations, preserves the Alice/Ben speaker schema, and emits a plausible sentiment class before later degeneration. The early checkpoint had already shown some Q/A surface-format imitation, so the important longitudinal signal is stronger schema continuation rather than the first appearance of Q/A syntax.
-
-Project interpretation under ADR 0027: the combination of continued validation improvement and stronger conditional text-schema behavior is sufficient evidence to keep the approximately-20M model size fixed through the already-authorized 2B token probe. This is not treated as proof of unlimited gains from token scaling; the 2B point is the next controlled test for continued improvement versus diminishing returns or capacity saturation.
-
-Canonical evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
+Canonical qualitative evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
 
 ## Qualified GDN-2 production backend
 
-The production CUDA backend is **mixed FLA on `fla-core==0.5.2`** under the trainer contract of FP32 master parameters plus CUDA FP16 autocast.
-
-Qualified T4 stack:
+Production CUDA execution is **mixed FLA on `fla-core==0.5.2`** under FP32 master parameters plus CUDA FP16 autocast.
 
 ```text
-GPU: Tesla T4 / SM75
+GPU qualified: Tesla T4 / SM75
 PyTorch: 2.10.0+cu128
 CUDA runtime: 12.8
 Triton: 3.6.0
@@ -70,13 +54,13 @@ saved/configured gdn_chunk_size: 32
 FLA internal runtime chunk: 64
 ```
 
-Corrected qualification established that all requested synthetic constant-decay rows pass against the finite FP32 adaptive oracle, the exact real step-4000 next-block forward/backward gate passes with finite parity-matching gradients, and warmed true-block throughput measured 22,765.80 target tok/s for mixed FLA versus 1,964.75 target tok/s for the adaptive FP32 recurrence. Full-FP32 FLA remains a diagnostic/fallback mode.
+The corrected deterministic qualification passed the requested synthetic decay sweep and the exact real step-4000 next-block forward/backward gate. Warmed true-block throughput measured 22,765.80 target tok/s for mixed FLA versus 1,964.75 target tok/s for the adaptive FP32 recurrence. The adaptive backend remains the correctness/reference fallback; full-FP32 FLA remains diagnostic/fallback.
 
-## Authorized next experiment — fresh 20M / 2B run
+Current contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
 
-ADR 0023 supersedes the unrun 1B plan and authorizes a new independent approximately-2B-token data-scaling trajectory for the same 20M model. ADR 0027 records the 500M qualitative evidence as additional justification for keeping model size fixed through this 2B point.
+## Authorized next experiment — fresh 20M / 2B
 
-Fixed identities:
+ADR 0023 authorizes a new independent approximately-2B-token data-scaling trajectory. ADR 0027 adds the completed 500M qualitative result as justification for keeping model size fixed through this point.
 
 ```text
 profile: 20m-2b-data-scaling-v1
@@ -91,52 +75,47 @@ training microbatch: 4
 training durability / validation / remote publication cadence: 250 updates
 ```
 
-The 2B trajectory does **not** continue the 500M checkpoint and has no dependency on an experimental 1B checkpoint. It starts from fresh seed-17 initialization and uses qualified mixed FLA on CUDA from optimizer update 1.
+The 2B trajectory is fresh relative to 500M and the superseded 1B setup. It starts from seed 17 and uses the qualified mixed FLA CUDA backend from optimizer update 1. The exact optimizer-update count and WSD boundaries come from the completed verified manifest rather than a nominal hard-coded count.
 
-At 20,637,592 learned parameters, the nominal point is approximately 96.9 accepted source tokens per parameter. A full-block estimate is approximately 61.0k optimizer updates; the exact update count and WSD boundaries are derived from the completed verified manifest.
-
-### Dataset transport
-
-The selected operational path remains:
+Data path remains:
 
 ```text
 pinned Nemotron-ClimbMix source
-        ↓
-VPS deterministic production build
-        ↓
-local immutable uint16 shards + verified Google Drive mirror
-        ↓
-private Kaggle publication + round-trip byte verification
-        ↓
-attached Kaggle dataset
-        ↓
-GPU training from Kaggle-local input
+  -> VPS deterministic finite build
+  -> immutable uint16 shards + verified Google Drive mirror
+  -> private Kaggle publication + round-trip byte verification
+  -> attached Kaggle dataset
+  -> T4 training from Kaggle-local input
 ```
 
-Do not stream the source corpus live during GPU training. The complete 2B prepared payload is still modest at roughly 4 GB of raw uint16 token IDs before validation/EOD/manifest overhead, while prebuilding preserves deterministic manifest/block identity and removes source-network variability from the T4 critical path.
+Current operational state: **the unified 2B publication/training launch surface is prepared on `main`; dataset production and optimizer update 1 have not yet been accepted as completed evidence.**
 
-Current operational state: **the 2B launch surface is prepared in the active change set; dataset production and optimizer update 1 have not yet been accepted as completed evidence. The 1B setup was superseded before any build or training result existed.**
+## Frozen decisions still in force for the 2B probe
 
-## Frozen/accepted decisions still in force
-
-- Keep the existing pinned source revision, GPT-2 token IDs, and programming-cluster-11 exclusion policy.
-- Preserve context length 2,048 for this 20M scaling series.
-- Preserve checkpoint/model config `gdn_chunk_size=32`; CUDA FLA executes its fixed internal chunk 64.
-- Keep the adaptive PyTorch backend as the correctness/reference fallback.
-- Do not clip/bound learned GDN-2 decay solely for backend runtime behavior.
-- Use microbatch 4 on the qualified T4 training path.
-- Let FP16 loss scaling calibrate down to scale 1.0 before failing an otherwise atomic block.
+- Keep the pinned source revision, GPT-2 token IDs, and programming-cluster-11 exclusion policy.
+- Keep context length 2,048 and the existing 20M `gdn2_hybrid` geometry.
+- Keep saved/model `gdn_chunk_size=32`; CUDA FLA executes internal chunk 64.
+- Keep adaptive PyTorch as correctness/reference fallback; do not change learned decay solely for runtime behavior.
+- Use microbatch 4 on the qualified T4 path.
+- Preserve fail-closed FP16 scaler/atomic-block behavior.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
-- New finite scaling trajectories start fresh rather than continuing through a previous run's terminal WSD decay unless a later ADR explicitly changes that rule.
-- Keep the approximately-20M model size fixed through the planned 2B probe; revisit further fixed-size token scaling only after the frozen 2B comparison.
+- New finite scaling trajectories start fresh unless a later ADR explicitly authorizes continuation.
+- Revisit additional fixed-size token scaling, model enlargement, and production post-training only after the frozen 2B comparison.
+
+## Post-training implementation status
+
+A reusable `post_training/sft/` implementation exists, but no new production SFT trajectory is currently authorized. The earlier 20M/100M S0 design packet is historical and archived; future SFT must explicitly bind its new parent checkpoint and experiment-specific budget/optimizer/data/evaluation choices.
+
+Current implementation reference: [`../reference/post_training_sft.md`](../reference/post_training_sft.md)
 
 ## Current source of truth
 
-- 500M qualitative evidence: [`../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md`](../evidence/20m/20m_500m_post_pretraining_full_suite_2026-08-10.md)
-- 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
+- Roadmap: [`roadmap.md`](roadmap.md)
+- Durable decisions: [`../decisions/README.md`](../decisions/README.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
+- 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
+- Unified Kaggle runtime decision: [`../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
+- Memory-governance decision: [`../decisions/0031-govern-project-memory-with-progressive-disclosure.md`](../decisions/0031-govern-project-memory-with-progressive-disclosure.md)
 - 2B runbook: [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
-- FLA consolidated handoff: [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md)
-- FLA qualification: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
-- Durable decisions: [`../decisions/README.md`](../decisions/README.md)
+- FLA backend contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
