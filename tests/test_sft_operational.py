@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
 
 import torch
 
-from kaggle import sft_runtime
+_RUNTIME_PATH = Path(__file__).resolve().parents[1] / "kaggle" / "sft_runtime.py"
+_RUNTIME_SPEC = importlib.util.spec_from_file_location("small_llm_sft_runtime_test", _RUNTIME_PATH)
+if _RUNTIME_SPEC is None or _RUNTIME_SPEC.loader is None:  # pragma: no cover
+    raise RuntimeError(f"cannot load SFT runtime from {_RUNTIME_PATH}")
+sft_runtime = importlib.util.module_from_spec(_RUNTIME_SPEC)
+sys.modules[_RUNTIME_SPEC.name] = sft_runtime
+_RUNTIME_SPEC.loader.exec_module(sft_runtime)
+
 from post_training.sft.behavior_eval import BehaviorCase, verify_response
 from post_training.sft.bundle import (
     IdentitySplitPolicy,
