@@ -36,6 +36,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - [`0028-use-one-profile-driven-launcher-for-publication-and-training.md`](0028-use-one-profile-driven-launcher-for-publication-and-training.md)
 - [`0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
+- [`0031-govern-project-memory-with-progressive-disclosure.md`](0031-govern-project-memory-with-progressive-disclosure.md)
 
 ## Superseded ADRs
 
