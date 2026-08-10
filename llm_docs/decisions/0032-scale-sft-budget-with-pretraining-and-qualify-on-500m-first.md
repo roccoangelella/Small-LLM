@@ -31,9 +31,9 @@ Current nominal planning points are therefore:
 
 The exact finite SFT horizon for each run must be derived from the verified completed parent pretraining token count and frozen in the resulting immutable SFT manifest rather than hard-coded from the nominal label alone.
 
-The existing SFT unit remains **loss-bearing target tokens**. For instruction records these are supervised assistant-content and turn-termination targets; for replay records they are valid next-token targets.
+The existing SFT unit remains **loss-bearing target tokens**. For instruction records these are supervised assistant-content and turn-termination targets; for replay records they are valid next-token targets when replay is included by the final current-run mixture decision.
 
-The previously accepted overall instruction/replay policy remains unchanged unless a later ADR supersedes it. The current source-level instruction allocation also remains unchanged for the first qualification/production comparison rather than being redesigned simultaneously:
+The source-level instruction allocation remains unchanged for the first qualification/production comparison rather than being redesigned simultaneously:
 
 ```text
 75.0% smol-magpie-ultra-short
@@ -42,7 +42,7 @@ The previously accepted overall instruction/replay policy remains unchanged unle
  7.5% smol-summarize-20k
 ```
 
-These shares are within the instruction portion and are measured by loss-bearing target tokens.
+These shares are within the instruction portion and are measured by loss-bearing target tokens. This ADR does not newly freeze any other historical 100M-era mixture parameter that the user did not explicitly reaffirm for the current run.
 
 The train/validation/test identity split is frozen at:
 
@@ -69,7 +69,7 @@ The 500M run is a qualification run for SFT correctness, stability, behavior acq
 
 - Approximately 20M and 80M SFT target-token horizons are substantially longer than the historical 4M S0 qualification concept, so checkpoint/evaluation cadence and forgetting behavior must be re-qualified rather than copied blindly from that historical packet.
 - Four percent is an experimental scaling policy, not a claim that 4% is globally optimal for future model sizes or data regimes.
-- The larger SFT horizon increases the importance of pretraining replay and explicit base-retention measurement.
+- The larger SFT horizon makes explicit base-retention measurement more important.
 
 ## Validation
 
