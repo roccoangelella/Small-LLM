@@ -100,13 +100,47 @@ Current operational state: **the unified 2B publication/training launch surface 
 - Preserve fail-closed FP16 scaler/atomic-block behavior.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
 - New finite scaling trajectories start fresh unless a later ADR explicitly authorizes continuation.
-- Revisit additional fixed-size token scaling, model enlargement, and production post-training only after the frozen 2B comparison.
+- Revisit additional fixed-size token scaling and model enlargement after the frozen 2B comparison; SFT qualification is now authorized in parallel under ADR 0032.
 
-## Post-training implementation status
+## Authorized parallel SFT qualification
 
-A reusable `post_training/sft/` implementation exists, but no new production SFT trajectory is currently authorized. The earlier 20M/100M S0 design packet is historical and archived; future SFT must explicitly bind its new parent checkpoint and experiment-specific budget/optimizer/data/evaluation choices.
+ADR 0032 authorizes the completed 20M/500M checkpoint as the SFT qualification parent and freezes the 4%-of-parent token scaling rule. ADR 0033 freezes the comprehensive post-SFT scorecard and the pretraining-equivalent T4 microbatch/cadence defaults.
+
+The operational implementation is now present on `main` behind one canonical human-facing launcher:
+
+```text
+kaggle/launch_sft.py
+  prepare
+  publish
+  train
+  eval
+  profiles
+```
+
+Current 500M-parent contract:
+
+```text
+parent checkpoint namespace: 20m-500m-dataset-001
+verified parent consumed targets: 500,156,416
+requested SFT loss-bearing targets: 20,006,256
+overall mixture: 85% instruction / 15% ClimbMix replay
+instruction allocation: 75 / 10 / 7.5 / 7.5
+identity split: 95 / 2.5 / 2.5
+optimizer target block: ~32,768 active targets
+microbatch: 4
+checkpoint / validation / publication cadence: 250 updates
+```
+
+The source preparation uses a pinned SmolTalk revision and source-independent prompt-family grouping, so aliases across source labels cannot cross the frozen identity split. Bundle verification binds the source provenance, split manifests, build reports, shard checksums, and target totals.
+
+The SFT bundle can now be privately published to Kaggle and round-trip verified before training. Training independently recomputes the 4% budget from the verified parent checkpoint, uses fresh SFT optimizer/scheduler/scaler state, and automatically resumes from the newest valid local or remote SFT checkpoint while binding parent/data/template/objective identities.
+
+The comprehensive evaluator compares parent and tuned checkpoints on unchanged `eval_core_v1`, base qualitative prompts, masked SFT validation/test loss, deterministic instruction behavior, EOS/runaway/leak/repetition diagnostics, per-category behavior, and parent-minus-tuned deltas without one arbitrary master score.
+
+**Implementation status is operational but not yet accepted GPU evidence.** The remaining gate is repository test execution, private bundle publication/round-trip, bounded T4 FP16/mixed-FLA smoke, intentional exact resume, 250-update boundary validation, and fast/full post-SFT qualification on the 500M parent.
 
 Current implementation reference: [`../reference/post_training_sft.md`](../reference/post_training_sft.md)
+Current runbook: [`../runbooks/sft_s0_runbook.md`](../runbooks/sft_s0_runbook.md)
 
 ## Current source of truth
 
@@ -116,6 +150,9 @@ Current implementation reference: [`../reference/post_training_sft.md`](../refer
 - 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - Unified Kaggle runtime decision: [`../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
 - Memory-governance decision: [`../decisions/0031-govern-project-memory-with-progressive-disclosure.md`](../decisions/0031-govern-project-memory-with-progressive-disclosure.md)
+- SFT scaling decision: [`../decisions/0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](../decisions/0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)
+- SFT scorecard/cadence decision: [`../decisions/0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md`](../decisions/0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md)
 - 2B runbook: [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
+- SFT runbook: [`../runbooks/sft_s0_runbook.md`](../runbooks/sft_s0_runbook.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
 - FLA backend contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
