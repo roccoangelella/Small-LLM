@@ -224,9 +224,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _preflight_publish(parser, args)
 
     print(
-        f"[launch-sft] action={args.action} model={profile.model_label} "
-        f"parent_tokens={profile.token_label} parent_run={profile.parent_run_id} "
-        f"sft_run={profile.sft_run_id} resume=automatic_verified",
+        f"[launch] action={args.action} model={profile.model_label} "
+        f"tokens={profile.token_label} resume=automatic_verified",
         flush=True,
     )
 
