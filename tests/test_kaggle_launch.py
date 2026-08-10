@@ -1,5 +1,4 @@
-"""Tests for the unified Kaggle launch front door."""
-
+"""Tests for the single Kaggle launch front door."""
 from __future__ import annotations
 
 import json
@@ -14,29 +13,23 @@ if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 
 import launch  # noqa: E402
+import runtime  # noqa: E402
 
 
 class UnifiedKaggleLauncherTests(unittest.TestCase):
-    def test_quantity_aliases_and_profile_resolution(self) -> None:
+    def test_quantity_aliases_resolve_the_same_profile(self) -> None:
         self.assertEqual(launch.parse_quantity("20M"), 20_000_000)
         self.assertEqual(launch.parse_quantity("500m"), 500_000_000)
         self.assertEqual(launch.parse_quantity("2B"), 2_000_000_000)
         self.assertEqual(launch.parse_quantity("2000M"), 2_000_000_000)
-        profile = launch.resolve_profile(
-            launch.parse_quantity("20M"),
-            launch.parse_quantity("2000M"),
+        profile = runtime.resolve_profile(20_000_000, launch.parse_quantity("2000M"))
+        self.assertEqual(profile.dataset_run_id, "20m-2b-dataset-001")
+        self.assertEqual(
+            profile.launch_commit,
+            "3c920a7b682382181d4dc7557e217e6509d0dabe",
         )
-        self.assertEqual(profile.train_module, "run_20m_2b")
-        self.assertEqual(profile.publish_module, "build_and_push_2b")
 
-    def test_100m_publish_uses_transport_archive_safe_entry(self) -> None:
-        profile = launch.resolve_profile(
-            launch.parse_quantity("20M"),
-            launch.parse_quantity("100M"),
-        )
-        self.assertEqual(profile.publish_module, "build_and_push_100m_entry")
-
-    def test_train_dry_run_resolves_without_importing_backend(self) -> None:
+    def test_train_dry_run_exposes_profile_contract(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
@@ -58,19 +51,14 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
-        self.assertEqual(
-            payload,
-            {
-                "action": "train",
-                "backend_argv": ["--max-steps-this-session", "250"],
-                "backend_module": "run_20m_2b",
-                "model": "20M",
-                "resume": "automatic_verified",
-                "tokens": "2B",
-            },
-        )
+        self.assertEqual(payload["runtime"], "kaggle/runtime.py")
+        self.assertEqual(payload["profile"], "20m-2b-data-scaling-v1")
+        self.assertEqual(payload["dataset_run_id"], "20m-2b-dataset-001")
+        self.assertEqual(payload["wandb_run_id"], "20m-2b-data-001")
+        self.assertEqual(payload["arguments"], {"max_steps_this_session": 250})
+        self.assertEqual(payload["resume"], "automatic_verified")
 
-    def test_publish_dry_run_forwards_publication_options(self) -> None:
+    def test_publish_dry_run_does_not_bootstrap_or_import_profile_overlay(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
@@ -95,20 +83,18 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["backend_module"], "build_and_push_500m")
+        self.assertEqual(payload["runtime"], "kaggle/runtime.py")
+        self.assertEqual(payload["profile"], "20m-500m-data-scaling-v1")
         self.assertEqual(
-            payload["backend_argv"],
-            [
-                "--dataset-dir",
-                "/tmp/dataset",
-                "--ops-dir",
-                "/tmp/ops",
-                "--force-upload",
-            ],
+            payload["arguments"],
+            {
+                "dataset_dir": "/tmp/dataset",
+                "force_upload": True,
+                "ops_dir": "/tmp/ops",
+            },
         )
-        self.assertEqual(payload["resume"], "automatic_verified")
 
-    def test_resume_flag_is_rejected_because_resume_is_automatic(self) -> None:
+    def test_resume_flag_is_rejected(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
@@ -129,7 +115,7 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("Resume is fail-closed and automatic", result.stderr)
 
-    def test_unsupported_profile_fails_before_backend_import(self) -> None:
+    def test_unsupported_profile_fails_before_runtime_execution(self) -> None:
         result = subprocess.run(
             [
                 sys.executable,
