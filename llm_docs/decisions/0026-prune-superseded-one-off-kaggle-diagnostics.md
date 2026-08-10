@@ -61,12 +61,13 @@ Historical evidence documents are not rewritten merely because an originating on
 - Main-branch unit CI must continue to pass after cleanup.
 - `kaggle/run_20m_2b.py` and `kaggle/build_and_push_2b.py` must retain all inherited implementation files they import or dynamically load.
 - Deleted scripts must have no live code/test callers on `main`.
-- Canonical FLA qualification commands documented under `llm_docs/current/` must remain available.
+- Canonical FLA qualification evidence/reference documentation must remain available.
 
 ## Links
 
 - [`../current/status.md`](../current/status.md)
 - [`../current/roadmap.md`](../current/roadmap.md)
-- [`../current/gdn2_fla_qualification.md`](../current/gdn2_fla_qualification.md)
+- [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
+- [`../archive/gdn2_fla_investigation/gdn2_fla_investigation_handoff.md`](../archive/gdn2_fla_investigation/gdn2_fla_investigation_handoff.md)
 - [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
 - [`README.md`](README.md)
