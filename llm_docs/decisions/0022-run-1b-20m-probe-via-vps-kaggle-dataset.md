@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-10
 supersedes: 0008
+superseded_by: 0023
 ---
 
 # 0022 — Run a fresh 20M / 1B probe from a VPS-built Kaggle dataset
@@ -27,7 +28,9 @@ The 20M model has 20,637,592 learned parameters. A nominal 1B source-token targe
 
 Chosen option: **build and verify the complete 1B finite dataset on the VPS, privately publish it to Kaggle, and train a fresh seed-17 20M model from that attached dataset**.
 
-The fixed dataset identity is:
+This decision was superseded before any 1B dataset build or training run began. ADR 0023 replaces the target with 2B accepted source tokens while preserving the VPS-build/private-Kaggle transport choice.
+
+The fixed dataset identity was:
 
 ```text
 profile: 20m-1b-data-scaling-v1
@@ -42,58 +45,25 @@ target shard size: 8 MiB
 remote durability: required
 ```
 
-The training trajectory is independent of the completed 500M checkpoint:
-
-```text
-fresh initialization seed: 17
-architecture: gdn2_hybrid
-precision: FP16 autocast with FP32 master parameters
-training microbatch: 4
-saved/configured GDN chunk: 32
-CUDA execution: qualified mixed FLA, internal chunk 64
-optimizer: hybrid Muon + AdamW
-schedule: exact one-pass WSD derived from the completed 1B manifest
-training durability / validation / remote publication cadence: 250 updates
-W&B run ID: 20m-1b-data-001
-```
-
-The fresh run uses FLA from optimizer update 1. It does not inherit the 500M model weights, optimizer state, scheduler state, loss scaler, RNG state, or data cursor.
+The intended training trajectory was independent of the completed 500M checkpoint and would have used seed 17, microbatch 4, mixed FLA from update 1, hybrid Muon + AdamW, an exact one-pass WSD schedule, and 250-update durability.
 
 ## Consequences
 
 ### Positive
 
-- No Hugging Face/source-network dependency sits on the GPU training critical path.
-- Kaggle training sees one immutable, hashed, finite dataset identity and can fail closed if the wrong dataset is attached.
-- Exact checkpoint/resume semantics remain tied to a stable block schedule rather than to live source-stream state.
-- The already-qualified VPS producer, Drive mirror, Kaggle publication, and round-trip verification machinery are reused instead of introducing a second ingestion path.
-- The 1B point extends the same-model data-scaling curve to approximately 48.5 source tokens per parameter while keeping architecture, tokenizer, context, optimizer geometry, and seed policy comparable.
-- Starting mixed FLA at update 1 removes the backend-migration discontinuity present in the historical 500M trajectory.
+- The data-transport rationale remains useful and is retained by ADR 0023.
+- The superseded record makes clear that no 1B experimental result exists.
 
 ### Negative or limiting
 
-- Training waits for a one-time VPS build and private Kaggle upload before GPU optimization begins.
-- The prepared dataset is duplicated across VPS/Drive/Kaggle storage during publication and verification.
-- A fresh 1B trajectory is scientifically cleaner for scaling comparison but costs more compute than continuing the existing 500M checkpoint.
-- The 1B point is still only an intermediate exposure relative to modern small-model scaling studies and should not be treated as a final token-budget optimum.
+- The exact 1B dataset/training identities in this ADR are historical only and must not be launched as the current experiment.
 
 ## Validation
 
-This decision is operationally satisfied only when:
-
-1. the 1B producer completes under the fixed identity and full local verification passes;
-2. every immutable shard referenced by the production cursor is verified in the Google Drive mirror;
-3. private Kaggle publication completes and a fresh Kaggle download is byte-identical to the VPS tree after excluding Kaggle transport artifacts;
-4. anonymous access to the private dataset is denied;
-5. the Kaggle launcher finds exactly one attached `20m-1b-dataset-001` dataset and rejects 100M/500M identities;
-6. the exact one-pass WSD trainer plan is derived from the completed manifest rather than guessed from the nominal source-token target;
-7. the fresh seed-17 run starts at microbatch 4 with mixed FLA on CUDA and completes the normal 250-update validation/checkpoint/verified-publication gates;
-8. the frozen post-pretraining evaluation bundle is run on the final checkpoint for direct comparison with earlier 20M scaling points.
+Supersession is complete when active status, roadmap, runbook indexes, and launch surfaces point only to the 2B experiment and no 1B result is treated as an experimental datapoint.
 
 ## Links
 
-- [`../runbooks/20m_1b_runbook.md`](../runbooks/20m_1b_runbook.md)
+- [`0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
 - [`../current/status.md`](../current/status.md)
-- [`0008-run-500m-final-20m-data-scaling-probe.md`](0008-run-500m-final-20m-data-scaling-probe.md)
-- DataDecide: https://github.com/allenai/DataDecide
