@@ -37,6 +37,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0028-use-one-profile-driven-launcher-for-publication-and-training.md`](0028-use-one-profile-driven-launcher-for-publication-and-training.md)
 - [`0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
 - [`0031-govern-project-memory-with-progressive-disclosure.md`](0031-govern-project-memory-with-progressive-disclosure.md)
+- [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)
 
 ## Superseded ADRs
 
