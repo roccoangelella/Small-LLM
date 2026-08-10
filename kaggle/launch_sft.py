@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single human Kaggle entry point for Small-LLM supervised fine-tuning."""
+"""Single human entry point for Small-LLM supervised fine-tuning."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ _MULTIPLIERS = {
 }
 
 # Reachable main ancestor containing the complete operational SFT implementation.
-_SFT_IMPLEMENTATION_COMMIT = "181e6a2a72a0e021134f7ea7809588aa4e1b48a9"
+_SFT_IMPLEMENTATION_COMMIT = "39557ce554633f83fbf5e0967809fe8819573274"
 _PARENT_CHECKPOINT_RUN_IDS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
     (20_000_000, 2_000_000_000): "20m-2b-dataset-001",
