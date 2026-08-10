@@ -47,7 +47,8 @@ def dataset_tree_identity(root: Path) -> dict[str, object]:
 
 
 suite.tree_identity = dataset_tree_identity
+main = suite.main
 
 
 if __name__ == "__main__":
-    raise SystemExit(suite.main())
+    raise SystemExit(main())
