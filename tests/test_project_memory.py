@@ -14,7 +14,9 @@ INDEXES = (
     DOCS / "reference" / "README.md",
     DOCS / "runbooks" / "README.md",
     DOCS / "research" / "README.md",
+    DOCS / "plans" / "README.md",
     DOCS / "evidence" / "README.md",
+    DOCS / "archive" / "README.md",
 )
 
 REQUIRED_PATHS = (
@@ -23,6 +25,8 @@ REQUIRED_PATHS = (
     DOCS / "current" / "roadmap.md",
     DOCS / "decisions" / "template.md",
     DOCS / "research" / "project_memory_research.md",
+    DOCS / "research" / "agent_memory_and_documentation_2026-08-10.md",
+    DOCS / "plans" / "README.md",
     DOCS / "archive" / "README.md",
 )
 
@@ -36,6 +40,8 @@ REMOVED_PATHS = (
     ROOT / "kaggle" / "run_20m_remote_recovery_from_clone.py",
     ROOT / "llm_test_trace.json",
 )
+
+CURRENT_FILES = ("roadmap.md", "status.md")
 
 
 def local_markdown_links(path: Path) -> tuple[str, ...]:
@@ -57,6 +63,10 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
     def test_llm_docs_root_is_only_the_map(self) -> None:
         markdown_files = sorted(path.name for path in DOCS.glob("*.md"))
         self.assertEqual(markdown_files, ["README.md"])
+
+    def test_current_is_only_high_freshness_working_memory(self) -> None:
+        markdown_files = sorted(path.name for path in (DOCS / "current").glob("*.md"))
+        self.assertEqual(markdown_files, list(CURRENT_FILES))
 
     def test_index_relative_markdown_links_resolve(self) -> None:
         docs_root = DOCS.resolve()
@@ -97,6 +107,7 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
         self.assertIn("llm_docs/current/status.md", text)
         self.assertIn("llm_docs/current/roadmap.md", text)
         self.assertIn("llm_docs/decisions/README.md", text)
+        self.assertIn("llm_docs/plans/", text)
 
     def test_removed_legacy_paths_do_not_return(self) -> None:
         for path in REMOVED_PATHS:
