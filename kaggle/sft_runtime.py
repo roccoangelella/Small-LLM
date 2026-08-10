@@ -14,9 +14,45 @@ from typing import Sequence
 
 KAGGLE_DIR = Path(__file__).resolve().parent
 REPO = KAGGLE_DIR.parent
-WORK = Path("/kaggle/working")
-INPUT = Path("/kaggle/input")
+KAGGLE_WORK = Path("/kaggle/working")
+KAGGLE_INPUT = Path("/kaggle/input")
 PINNED_LAUNCH_COMMIT = "3470c149e98d177c905016c77b0e3a4f2d4ad50f"
+
+
+def _portable_work_root(
+    configured: str | None,
+    *,
+    kaggle_work: Path = KAGGLE_WORK,
+    repo: Path = REPO,
+) -> Path:
+    """Resolve a writable machine-agnostic work root.
+
+    Explicit configuration wins. Kaggle keeps its conventional ephemeral working
+    root when present. Other machines default beside the controlling repository so
+    running the launcher from a normal clone never requires root-level /kaggle paths.
+    """
+
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if kaggle_work.is_dir():
+        return kaggle_work.resolve()
+    return (repo.parent / "small-llm-work").resolve()
+
+
+def _portable_input_root(
+    configured: str | None,
+    *,
+    kaggle_input: Path = KAGGLE_INPUT,
+) -> Path:
+    """Resolve the optional implicit input root used by train/eval discovery."""
+
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return kaggle_input
+
+
+WORK = _portable_work_root(os.environ.get("SMALL_LLM_WORK_DIR"))
+INPUT = _portable_input_root(os.environ.get("SMALL_LLM_INPUT_DIR"))
 
 
 class RuntimeFailure(RuntimeError):
@@ -183,14 +219,33 @@ def _uv_prefix(
 
 def _find_bundle(explicit: str | None) -> Path:
     if explicit:
-        root = Path(explicit).resolve()
+        root = Path(explicit).expanduser().resolve()
         if not (root / "bundle-manifest.json").is_file():
             raise RuntimeFailure(f"not an SFT bundle: {root}")
         return root
+    if not INPUT.is_dir():
+        raise RuntimeFailure(
+            "no implicit SFT input root is available; pass --dataset-dir or set SMALL_LLM_INPUT_DIR"
+        )
     matches = sorted({path.parent.resolve() for path in INPUT.rglob("bundle-manifest.json") if path.is_file()})
     if len(matches) != 1:
         raise RuntimeFailure(f"expected exactly one attached SFT bundle; found {len(matches)}: {matches}")
     return matches[0]
+
+
+def _resolve_replay_root(value: str) -> Path:
+    root = Path(value).expanduser().resolve()
+    if root.is_file():
+        raise RuntimeFailure(
+            "--replay-root must be the pretraining dataset directory containing manifest.json, "
+            f"not a file: {root}"
+        )
+    if not root.is_dir():
+        raise RuntimeFailure(f"pretraining replay dataset directory does not exist: {root}")
+    manifest = root / "manifest.json"
+    if not manifest.is_file() or manifest.is_symlink():
+        raise RuntimeFailure(f"replay root has no safe immutable manifest.json: {root}")
+    return root
 
 
 def _exact_parent_tokens(
@@ -236,9 +291,10 @@ def prepare(
     parent_consumed_tokens: int | None,
     revision: str | None,
 ) -> int:
+    replay = _resolve_replay_root(replay_root)
     worktree = _prepare_worktree(profile)
-    prepared = Path(prepared_dir) if prepared_dir else profile.default_prepared
-    output = Path(output_dir) if output_dir else profile.default_bundle
+    prepared = Path(prepared_dir).expanduser().resolve() if prepared_dir else profile.default_prepared
+    output = Path(output_dir).expanduser().resolve() if output_dir else profile.default_bundle
     prepared_manifest_path = prepared / "prepared-manifest.json"
     revision_args = ["--revision", revision] if revision else []
     if prepared_manifest_path.is_file():
@@ -266,7 +322,7 @@ def prepare(
             _uv_prefix() + [
                 "python", "-m", "post_training.sft.bundle", "build",
                 "--prepared-dir", str(prepared),
-                "--replay-root", str(Path(replay_root).resolve()),
+                "--replay-root", str(replay),
                 "--output-dir", str(output),
                 "--parent-consumed-tokens", str(exact_parent_tokens),
                 "--optimizer-target-tokens", "32768",
@@ -315,9 +371,9 @@ def publish(
         revision=revision,
     )
     worktree = _prepare_worktree(profile)
-    bundle = Path(output_dir) if output_dir else profile.default_bundle
+    bundle = Path(output_dir).expanduser().resolve() if output_dir else profile.default_bundle
     handle = _resolve_kaggle_handle(profile, kaggle_dataset_handle)
-    ops = Path(ops_dir) if ops_dir else profile.default_publication_ops
+    ops = Path(ops_dir).expanduser().resolve() if ops_dir else profile.default_publication_ops
     command = _uv_prefix(kagglehub=True) + [
         "python",
         str(worktree / "kaggle" / "sft_publish.py"),
@@ -420,8 +476,12 @@ def evaluate(
     checkpoint_repo = checkpoint_repo_id or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID", parent_repo)
     if not parent_repo or not checkpoint_repo:
         raise RuntimeFailure("evaluation requires parent and SFT checkpoint repository IDs")
-    selected_eval_dir = Path(eval_dir) if eval_dir else WORK / "eval_core_v1"
-    selected_output = Path(output) if output else profile.run_root / f"post-sft-{suite}-qualification.json"
+    selected_eval_dir = Path(eval_dir).expanduser().resolve() if eval_dir else WORK / "eval_core_v1"
+    selected_output = (
+        Path(output).expanduser().resolve()
+        if output
+        else profile.run_root / f"post-sft-{suite}-qualification.json"
+    )
     return _run(
         _uv_prefix() + [
             "python", "-m", "post_training.sft.eval_suite",
