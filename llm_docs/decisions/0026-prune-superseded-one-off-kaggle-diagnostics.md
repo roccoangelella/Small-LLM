@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-10
 supersedes: null
+superseded_by: 0035
 ---
 
 # 0026 — Prune superseded one-off Kaggle diagnostics
