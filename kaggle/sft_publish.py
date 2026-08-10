@@ -132,6 +132,24 @@ def _downloaded_root(returned: str, requested: Path) -> Path:
     return candidates.pop()
 
 
+def _remove_kagglehub_transport_artifacts(root: Path) -> tuple[str, ...]:
+    """Remove downloader-owned root artifacts before byte-for-byte dataset comparison.
+
+    KaggleHub's direct ``output_dir`` resolver may leave the downloaded version archive
+    (for example ``1.archive``) beside the extracted dataset files. That archive is a
+    transport implementation detail, not a dataset file, and must not participate in
+    the immutable bundle tree identity.
+    """
+
+    removed: list[str] = []
+    for path in sorted(root.glob("*.archive")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        path.unlink()
+        removed.append(path.name)
+    return tuple(removed)
+
+
 def _roundtrip(
     handle: str,
     *,
@@ -145,7 +163,9 @@ def _roundtrip(
         raise PublishFailure("kagglehub is required for SFT publication") from error
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
+    attempt = 0
     while time.monotonic() < deadline:
+        attempt += 1
         if destination.exists():
             shutil.rmtree(destination)
         destination.mkdir(parents=True)
@@ -156,9 +176,20 @@ def _roundtrip(
                 force_download=True,
             )
             root = _downloaded_root(str(returned), destination)
+            removed = _remove_kagglehub_transport_artifacts(root)
+            if removed:
+                print(
+                    f"[sft-publish] removed KaggleHub transport artifacts: {', '.join(removed)}",
+                    flush=True,
+                )
             identity = tree_identity(root)
             if identity.get("tree_sha256") != expected.get("tree_sha256"):
-                raise PublishFailure("Kaggle SFT round-trip tree differs from staged bytes")
+                raise PublishFailure(
+                    "Kaggle SFT round-trip tree differs from staged bytes: "
+                    f"expected={expected.get('tree_sha256')} actual={identity.get('tree_sha256')} "
+                    f"expected_files={expected.get('file_count')} actual_files={identity.get('file_count')} "
+                    f"expected_bytes={expected.get('total_bytes')} actual_bytes={identity.get('total_bytes')}"
+                )
             verification = verify_bundle(root)
             if _anonymous_access(handle):
                 raise PublishFailure("uploaded SFT Kaggle dataset is publicly readable")
@@ -171,7 +202,15 @@ def _roundtrip(
             }
         except Exception as error:  # noqa: BLE001
             last_error = error
-            time.sleep(15)
+            print(
+                f"[sft-publish] round-trip attempt {attempt} failed: {type(error).__name__}: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(15, remaining))
     raise PublishFailure(f"Kaggle SFT dataset did not become verifiably downloadable: {last_error}")
 
 
@@ -331,6 +370,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "PublishFailure",
+    "_remove_kagglehub_transport_artifacts",
     "_state_matches",
     "build_parser",
     "main",
