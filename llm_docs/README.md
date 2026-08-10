@@ -35,6 +35,8 @@ This directory is the repository's system of record. It is deliberately split by
 ## Active runbooks
 
 - [`runbooks/20m_100m_runbook.md`](runbooks/20m_100m_runbook.md)
+- [`runbooks/20m_500m_runbook.md`](runbooks/20m_500m_runbook.md)
+- [`runbooks/20m_1b_runbook.md`](runbooks/20m_1b_runbook.md)
 - [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md)
 - [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md)
 
