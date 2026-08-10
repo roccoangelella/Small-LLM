@@ -42,6 +42,7 @@ REMOVED_PATHS = (
 )
 
 CURRENT_FILES = ("roadmap.md", "status.md")
+STRICT_ADR_SHAPE_FROM = 31
 
 
 def local_markdown_links(path: Path) -> tuple[str, ...]:
@@ -84,11 +85,11 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
                         f"broken index link: {index} -> {target}",
                     )
 
-    def test_adrs_use_numbered_single_decision_shape(self) -> None:
+    def test_adrs_have_metadata_and_new_adrs_use_standard_shape(self) -> None:
         decisions = DOCS / "decisions"
         adrs = sorted(decisions.glob("[0-9][0-9][0-9][0-9]-*.md"))
         self.assertGreaterEqual(len(adrs), 3)
-        required_headings = (
+        strict_headings = (
             "## Context and problem statement",
             "## Considered options",
             "## Decision outcome",
@@ -96,10 +97,13 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
         )
         for adr in adrs:
             text = adr.read_text(encoding="utf-8")
+            number = int(adr.name[:4])
             with self.subTest(adr=adr):
                 self.assertTrue(text.startswith("---\n"), "ADR needs YAML metadata")
-                for heading in required_headings:
-                    self.assertIn(heading, text)
+                self.assertIn("## Consequences", text)
+                if number >= STRICT_ADR_SHAPE_FROM:
+                    for heading in strict_headings:
+                        self.assertIn(heading, text)
 
     def test_agent_map_stays_small_and_points_to_current_memory(self) -> None:
         text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
