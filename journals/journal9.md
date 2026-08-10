@@ -40,3 +40,14 @@ Sentiment:
 Text: The effect of the effect on the effect of the effect on the effect of the effect on the effect of the effect on the effect of
 
 It sees patterns! Therefore keeping the dataset scale rise makes sense, and also no overfitting patterns are evident in graphs. Validation loss is still slowly decreasing at every update
+
+Also this is amazing:
+PROMPT:
+Question: What is the capital of France?
+Answer:
+
+CONTINUATION:
+ The capital of France is the capital of France.
+
+---
+Now, in the meanwhile that training starts, we'll dive a bit into the new GDN2 implementation, so that we know what our vibes produced.
