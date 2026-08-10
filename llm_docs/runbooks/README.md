@@ -4,6 +4,7 @@ Runbooks contain executable procedures, prerequisites, expected artifacts, check
 
 ## Active
 
+- [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` command surface for registered dataset publication and exact-resume training profiles.
 - [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run; VPS build, private Kaggle publication, exact-resume T4 training, and final evaluation.
 - [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — build, verify, fast, and full evaluation.
 - [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — prompt-only compatibility procedure.
