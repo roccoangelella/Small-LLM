@@ -12,6 +12,16 @@ Use only:
 python kaggle/launch_sft.py <action> --model 20M --tokens <500M|2B>
 ```
 
+The supported actions are:
+
+```text
+prepare
+publish
+train
+eval
+profiles
+```
+
 Do not create per-run SFT wrapper scripts.
 
 Inspect the registered profiles first:
@@ -27,13 +37,26 @@ The 500M parent checkpoint namespace is `20m-500m-dataset-001`. The 2B parent na
 
 Use an NVIDIA T4 notebook with Internet enabled.
 
-Required secrets/environment for live SFT training:
+Required secrets/environment for live SFT training and private bundle publication:
 
 ```text
 GITHUB_TOKEN
 WANDB_API_KEY
 HF_TOKEN
+KAGGLE_API_TOKEN
 SMALL_LLM_HF_REPO_ID
+```
+
+For automatic private Kaggle dataset naming, set:
+
+```text
+KAGGLE_USERNAME
+```
+
+Alternatively pass `--kaggle-dataset-handle owner/dataset` or set:
+
+```text
+SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE
 ```
 
 Recommended separate private repository for SFT checkpoints:
@@ -48,9 +71,9 @@ Optional:
 WANDB_ENTITY
 ```
 
-Attach the exact verified pretraining dataset that will supply the 15% replay baseline. For the first qualification this is the accepted private 500M dataset. Do not attach multiple ambiguous replay datasets.
+For bundle construction, attach the exact verified pretraining dataset that supplies the frozen 15% replay stream. For the first qualification this is the accepted private 500M dataset. Do not attach multiple ambiguous replay datasets.
 
-## 3. Prepare the 500M qualification bundle
+## 3. Build and privately publish the 500M qualification bundle
 
 The completed parent consumed exactly:
 
@@ -71,13 +94,27 @@ cd /kaggle/working/Small-LLM
 git switch main
 git pull --ff-only
 
-python kaggle/launch_sft.py prepare \
+python kaggle/launch_sft.py publish \
   --model 20M \
   --tokens 500M \
   --replay-root /kaggle/input/<exact-500m-pretraining-dataset>
 ```
 
-Default outputs are:
+`publish` performs the full durable bundle path:
+
+```text
+pinned SmolTalk preparation
+  -> global identity-safe 95/2.5/2.5 split
+  -> immutable 4%-scaled SFT train/validation/test bundle
+  -> full local bundle verification
+  -> private Kaggle upload
+  -> fresh Kaggle round-trip download
+  -> complete tree SHA-256 comparison
+  -> full bundle re-verification
+  -> anonymous-access denial check
+```
+
+Default local outputs before publication are:
 
 ```text
 prepared pinned instruction source:
@@ -87,25 +124,37 @@ immutable 500M-parent SFT bundle:
 /kaggle/working/small-llm-20m-500m-sft-bundle
 ```
 
-The build pins the instruction source revision, applies deterministic identity splitting before tokenization, removes exact duplicates and direct deterministic-suite contamination, filters the S0 scope, mixes by active target tokens, writes immutable SFT shards, and verifies the completed bundle.
+If you only need to construct/inspect the bundle without publishing it, use the same command with action `prepare`.
 
-If the bundle is preserved as a private Kaggle dataset for a later session, attach exactly that verified version and pass its root with `--dataset-dir`.
+The build is idempotent for an already complete matching bundle: it verifies the existing bytes instead of replacing them. A bundle whose requested target horizon does not match the exact parent-derived 4% budget fails closed.
 
-## 4. First bounded T4 qualification
+## 4. Start a fresh training session from the published bundle
 
-Before the full 500M-parent SFT trajectory, run a bounded session:
+After `publish` succeeds, start a new Kaggle session and attach exactly the verified private SFT dataset version. Normally no `--dataset-dir` is needed when exactly one bundle is attached under `/kaggle/input`:
 
 ```bash
 python kaggle/launch_sft.py train \
   --model 20M \
   --tokens 500M \
-  --dataset-dir /kaggle/working/small-llm-20m-500m-sft-bundle \
   --max-steps-this-session 20
 ```
 
-Acceptance checks:
+If the notebook contains other bundle-like inputs, identify the exact attached root explicitly:
+
+```bash
+python kaggle/launch_sft.py train \
+  --model 20M \
+  --tokens 500M \
+  --dataset-dir /kaggle/input/<private-sft-dataset>/<bundle-root> \
+  --max-steps-this-session 20
+```
+
+Acceptance checks for this bounded runtime smoke:
 
 ```text
+correct parent checkpoint namespace resolves
+attached bundle fully verifies
+bundle requested budget equals exactly 4% of the verified parent counter
 CUDA FP16/mixed-FLA path is active
 training microbatch = 4
 finite forward loss and gradients
@@ -113,39 +162,50 @@ no unresolved FP16 overflow failure
 active-target loss normalization is finite
 VRAM is stable
 W&B telemetry appears under the SFT run identity
-final bounded checkpoint is published and verified
+bounded final checkpoint is locally saved and remotely published
 ```
 
 This 20-update bounded session is a runtime smoke, not a scientific checkpoint.
 
 ## 5. Intentional resume proof
 
-Rerun the identical command with a larger bounded endpoint, for example:
+`--max-steps-this-session` means **additional optimizer updates in that invocation**, not an absolute global endpoint.
+
+Therefore rerun the exact same bounded command:
 
 ```bash
 python kaggle/launch_sft.py train \
   --model 20M \
   --tokens 500M \
-  --dataset-dir /kaggle/working/small-llm-20m-500m-sft-bundle \
-  --max-steps-this-session 40
+  --max-steps-this-session 20
 ```
 
-Automatic resume must restore the verified SFT `latest` checkpoint and continue from the exact next immutable SFT block. Parent checkpoint, bundle manifest, template, objective, optimizer configuration, scheduler state, scaler state, RNG state, and block cursor must agree or resume fails closed.
+The second invocation must restore the first invocation's verified checkpoint and execute the next 20 immutable optimizer blocks.
 
-For the formal exact-resume gate, compare an uninterrupted deterministic fixture with an interrupted/restored fixture and require identical next-block identity plus numerically identical CPU/FP32 update state where the existing trainer tests support exact comparison.
+Automatic resume examines both:
+
+```text
+verified local step-* checkpoints
+verified remote run/<sft-run-id>/latest.json
+```
+
+It validates the immutable parent, bundle, template/objective, trainer configuration, scheduler/scaler/RNG state, and exact block cursor, then chooses the newest valid boundary. This deliberately preserves a newer local save if remote publication was interrupted. In a fresh Kaggle session only the remote checkpoint remains, so it becomes the recovery source.
+
+W&B must use strict resume after a training checkpoint has actually been restored.
+
+For the formal deterministic exact-resume gate, compare an uninterrupted CPU/FP32 fixture with an interrupted/restored fixture and require identical next-block identity plus numerically identical update state under the existing exact trainer tests.
 
 ## 6. Full 500M-parent qualification run
 
-After the bounded T4 and resume gates pass:
+After the bounded T4 and resume gates pass, rerun without a session limit:
 
 ```bash
 python kaggle/launch_sft.py train \
   --model 20M \
-  --tokens 500M \
-  --dataset-dir /kaggle/working/small-llm-20m-500m-sft-bundle
+  --tokens 500M
 ```
 
-Current operational defaults:
+Current frozen operational defaults:
 
 ```text
 optimizer: hybrid Muon + AdamW
@@ -159,7 +219,23 @@ local checkpoint: every 250 updates
 verified remote publication: every 250 updates
 ```
 
-The current qualification baseline uses 85% instruction / 15% original-distribution replay. Treat the replay ratio as an experimental baseline to evaluate on the 500M trajectory rather than a universal future constant.
+The controlled S0 mixture is:
+
+```text
+85% filtered instruction targets
+15% original-distribution replay targets
+```
+
+Within instruction data:
+
+```text
+75.0% smol-magpie-ultra-short
+10.0% smol-contraints
+ 7.5% smollm-rewrite-30k
+ 7.5% smol-summarize-20k
+```
+
+Do not change those mixture values between the 500M qualification and the first 2B-parent comparison without a new recorded decision.
 
 ## 7. Comprehensive post-SFT evaluation
 
@@ -169,7 +245,6 @@ Run the fast report first:
 python kaggle/launch_sft.py eval \
   --model 20M \
   --tokens 500M \
-  --dataset-dir /kaggle/working/small-llm-20m-500m-sft-bundle \
   --suite fast
 ```
 
@@ -179,32 +254,34 @@ Then the full report:
 python kaggle/launch_sft.py eval \
   --model 20M \
   --tokens 500M \
-  --dataset-dir /kaggle/working/small-llm-20m-500m-sft-bundle \
   --suite full
 ```
 
-The report compares the immutable parent and SFT checkpoint on one scorecard rather than one weighted scalar. Inspect at least:
+The full report compares the immutable parent and SFT checkpoint on one scorecard rather than one weighted scalar. Inspect at least:
 
 ```text
 base eval_core_v1 loss / perplexity / BPB
-cluster and position deltas
-top-k accuracy and calibration deltas
+top-1 / top-5 / top-10 accuracy deltas
+calibration ECE delta
+per-cluster loss/perplexity deltas
+position-bucket loss deltas
 base qualitative continuations
 held-out masked SFT validation loss
+held-out masked SFT test loss
 instruction pass rate and per-category rates
 EOS termination and runaway rate
 empty-response and role-label leakage rate
-response length and repetition diagnostics
+response length and trigram-repetition diagnostics
 ```
 
-Do not select the SFT checkpoint from SFT validation loss alone and do not select it from parent-style pretraining loss alone.
+Do not select the SFT checkpoint from SFT loss alone and do not select it from parent-style pretraining loss alone. The 500M trajectory is the evidence used to decide the later numerical selection/retention gates.
 
 ## 8. Switch to the 2B parent
 
-When the fresh 2B pretraining run is complete and its final/best checkpoint is accepted, obtain the verified exact parent consumed-target counter and build the new bundle:
+When the fresh 2B pretraining run is complete and its final/best checkpoint is accepted, obtain the verified exact parent consumed-target counter and publish the new SFT bundle:
 
 ```bash
-python kaggle/launch_sft.py prepare \
+python kaggle/launch_sft.py publish \
   --model 20M \
   --tokens 2B \
   --parent-consumed-tokens <verified-final-parent-target-count> \
@@ -213,14 +290,16 @@ python kaggle/launch_sft.py prepare \
 
 Then use the same `train` and `eval` commands with `--tokens 2B`.
 
-The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest must use the exact verified completed parent counter rather than the nominal `2B` label.
+The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest and trainer gate use the exact verified completed parent counter rather than the nominal `2B` label.
 
 ## 9. Evidence required before calling the SFT lane qualified
 
 - repository SFT tests pass;
-- prepared-source and bundle manifests verify;
+- prepared-source and bundle identities verify;
+- private Kaggle bundle publication and byte-identical round trip pass;
+- anonymous bundle access is denied;
 - T4 microbatch-4 smoke is finite;
-- intentional exact resume passes;
+- intentional exact local/remote resume passes;
 - 250-update durability/validation/publication boundaries behave correctly;
 - fast and full comprehensive reports are produced for parent and SFT checkpoints;
 - no unresolved identity mismatch, non-finite event, runaway-generation regression, or severe base-capability collapse remains unexplained.
