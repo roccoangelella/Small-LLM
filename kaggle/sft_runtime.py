@@ -34,6 +34,7 @@ class SFTProfileSpec:
     sft_run_id: str
     wandb_run_id: str
     wandb_run_name: str
+    dataset_slug: str
     known_parent_consumed_tokens: int | None
     launch_commit: str = PINNED_LAUNCH_COMMIT
     sft_fraction_numerator: int = 4
@@ -63,6 +64,10 @@ class SFTProfileSpec:
         return WORK / "small-llm-sft-smoltalk-pinned"
 
     @property
+    def default_publication_ops(self) -> Path:
+        return self.run_root / "bundle-publication"
+
+    @property
     def requested_sft_targets(self) -> int | None:
         if self.known_parent_consumed_tokens is None:
             return None
@@ -80,6 +85,7 @@ PROFILES: dict[tuple[int, int], SFTProfileSpec] = {
         sft_run_id="20m-500m-sft-s0-001",
         wandb_run_id="20m-500m-sft-s0-001",
         wandb_run_name="20M / 500M parent / SFT S0",
+        dataset_slug="small-llm-20m-500m-sft-s0-001",
         known_parent_consumed_tokens=500_156_416,
     ),
     (20_000_000, 2_000_000_000): SFTProfileSpec(
@@ -92,6 +98,7 @@ PROFILES: dict[tuple[int, int], SFTProfileSpec] = {
         sft_run_id="20m-2b-sft-s0-001",
         wandb_run_id="20m-2b-sft-s0-001",
         wandb_run_name="20M / 2B parent / SFT S0",
+        dataset_slug="small-llm-20m-2b-sft-s0-001",
         known_parent_consumed_tokens=None,
     ),
 }
@@ -158,12 +165,19 @@ def _prepare_worktree(profile: SFTProfileSpec) -> Path:
     return profile.worktree
 
 
-def _uv_prefix(*, datasets: bool = False, wandb: bool = False) -> list[str]:
+def _uv_prefix(
+    *,
+    datasets: bool = False,
+    wandb: bool = False,
+    kagglehub: bool = False,
+) -> list[str]:
     command = ["uv", "run", "--python", "3.13", "--extra", "model", "--extra", "post-training"]
     if datasets:
         command += ["--with", "datasets"]
     if wandb:
         command += ["--with", "wandb==0.26.1"]
+    if kagglehub:
+        command += ["--with", "kagglehub"]
     return command
 
 
@@ -179,6 +193,40 @@ def _find_bundle(explicit: str | None) -> Path:
     return matches[0]
 
 
+def _exact_parent_tokens(
+    profile: SFTProfileSpec,
+    supplied: int | None,
+) -> int:
+    exact = supplied if supplied is not None else profile.known_parent_consumed_tokens
+    if exact is None:
+        raise RuntimeFailure(
+            "this parent run has no completed exact token count yet; pass --parent-consumed-tokens from the verified final checkpoint"
+        )
+    return exact
+
+
+def _expected_sft_targets(profile: SFTProfileSpec, parent_tokens: int) -> int:
+    return parent_tokens * profile.sft_fraction_numerator // profile.sft_fraction_denominator
+
+
+def _verify_existing_bundle_budget(output: Path, *, expected_targets: int) -> bool:
+    manifest_path = output / "bundle-manifest.json"
+    if not manifest_path.is_file():
+        return False
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeFailure(f"existing SFT bundle manifest is invalid: {manifest_path}") from error
+    if not isinstance(payload, dict):
+        raise RuntimeFailure("existing SFT bundle manifest is not an object")
+    if payload.get("train_target_tokens_requested") != expected_targets:
+        raise RuntimeFailure(
+            "existing SFT bundle was built for a different parent token budget: "
+            f"expected {expected_targets}, found {payload.get('train_target_tokens_requested')}"
+        )
+    return True
+
+
 def prepare(
     profile: SFTProfileSpec,
     *,
@@ -191,35 +239,100 @@ def prepare(
     worktree = _prepare_worktree(profile)
     prepared = Path(prepared_dir) if prepared_dir else profile.default_prepared
     output = Path(output_dir) if output_dir else profile.default_bundle
+    prepared_manifest_path = prepared / "prepared-manifest.json"
     revision_args = ["--revision", revision] if revision else []
-    if not (prepared / "prepared-manifest.json").is_file():
+    if prepared_manifest_path.is_file():
+        if revision is not None:
+            try:
+                prepared_manifest = json.loads(prepared_manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError) as error:
+                raise RuntimeFailure("existing prepared SFT source manifest is invalid") from error
+            if not isinstance(prepared_manifest, dict) or prepared_manifest.get("revision") != revision:
+                raise RuntimeFailure("existing prepared SFT source uses a different pinned revision")
+    else:
         _run(
             _uv_prefix(datasets=True) + ["python", "-m", "post_training.sft.bundle", "prepare", "--output-dir", str(prepared), *revision_args],
             cwd=worktree,
         )
-    exact_parent_tokens = parent_consumed_tokens if parent_consumed_tokens is not None else profile.known_parent_consumed_tokens
-    if exact_parent_tokens is None:
-        raise RuntimeFailure(
-            "this parent run has no completed exact token count yet; pass --parent-consumed-tokens from the verified final checkpoint"
+
+    exact_parent_tokens = _exact_parent_tokens(profile, parent_consumed_tokens)
+    expected_targets = _expected_sft_targets(profile, exact_parent_tokens)
+    if not _verify_existing_bundle_budget(output, expected_targets=expected_targets):
+        if output.exists():
+            raise RuntimeFailure(
+                f"refusing to replace incomplete/non-bundle SFT output directory: {output}"
+            )
+        _run(
+            _uv_prefix() + [
+                "python", "-m", "post_training.sft.bundle", "build",
+                "--prepared-dir", str(prepared),
+                "--replay-root", str(Path(replay_root).resolve()),
+                "--output-dir", str(output),
+                "--parent-consumed-tokens", str(exact_parent_tokens),
+                "--optimizer-target-tokens", "32768",
+                "--instruction-share", "0.85",
+                "--replay-share", "0.15",
+                "--seed", "17",
+            ],
+            cwd=worktree,
         )
-    _run(
-        _uv_prefix() + [
-            "python", "-m", "post_training.sft.bundle", "build",
-            "--prepared-dir", str(prepared),
-            "--replay-root", str(Path(replay_root).resolve()),
-            "--output-dir", str(output),
-            "--parent-consumed-tokens", str(exact_parent_tokens),
-            "--optimizer-target-tokens", "32768",
-            "--instruction-share", "0.85",
-            "--replay-share", "0.15",
-            "--seed", "17",
-        ],
-        cwd=worktree,
-    )
     return _run(
         _uv_prefix() + ["python", "-m", "post_training.sft.bundle", "verify", "--dataset-dir", str(output)],
         cwd=worktree,
     )
+
+
+def _resolve_kaggle_handle(profile: SFTProfileSpec, explicit: str | None) -> str:
+    handle = explicit or os.environ.get("SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE")
+    if not handle and os.environ.get("KAGGLE_USERNAME"):
+        handle = f"{os.environ['KAGGLE_USERNAME']}/{profile.dataset_slug}"
+    if not handle or handle.count("/") != 1:
+        raise RuntimeFailure(
+            "pass --kaggle-dataset-handle owner/dataset, set SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE, or set KAGGLE_USERNAME"
+        )
+    return handle
+
+
+def publish(
+    profile: SFTProfileSpec,
+    *,
+    replay_root: str,
+    prepared_dir: str | None,
+    output_dir: str | None,
+    parent_consumed_tokens: int | None,
+    revision: str | None,
+    kaggle_dataset_handle: str | None,
+    ops_dir: str | None,
+    force_upload: bool,
+    remote_ready_timeout_seconds: int,
+) -> int:
+    prepare(
+        profile,
+        replay_root=replay_root,
+        prepared_dir=prepared_dir,
+        output_dir=output_dir,
+        parent_consumed_tokens=parent_consumed_tokens,
+        revision=revision,
+    )
+    worktree = _prepare_worktree(profile)
+    bundle = Path(output_dir) if output_dir else profile.default_bundle
+    handle = _resolve_kaggle_handle(profile, kaggle_dataset_handle)
+    ops = Path(ops_dir) if ops_dir else profile.default_publication_ops
+    command = _uv_prefix(kagglehub=True) + [
+        "python",
+        str(worktree / "kaggle" / "sft_publish.py"),
+        "--dataset-dir",
+        str(bundle.resolve()),
+        "--handle",
+        handle,
+        "--ops-dir",
+        str(ops.resolve()),
+        "--remote-ready-timeout-seconds",
+        str(remote_ready_timeout_seconds),
+    ]
+    if force_upload:
+        command.append("--force-upload")
+    return _run(command, cwd=worktree)
 
 
 def _wandb_preflight(profile: SFTProfileSpec, *, worktree: Path, entity: str | None) -> None:
@@ -329,4 +442,13 @@ def evaluate(
     )
 
 
-__all__ = ["PROFILES", "RuntimeFailure", "SFTProfileSpec", "evaluate", "prepare", "resolve_profile", "train"]
+__all__ = [
+    "PROFILES",
+    "RuntimeFailure",
+    "SFTProfileSpec",
+    "evaluate",
+    "prepare",
+    "publish",
+    "resolve_profile",
+    "train",
+]
