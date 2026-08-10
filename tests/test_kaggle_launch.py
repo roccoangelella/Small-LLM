@@ -29,6 +29,13 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
         self.assertEqual(profile.train_module, "run_20m_2b")
         self.assertEqual(profile.publish_module, "build_and_push_2b")
 
+    def test_100m_publish_uses_transport_archive_safe_entry(self) -> None:
+        profile = launch.resolve_profile(
+            launch.parse_quantity("20M"),
+            launch.parse_quantity("100M"),
+        )
+        self.assertEqual(profile.publish_module, "build_and_push_100m_entry")
+
     def test_train_dry_run_resolves_without_importing_backend(self) -> None:
         result = subprocess.run(
             [
