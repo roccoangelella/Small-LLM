@@ -22,6 +22,7 @@ _MULTIPLIERS = {
 }
 
 # Reachable commit containing the complete first operational SFT implementation.
+# Repin only to a main ancestor that already contains every launch-critical fix.
 _SFT_IMPLEMENTATION_COMMIT = "3470c149e98d177c905016c77b0e3a4f2d4ad50f"
 _PARENT_CHECKPOINT_RUN_IDS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
@@ -68,11 +69,19 @@ def _add_profile(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true")
 
 
+def _add_bundle_build_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--replay-root", required=True)
+    parser.add_argument("--prepared-dir")
+    parser.add_argument("--output-dir")
+    parser.add_argument("--parent-consumed-tokens", type=positive_int)
+    parser.add_argument("--revision")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "One profile-driven entry point for SFT data preparation, training, "
-            "verified resume, and comprehensive qualification."
+            "One profile-driven entry point for SFT data preparation/publication, "
+            "training, verified resume, and comprehensive qualification."
         ),
         epilog="SFT resume is automatic: rerun the identical train command after interruption.",
     )
@@ -80,14 +89,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     prepare = subparsers.add_parser(
         "prepare",
-        help="prepare pinned instruction data and build the immutable 4%-scaled SFT bundle",
+        help="prepare pinned instruction data and build/verify the immutable 4%-scaled SFT bundle",
     )
     _add_profile(prepare)
-    prepare.add_argument("--replay-root", required=True)
-    prepare.add_argument("--prepared-dir")
-    prepare.add_argument("--output-dir")
-    prepare.add_argument("--parent-consumed-tokens", type=positive_int)
-    prepare.add_argument("--revision")
+    _add_bundle_build_arguments(prepare)
+
+    publish = subparsers.add_parser(
+        "publish",
+        help="build, verify, privately publish, and round-trip the immutable SFT bundle",
+    )
+    _add_profile(publish)
+    _add_bundle_build_arguments(publish)
+    publish.add_argument("--kaggle-dataset-handle")
+    publish.add_argument("--ops-dir")
+    publish.add_argument("--force-upload", action="store_true")
+    publish.add_argument("--remote-ready-timeout-seconds", type=positive_int, default=900)
 
     train = subparsers.add_parser("train", help="launch or exactly resume SFT")
     _add_profile(train)
@@ -204,6 +220,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             output_dir=args.output_dir,
             parent_consumed_tokens=args.parent_consumed_tokens,
             revision=args.revision,
+        )
+    if args.action == "publish":
+        return sft_runtime.publish(
+            profile,
+            replay_root=args.replay_root,
+            prepared_dir=args.prepared_dir,
+            output_dir=args.output_dir,
+            parent_consumed_tokens=args.parent_consumed_tokens,
+            revision=args.revision,
+            kaggle_dataset_handle=args.kaggle_dataset_handle,
+            ops_dir=args.ops_dir,
+            force_upload=args.force_upload,
+            remote_ready_timeout_seconds=args.remote_ready_timeout_seconds,
         )
     if args.action == "train":
         return sft_runtime.train(
