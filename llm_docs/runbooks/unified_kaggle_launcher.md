@@ -2,7 +2,7 @@
 
 _Last updated: 2026-08-10 Europe/Rome_
 
-`kaggle/launch.py` is the canonical human entry point for finite-dataset publication and training launch/resume. Profile-specific launchers and publishers remain implementation modules so the already-qualified 20M scaling paths do not need to be rewritten when the command surface is simplified.
+`kaggle/launch.py` is the **only supported human entry point** for finite-dataset publication and Kaggle training. Model/token differences are data in `kaggle/runtime.py`; there are no separate 100M/500M/2B launcher or publisher commands.
 
 ## Supported profiles
 
@@ -13,30 +13,40 @@ model  tokens
 20M    2B
 ```
 
-List the registry at any time with:
+List the registry with:
 
 ```bash
 python kaggle/launch.py profiles
 ```
 
-Size arguments are case-insensitive and equivalent units are accepted, so `2B` and `2000M` resolve to the same registered profile.
+Size arguments are case-insensitive and equivalent units are accepted, so `2B` and `2000M` resolve to the same profile.
 
-## Build, verify, and privately publish a dataset
+## Publish a finite dataset
 
-Run from the VPS/repository environment that has the required Kaggle and Google Drive credentials:
+From the VPS repository:
 
 ```bash
 python kaggle/launch.py publish --model 20M --tokens 2B
 ```
 
-For the earlier profiles:
+Earlier profiles use the same command surface:
 
 ```bash
 python kaggle/launch.py publish --model 20M --tokens 100M
 python kaggle/launch.py publish --model 20M --tokens 500M
 ```
 
-The unified entry point forwards the stable publication controls:
+The Python launcher now replaces the removed publication shell wrappers. On the first publication process it requires `uv` and `.env`, then re-executes itself under:
+
+```text
+Python 3.13
+.env loaded by uv
+kaggle/requirements-100m-publish.txt installed
+```
+
+The runtime then selects the profile-specific producer, report module, dataset identity, paths, and Kaggle handle namespace. Root-level Kaggle transport files matching `<number>.archive` are excluded from publication tree identity; nested files with the same name remain dataset content.
+
+Stable publication controls:
 
 ```text
 --weights-file PATH
@@ -47,51 +57,65 @@ The unified entry point forwards the stable publication controls:
 --remote-ready-timeout-seconds N
 ```
 
-Publication resume is automatic. If production was interrupted after creating its output directory, rerun the identical command. The profile-specific publisher selects its verified resume path; do not add a separate `--resume` mode.
+Publication resume is automatic. Rerun the identical command after interruption; do not pass `--resume`.
 
-## Launch or resume training
+## Train or resume
 
-Run from the Kaggle notebook clone after attaching the exact verified private dataset and configuring the required secrets:
+From the Kaggle clone with the exact private dataset attached:
 
 ```bash
 python kaggle/launch.py train --model 20M --tokens 2B
 ```
 
-For the earlier profiles:
+Earlier profiles use:
 
 ```bash
 python kaggle/launch.py train --model 20M --tokens 100M
 python kaggle/launch.py train --model 20M --tokens 500M
 ```
 
-Training resume is also automatic and fail-closed. Every invocation checks the selected profile's remote checkpoint namespace. If a verified checkpoint exists and its dataset identity matches the attached dataset, it resumes exact model/optimizer/scheduler/scaler/RNG/data-cursor state. If no checkpoint exists, the profile follows its frozen fresh-start behavior.
+Training resume is automatic and fail-closed. The selected profile fixes the launch commit, dataset namespace, W&B identity, qualification-report module, token tag, microbatch policy, and 250-update durability cadence. If a verified matching checkpoint exists it restores exact model/optimizer/scheduler/scaler/RNG/data-cursor state; if none exists the profile follows its frozen fresh-start behavior.
 
-The launcher intentionally rejects `--resume`; rerun the exact same command instead. This avoids separate fresh/resume command surfaces drifting apart.
-
-Stable training controls exposed by the front door:
+Stable training controls:
 
 ```text
 --dataset-dir PATH
 --max-steps-this-session N
 ```
 
-`--max-steps-this-session` is for bounded diagnostics only. Normal finite-plan training omits it.
+`--max-steps-this-session` is for deliberate bounded diagnostics only. Normal finite-plan training omits it.
+
+The launcher intentionally rejects `--resume`; rerun the exact same command instead.
 
 ## Inspect without executing
-
-Use `--dry-run` to verify profile selection and forwarded backend arguments without importing or running the profile backend:
 
 ```bash
 python kaggle/launch.py train --model 20M --tokens 2B --dry-run
 python kaggle/launch.py publish --model 20M --tokens 2B --dry-run
 ```
 
-This path is CPU-only and is covered by the ordinary repository test suite.
+Dry-run is CPU-only. It reports the resolved runtime profile, immutable launch commit, dataset run ID, W&B run ID, and forwarded stable arguments without bootstrapping publication dependencies or launching training.
 
-## Architecture rule
+## Internal architecture
 
-`kaggle/launch.py` owns only the stable human command surface and the `(model size, token budget) -> implementation module` registry. Experiment geometry, immutable launch commits, dataset identities, W&B identities, checkpoint rules, qualification-plan dispatch, and publication verification remain inside the profile-specific implementation modules.
+```text
+human
+  |
+  v
+kaggle/launch.py
+  |
+  v
+kaggle/runtime.py        profile registry + train/publish adapters
+  |                  \
+  v                   v
+shared qualified       shared qualified
+training engine        publication engine
+```
 
-When a new model/token experiment is approved, add its qualified implementation modules first, then register exactly one new profile in `kaggle/launch.py` and add a dry-run dispatch test. Do not duplicate the full trainer or publisher inside the unified launcher.
+The remaining older 100M-named engine/helper modules are **internal shared implementations**, not human entry points. The former `run_20m_100m.py`, `run_20m_500m.py`, `run_20m_2b.py`, 500M/2B scaling overlays, 500M/2B publisher overlays, compatibility entry, and publication `.sh` wrappers have been removed from `main`.
 
-The historical `run_20m_*` and `build_and_push_*` modules are therefore implementation details, not the preferred commands for humans. They remain in the repository while active or reproducible profiles depend on them.
+The profile table preserves the historical contracts rather than re-deriving them from nominal sizes. In particular the 2B profile remains pinned to its already-qualified launch commit and uses its own dataset/W&B namespaces and `dataset.qualification_2b_report` dispatch.
+
+## Adding a future profile
+
+A new model/token experiment should add one qualified `ProfileSpec` row in `kaggle/runtime.py` plus its dataset qualification producer/report modules and regression tests. Do not create another `run_<size>_<tokens>.py`, `build_and_push_<tokens>.py`, or shell wrapper unless a genuinely different execution mechanism requires it.
