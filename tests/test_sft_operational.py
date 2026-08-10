@@ -9,14 +9,6 @@ import unittest
 
 import torch
 
-_RUNTIME_PATH = Path(__file__).resolve().parents[1] / "kaggle" / "sft_runtime.py"
-_RUNTIME_SPEC = importlib.util.spec_from_file_location("small_llm_sft_runtime_test", _RUNTIME_PATH)
-if _RUNTIME_SPEC is None or _RUNTIME_SPEC.loader is None:  # pragma: no cover
-    raise RuntimeError(f"cannot load SFT runtime from {_RUNTIME_PATH}")
-sft_runtime = importlib.util.module_from_spec(_RUNTIME_SPEC)
-sys.modules[_RUNTIME_SPEC.name] = sft_runtime
-_RUNTIME_SPEC.loader.exec_module(sft_runtime)
-
 from post_training.sft.behavior_eval import BehaviorCase, verify_response
 from post_training.sft.bundle import (
     IdentitySplitPolicy,
@@ -33,6 +25,20 @@ from trainer.evaluation import evaluate_batches
 from trainer.step import _microbatch_to_device, _ordered_batch_tensors
 from trainer.types import TokenBatch
 from tests.trainer_fixtures import TinyLM
+
+
+def _load_sft_runtime():
+    runtime_path = Path(__file__).resolve().parents[1] / "kaggle" / "sft_runtime.py"
+    spec = importlib.util.spec_from_file_location("small_llm_sft_runtime_test", runtime_path)
+    if spec is None or spec.loader is None:  # pragma: no cover
+        raise RuntimeError(f"cannot load SFT runtime from {runtime_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+sft_runtime = _load_sft_runtime()
 
 
 class SFTOperationalTests(unittest.TestCase):
