@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+QUALIFIED_1B_IMPLEMENTATION_COMMIT = "13033d82abaadcda9d823a31eb2467771c1a8ca6"
 
 
 def test_1b_entry_rewrites_only_the_qualification_report_module() -> None:
@@ -41,7 +43,7 @@ print(json.dumps([entry._rewrite_profile_command(command) for command in command
     ]
 
 
-def test_1b_entry_has_an_immutable_launch_commit() -> None:
+def test_1b_entry_pins_the_complete_qualified_implementation() -> None:
     root = Path(__file__).resolve().parents[1]
     kaggle = root / "kaggle"
     script = r'''
@@ -57,4 +59,4 @@ print(json.dumps({"commit": entry.PINNED_LAUNCH_COMMIT}))
         text=True,
     )
     payload = json.loads(output.strip().splitlines()[-1])
-    assert re.fullmatch(r"[0-9a-f]{40}", payload["commit"])
+    assert payload["commit"] == QUALIFIED_1B_IMPLEMENTATION_COMMIT
