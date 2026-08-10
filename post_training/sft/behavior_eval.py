@@ -113,10 +113,6 @@ BEHAVIOR_CASES: tuple[BehaviorCase, ...] = (
 ROLE_LEAK_PATTERN = re.compile(r"(?:^|\n)(?:System|User|Assistant):", re.IGNORECASE)
 
 
-def _normalized_text(value: str) -> str:
-    return " ".join(value.strip().split())
-
-
 def _ngram_repetition(token_ids: Sequence[int], n: int = 3) -> float:
     ids = tuple(int(value) for value in token_ids)
     if len(ids) < n:
@@ -135,11 +131,10 @@ def verify_response(
     """Apply every case rule and common generation-health checks."""
 
     stripped = text.strip()
-    normalized = _normalized_text(stripped)
     checks: dict[str, bool] = {}
 
     if case.exact is not None:
-        checks["exact"] = normalized.casefold() == _normalized_text(case.exact).casefold()
+        checks["exact"] = stripped == case.exact
     for index, required in enumerate(case.required):
         checks[f"required_{index}"] = required.casefold() in stripped.casefold()
     for index, forbidden in enumerate(case.forbidden):
@@ -190,6 +185,8 @@ def behavior_case_identity(case: BehaviorCase) -> dict[str, object]:
 
 
 def behavior_prompt_texts() -> tuple[str, ...]:
+    """Return user/system texts used for deterministic decontamination checks."""
+
     values: list[str] = []
     for case in BEHAVIOR_CASES:
         values.extend(message.content for message in case.messages if message.role != "assistant")
