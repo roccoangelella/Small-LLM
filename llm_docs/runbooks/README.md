@@ -13,8 +13,8 @@ Runbooks contain executable procedures, prerequisites, expected artifacts, check
 ## Prior scaling-stage procedures
 
 - [`20m_500m_runbook.md`](20m_500m_runbook.md) — completed 500M-stage build/training procedure; retained for exact historical operations and resume interpretation.
-- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 100M-stage training procedure.
-- [`20m_100m_data_scaling_plan.md`](20m_100m_data_scaling_plan.md) — frozen 100M experiment identity and gates.
+- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 100M-stage training and reproduction procedure.
+- [`20m_100m_data_scaling_plan.md`](20m_100m_data_scaling_plan.md) — historical planning-stage pointer; the original pre-final assumptions remain in Git history rather than as executable commands.
 
 The unrun 1B procedure was superseded by ADR 0023 and is no longer an active runbook. Git history preserves its exact former contents.
 
