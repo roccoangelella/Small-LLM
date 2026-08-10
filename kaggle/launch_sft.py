@@ -7,6 +7,7 @@ import argparse
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import json
+import os
 import re
 from typing import Sequence
 
@@ -189,6 +190,21 @@ def _dry_run(args: argparse.Namespace, profile: sft_runtime.SFTProfileSpec) -> d
     }
 
 
+def _preflight_publish(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    has_handle = bool(
+        args.kaggle_dataset_handle
+        or os.environ.get("SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE")
+        or os.environ.get("KAGGLE_USERNAME")
+    )
+    if not has_handle:
+        parser.error(
+            "publish requires --kaggle-dataset-handle owner/dataset, "
+            "SMALL_LLM_SFT_KAGGLE_DATASET_HANDLE, or KAGGLE_USERNAME"
+        )
+    if not os.environ.get("KAGGLE_API_TOKEN"):
+        parser.error("publish requires KAGGLE_API_TOKEN in the process environment")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -203,6 +219,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         print(json.dumps(_dry_run(args, profile), indent=2, sort_keys=True))
         return 0
+
+    if args.action == "publish":
+        _preflight_publish(parser, args)
 
     print(
         f"[launch-sft] action={args.action} model={profile.model_label} "
