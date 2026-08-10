@@ -40,9 +40,7 @@ context: 2,048
 precision: FP16 autocast with FP32 master parameters
 ```
 
-The 500M trajectory is **not** a clean single-backend curve: the accepted checkpoint chain reached step 4000 under the adaptive backend, then production continuation was authorized with the mathematically compatible mixed FLA GDN-2 CUDA backend. Interpret throughput and any very fine-grained loss-curve discontinuity with that migration boundary in mind.
-
-The final frozen post-pretraining evaluation/scorecard should remain the source of truth for model-quality comparison; do not infer a final validation metric from prompt-suite metadata that was not explicitly labeled as held-out validation loss.
+The 500M trajectory is not a clean single-backend curve: the accepted checkpoint chain reached step 4000 under the adaptive backend, then production continuation was authorized with the mathematically compatible mixed FLA GDN-2 CUDA backend. Interpret throughput and very fine-grained loss-curve discontinuities with that migration boundary in mind.
 
 ## Qualified GDN-2 production backend
 
@@ -60,39 +58,34 @@ saved/configured gdn_chunk_size: 32
 FLA internal runtime chunk: 64
 ```
 
-Corrected qualification established:
+Corrected qualification established that all requested synthetic constant-decay rows pass against the finite FP32 adaptive oracle, the exact real step-4000 next-block forward/backward gate passes with finite parity-matching gradients, and warmed true-block throughput measured 22,765.80 target tok/s for mixed FLA versus 1,964.75 target tok/s for the adaptive FP32 recurrence. Full-FP32 FLA remains a diagnostic/fallback mode.
 
-- all requested synthetic constant-decay rows pass against the finite FP32 adaptive oracle;
-- the exact real step-4000 next-block forward/backward gate passes with finite, parity-matching gradients;
-- warmed true-block throughput measured 22,765.80 target tok/s for mixed FLA versus 1,964.75 target tok/s for the adaptive FP32 recurrence;
-- full-FP32 FLA is retained as a diagnostic/fallback mode, not the selected production path.
+## Authorized next experiment — fresh 20M / 2B run
 
-Detailed evidence remains under the August 8 GDN-2/FLA qualification documents and ADR 0021.
-
-## Authorized next experiment — fresh 20M / 1B run
-
-ADR 0022 authorizes a new independent approximately-1B-token data-scaling trajectory for the same 20M model.
+ADR 0023 supersedes the unrun 1B plan and authorizes a new independent approximately-2B-token data-scaling trajectory for the same 20M model.
 
 Fixed identities:
 
 ```text
-profile: 20m-1b-data-scaling-v1
-dataset run ID: 20m-1b-dataset-001
-W&B run ID: 20m-1b-data-001
-target accepted source tokens: 1,000,000,000
-minimum: 900,000,000
-maximum: 1,100,000,000
-producer durable checkpoint cadence: 40,000,000 source tokens
+profile: 20m-2b-data-scaling-v1
+dataset run ID: 20m-2b-dataset-001
+W&B run ID: 20m-2b-data-001
+target accepted source tokens: 2,000,000,000
+minimum: 1,800,000,000
+maximum: 2,200,000,000
+producer durable checkpoint cadence: 80,000,000 source tokens
 fresh initialization seed: 17
 training microbatch: 4
 training durability / validation / remote publication cadence: 250 updates
 ```
 
-The 1B trajectory does **not** continue the 500M checkpoint. It starts from fresh seed-17 initialization and uses qualified mixed FLA on CUDA from optimizer update 1.
+The 2B trajectory does **not** continue the 500M checkpoint and has no dependency on an experimental 1B checkpoint. It starts from fresh seed-17 initialization and uses qualified mixed FLA on CUDA from optimizer update 1.
+
+At 20,637,592 learned parameters, the nominal point is approximately 96.9 accepted source tokens per parameter. A full-block estimate is approximately 61.0k optimizer updates; the exact update count and WSD boundaries are derived from the completed verified manifest.
 
 ### Dataset transport
 
-The selected operational path is:
+The selected operational path remains:
 
 ```text
 pinned Nemotron-ClimbMix source
@@ -108,9 +101,9 @@ attached Kaggle dataset
 GPU training from Kaggle-local input
 ```
 
-Do not stream the source corpus live during GPU training. The complete 1B prepared payload is small enough for this path, while prebuilding preserves deterministic manifest/block identity and removes source-network variability from the T4 critical path.
+Do not stream the source corpus live during GPU training. The complete 2B prepared payload is still modest at roughly 4 GB of raw uint16 token IDs before validation/EOD/manifest overhead, while prebuilding preserves deterministic manifest/block identity and removes source-network variability from the T4 critical path.
 
-Current operational state: **the 1B launch surface is being prepared; dataset production and optimizer update 1 have not yet been accepted as completed evidence.**
+Current operational state: **the 2B launch surface is prepared in the active change set; dataset production and optimizer update 1 have not yet been accepted as completed evidence. The 1B setup was superseded before any build or training result existed.**
 
 ## Frozen/accepted decisions still in force
 
@@ -126,8 +119,8 @@ Current operational state: **the 1B launch surface is being prepared; dataset pr
 
 ## Current source of truth
 
-- 1B decision: [`../decisions/0022-run-1b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0022-run-1b-20m-probe-via-vps-kaggle-dataset.md)
-- 1B runbook: [`../runbooks/20m_1b_runbook.md`](../runbooks/20m_1b_runbook.md)
+- 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
+- 2B runbook: [`../runbooks/20m_2b_runbook.md`](../runbooks/20m_2b_runbook.md)
 - Dataset contract: [`../reference/dataset_and_tokenization.md`](../reference/dataset_and_tokenization.md)
 - FLA consolidated handoff: [`gdn2_fla_investigation_handoff.md`](gdn2_fla_investigation_handoff.md)
 - FLA qualification: [`gdn2_fla_qualification.md`](gdn2_fla_qualification.md)
