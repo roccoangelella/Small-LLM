@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import json
 import re
@@ -18,6 +19,13 @@ _MULTIPLIERS = {
     "M": Decimal(1_000_000),
     "B": Decimal(1_000_000_000),
     "T": Decimal(1_000_000_000_000),
+}
+
+# Reachable commit containing the complete first operational SFT implementation.
+_SFT_IMPLEMENTATION_COMMIT = "3470c149e98d177c905016c77b0e3a4f2d4ad50f"
+_PARENT_CHECKPOINT_RUN_IDS = {
+    (20_000_000, 500_000_000): "20m-500m-dataset-001",
+    (20_000_000, 2_000_000_000): "20m-2b-dataset-001",
 }
 
 
@@ -37,18 +45,6 @@ def parse_quantity(value: str) -> int:
             f"size must resolve to a positive whole number: {value!r}"
         )
     return int(amount)
-
-
-def format_quantity(value: int) -> str:
-    for suffix, scale in (
-        ("T", 1_000_000_000_000),
-        ("B", 1_000_000_000),
-        ("M", 1_000_000),
-        ("K", 1_000),
-    ):
-        if value >= scale and value % scale == 0:
-            return f"{value // scale}{suffix}"
-    return str(value)
 
 
 def positive_int(value: str) -> int:
@@ -78,9 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
             "One profile-driven entry point for SFT data preparation, training, "
             "verified resume, and comprehensive qualification."
         ),
-        epilog=(
-            "SFT resume is automatic: rerun the identical train command after interruption."
-        ),
+        epilog="SFT resume is automatic: rerun the identical train command after interruption.",
     )
     subparsers = parser.add_subparsers(dest="action", required=True)
 
@@ -121,14 +115,30 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _profile(args: argparse.Namespace) -> sft_runtime.SFTProfileSpec:
     try:
-        return sft_runtime.resolve_profile(args.model, args.tokens)
+        profile = sft_runtime.resolve_profile(args.model, args.tokens)
     except sft_runtime.RuntimeFailure as error:
         raise ValueError(str(error)) from error
+    key = (profile.model_parameters, profile.parent_training_tokens)
+    try:
+        parent_run_id = _PARENT_CHECKPOINT_RUN_IDS[key]
+    except KeyError as error:
+        raise ValueError(f"no canonical parent checkpoint namespace for {key}") from error
+    return replace(
+        profile,
+        parent_run_id=parent_run_id,
+        launch_commit=_SFT_IMPLEMENTATION_COMMIT,
+    )
 
 
 def _print_profiles() -> None:
     print("Supported SFT profiles:")
-    for profile in sft_runtime.PROFILES.values():
+    for raw in sft_runtime.PROFILES.values():
+        key = (raw.model_parameters, raw.parent_training_tokens)
+        profile = replace(
+            raw,
+            parent_run_id=_PARENT_CHECKPOINT_RUN_IDS[key],
+            launch_commit=_SFT_IMPLEMENTATION_COMMIT,
+        )
         target = (
             str(profile.requested_sft_targets)
             if profile.requested_sft_targets is not None
@@ -136,7 +146,7 @@ def _print_profiles() -> None:
         )
         print(
             f"  model={profile.model_label:<4} parent_tokens={profile.token_label:<4} "
-            f"sft_run={profile.sft_run_id} targets={target}"
+            f"parent_run={profile.parent_run_id} sft_run={profile.sft_run_id} targets={target}"
         )
 
 
@@ -181,8 +191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(
         f"[launch-sft] action={args.action} model={profile.model_label} "
-        f"parent_tokens={profile.token_label} sft_run={profile.sft_run_id} "
-        "resume=automatic_verified",
+        f"parent_tokens={profile.token_label} parent_run={profile.parent_run_id} "
+        f"sft_run={profile.sft_run_id} resume=automatic_verified",
         flush=True,
     )
 
@@ -219,4 +229,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["build_parser", "format_quantity", "main", "parse_quantity"]
+__all__ = ["build_parser", "main", "parse_quantity"]
