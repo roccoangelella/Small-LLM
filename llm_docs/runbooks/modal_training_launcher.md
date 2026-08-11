@@ -113,9 +113,43 @@ A 48 or 64 failure on an 80 GB H100 is an expected capacity measurement, not a l
 
 ## Checkpointing and W&B
 
-Every 250 successful optimizer updates the trainer writes a verified joint checkpoint under `small-llm-runs/<run-id>/checkpoints/`; the final update is checkpointed as well. The Modal run Volume is the canonical durable checkpoint transport for this trajectory. Legacy Hugging Face dataset-keyed checkpoint publication remains disabled to avoid cross-model namespace collisions.
+Every 250 successful optimizer updates the trainer writes a verified joint checkpoint under `small-llm-runs/<run-id>/checkpoints/`; the final update is checkpointed as well. The Modal run Volume is the canonical exact-resume checkpoint transport for this trajectory. Legacy Hugging Face dataset-keyed checkpoint publication remains disabled inside the live trainer because that namespace can collide when the same finite corpus is reused by different model sizes.
 
 W&B runs online in project `Small-LLM` with stable run ID `100m-2b-data-001`. Resumes use the same W&B identity and `must` resume semantics after a local durable checkpoint exists.
+
+## Hugging Face checkpoint/model publication
+
+ADR 0044 requires the 100M / 2B artifact to exist on Hugging Face as well as the Modal run Volume. Publication is handled by `modal/publish_hf.py`, which verifies the checkpoint first and stores it under a model/run-specific namespace rather than the legacy dataset-only namespace.
+
+To copy the latest currently verified checkpoint to the configured private Hugging Face model repository while training is still running:
+
+```bash
+git pull --ff-only
+modal run modal/publish_hf.py --model 100M --tokens 2B
+```
+
+The checkpoint is uploaded under:
+
+```text
+models/100m-2b-data-001/step-XXXXXXXX/
+```
+
+and the pointer/identity metadata is written to:
+
+```text
+models/100m-2b-data-001/artifact.json
+```
+
+The command is safe to rerun. It publishes the latest verified checkpoint available in `small-llm-runs`; it never reads a partially written checkpoint.
+
+After training completes, require and publish the exact final checkpoint with:
+
+```bash
+git pull --ff-only
+modal run modal/publish_hf.py --model 100M --tokens 2B --require-complete
+```
+
+The final publication command fails closed unless the latest verified checkpoint step equals the qualification plan's full 15,259-step target. This post-run publication does not change, restart, or resume the frozen training trajectory.
 
 ## Resume
 
