@@ -7,6 +7,7 @@ Runbooks contain executable or intentionally reproducible procedures, prerequisi
 - [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` publication/training command surface for registered finite-data profiles.
 - [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run.
 - [`sft_s0_runbook.md`](sft_s0_runbook.md) — canonical `kaggle/launch_sft.py` bundle publication, T4 SFT, exact resume, and parent-versus-SFT qualification procedure.
+- [`local_sft_chat.md`](local_sft_chat.md) — local interactive chat over a verified, completed Hugging Face SFT checkpoint.
 - [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — build, verify, fast, and full evaluation.
 - [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — canonical post-pretraining qualitative prompt procedure.
 - [`100m_kagglehub_publication_suite.md`](100m_kagglehub_publication_suite.md) — reusable private finite-dataset publication procedure documented from the original 100M implementation.
