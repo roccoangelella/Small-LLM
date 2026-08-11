@@ -87,8 +87,12 @@ def _dataset_matches(root: Path, profile_key: str) -> tuple[bool, dict[str, Any]
         "drive_manifest": drive_path.is_file(),
         "train": (root / "train").is_dir(),
         "validation": (root / "validation").is_dir(),
+        "transport": "modal_volume",
     }
-    if not all(row[key] for key in ("manifest", "drive_manifest", "train", "validation")):
+    # A dataset discovered here is already inside the read-only small-llm-data
+    # Modal Volume.  That mount is the durable transport boundary for Modal;
+    # legacy Google Drive metadata is optional rather than fabricated.
+    if not all(row[key] for key in ("manifest", "train", "validation")):
         return False, row
     manifest = _json(manifest_path)
     production = manifest.get("production")
@@ -141,23 +145,24 @@ def _find_dataset(data_root: Path, explicit: str, profile_key: str) -> tuple[Pat
 
 
 def _derive_plan(repo_root: Path, dataset: Path, profile_key: str, output: Path, log_path: Path) -> dict[str, Any]:
-    _run(
-        [
-            sys.executable, "-m", "dataset.qualification", "report",
-            "--profile", profile_key,
-            "--dataset-dir", str(dataset),
-            "--drive-manifest", str(dataset / "drive_manifest.json"),
-            "--output", str(output),
-        ],
-        cwd=repo_root,
-        log_path=log_path,
-    )
+    command = [
+        sys.executable, "-m", "dataset.qualification", "report",
+        "--profile", profile_key,
+        "--dataset-dir", str(dataset),
+    ]
+    drive_manifest = dataset / "drive_manifest.json"
+    if drive_manifest.is_file():
+        command += ["--drive-manifest", str(drive_manifest)]
+    command += ["--output", str(output)]
+    _run(command, cwd=repo_root, log_path=log_path)
     plan = _json(output)
     trainer = plan.get("trainer")
     if not isinstance(trainer, Mapping):
         raise RuntimeError("qualification plan has no trainer section")
     if trainer.get("full_block_target_tokens") != SEQUENCES_PER_BLOCK * 2048:
-        raise RuntimeError("qualification plan changed the frozen 16-sequence optimizer block")
+        raise RuntimeError(
+            f"qualification plan changed the frozen {SEQUENCES_PER_BLOCK}-sequence optimizer block"
+        )
     return plan
 
 
@@ -463,8 +468,11 @@ def run_training(
     identity = {
         "dataset": str(dataset),
         "manifest_sha256": _sha256(dataset / "manifest.json"),
-        "drive_manifest_sha256": _sha256(dataset / "drive_manifest.json"),
+        "transport": "modal_volume",
     }
+    drive_manifest = dataset / "drive_manifest.json"
+    if drive_manifest.is_file():
+        identity["drive_manifest_sha256"] = _sha256(drive_manifest)
     verify_marker = run_dir / "dataset_verified.json"
     marker = _json(verify_marker) if verify_marker.is_file() else {}
     if marker.get("identity") != identity:
