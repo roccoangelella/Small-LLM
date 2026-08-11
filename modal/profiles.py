@@ -7,9 +7,9 @@ from decimal import Decimal, InvalidOperation
 
 DEFAULT_GPU = "H100"
 DEFAULT_PRECISION = "fp16"
-SEQUENCES_PER_BLOCK = 16
+SEQUENCES_PER_BLOCK = 64
 DURABILITY_EVERY = 250
-MICROBATCH_CANDIDATES = (4, 8, 16)
+MICROBATCH_CANDIDATES = (16, 32, 48, 64)
 
 _QUANTITY = re.compile(r"^(\d+(?:\.\d+)?)([KMBT]?)$", re.IGNORECASE)
 _MULTIPLIERS = {
@@ -42,7 +42,7 @@ MODEL_PRESETS: dict[int, ModelPreset] = {
 TOKEN_PRESETS: dict[int, TokenPreset] = {
     100_000_000: TokenPreset(100_000_000, "100M", "20m-100m"),
     500_000_000: TokenPreset(500_000_000, "500M", "20m-500m"),
-    2_000_000_000: TokenPreset(2_000_000_000, "2B", "20m-2b"),
+    2_000_000_000: TokenPreset(2_000_000_000, "2B", "modal-2b-b64"),
 }
 LEGACY_WANDB_IDS: dict[tuple[int, int], str] = {
     (20_000_000, 100_000_000): "20m-100m-data-004",
