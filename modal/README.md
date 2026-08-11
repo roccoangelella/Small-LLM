@@ -43,7 +43,7 @@ optimizer updates: 15,259
 final train block: 48 sequences
 ```
 
-The reblocker emits a compatibility `drive_manifest.json` whose opaque durable-object IDs are bound to the `small-llm-data` Modal Volume rather than Google Drive. Upload the complete derived directory before training:
+The local derivative does not fabricate Google Drive metadata. Its production profile requires durable transport, and the Modal launcher satisfies that requirement by accepting the corpus only after it is discovered inside the read-only `small-llm-data` Volume. Upload the complete derived directory before training:
 
 ```bash
 modal volume put small-llm-data \
