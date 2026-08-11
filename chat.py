@@ -5,6 +5,7 @@ MAX_NEW_TOKENS = 256
 SEED = 17
 
 import argparse
+import codecs
 import gc
 import json
 import math
@@ -26,6 +27,21 @@ _QUANTITY_SUFFIXES = {
     "B": 1_000_000_000,
     "T": 1_000_000_000_000,
 }
+
+
+class _TokenTextStreamer:
+    """Incrementally decode GPT-2 token bytes without corrupting split UTF-8."""
+
+    def __init__(self, encoding: object) -> None:
+        self.encoding = encoding
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    def push(self, token_id: int) -> str:
+        token_bytes = self.encoding.decode_single_token_bytes(token_id)
+        return self.decoder.decode(token_bytes, final=False)
+
+    def finish(self) -> str:
+        return self.decoder.decode(b"", final=True)
 
 
 def _parse_quantity(value: str) -> int:
@@ -217,12 +233,81 @@ def _fit_generation_prompt(history, *, template, encoding, max_prompt_tokens: in
         history = history[2:]
 
 
+def _stream_sample_token_ids(
+    model,
+    prompt_ids: Sequence[int],
+    *,
+    max_new_tokens: int,
+    max_seq_len: int,
+    eos_token_id: int,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    seed: int,
+    precision: str,
+    encoding: object,
+) -> list[int]:
+    """Sample with the canonical logits policy and print each decoded token immediately."""
+
+    import torch
+
+    from trainer.post_pretraining_prompt_suite import _autocast_context, _filter_logits
+
+    if not prompt_ids:
+        raise ValueError("prompt must contain at least one token")
+    if max_new_tokens < 0 or max_seq_len <= 0:
+        raise ValueError("generation lengths are invalid")
+    if temperature < 0 or not math.isfinite(temperature):
+        raise ValueError("temperature must be finite and non-negative")
+    if not 0 < top_p <= 1:
+        raise ValueError("top_p must be in (0, 1]")
+    if top_k < 0:
+        raise ValueError("top_k must be non-negative")
+
+    device = next(model.parameters()).device
+    output = torch.tensor([list(prompt_ids)], dtype=torch.long, device=device)
+    generator = torch.Generator(device=device)
+    generator.manual_seed(seed)
+    generated: list[int] = []
+    streamer = _TokenTextStreamer(encoding)
+
+    with torch.inference_mode():
+        for _ in range(max_new_tokens):
+            with _autocast_context(device, precision):
+                logits = model(output[:, -max_seq_len:])[:, -1, :].float()
+
+            if temperature == 0:
+                next_token = logits.argmax(dim=-1, keepdim=True)
+            else:
+                filtered = _filter_logits(logits / temperature, top_k=top_k, top_p=top_p)
+                probabilities = torch.softmax(filtered, dim=-1)
+                if not torch.isfinite(probabilities).all() or bool(
+                    (probabilities.sum(dim=-1) <= 0).any()
+                ):
+                    raise FloatingPointError("sampling produced an invalid probability distribution")
+                next_token = torch.multinomial(probabilities, 1, generator=generator)
+
+            token_id = int(next_token.item())
+            if token_id == eos_token_id:
+                break
+
+            generated.append(token_id)
+            text = streamer.push(token_id)
+            if text:
+                print(text, end="", flush=True)
+            output = torch.cat((output, next_token), dim=1)
+
+    tail = streamer.finish()
+    if tail:
+        print(tail, end="", flush=True)
+    return generated
+
+
 def _chat(model, config, *, device) -> None:
     import tiktoken
 
     from post_training.sft.schema import ChatMessage
     from post_training.sft.template import GPT2ChatTemplate
-    from trainer.post_pretraining_prompt_suite import sample_token_ids
 
     encoding = tiktoken.get_encoding("gpt2")
     template = GPT2ChatTemplate(
@@ -260,26 +345,30 @@ def _chat(model, config, *, device) -> None:
             encoding=encoding,
             max_prompt_tokens=max_prompt_tokens,
         )
-        generated = sample_token_ids(
-            model,
-            prompt_ids,
-            max_new_tokens=MAX_NEW_TOKENS,
-            max_seq_len=config.max_seq_len,
-            eos_token_id=50_256,
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-            top_k=TOP_K,
-            seed=SEED + turn,
-            precision=precision,
-        )
+        print("assistant> ", end="", flush=True)
+        try:
+            generated = _stream_sample_token_ids(
+                model,
+                prompt_ids,
+                max_new_tokens=MAX_NEW_TOKENS,
+                max_seq_len=config.max_seq_len,
+                eos_token_id=50_256,
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+                top_k=TOP_K,
+                seed=SEED + turn,
+                precision=precision,
+                encoding=encoding,
+            )
+        except BaseException:
+            print()
+            raise
         turn += 1
-        if generated and generated[-1] == 50_256:
-            generated = generated[:-1]
         response = encoding.decode(generated).strip()
         if not response:
-            print("assistant> [ended turn without text]")
+            print("[ended turn without text]")
             continue
-        print(f"assistant> {response}")
+        print()
         history = [*candidate, ChatMessage(role="assistant", content=response)]
 
 
