@@ -5,12 +5,15 @@ last_reviewed: 2026-08-11
 
 # Modal training launcher
 
-The canonical new-training entry point is `modal/launch.py`. It is a provider adapter around the existing `dataset`, `model`, and `trainer` packages; it does not define a second scientific trainer.
+The canonical new-training entry point is `modal/launch.py`. It is a provider adapter around the existing `dataset`, `model`, and `trainer` packages; it does not define a second scientific trainer. All operator commands for the Modal lane run from the VPS.
 
-## Setup
+## VPS setup
+
+Use the project `.venv` and install the two operator CLIs there:
 
 ```bash
-python -m pip install 'modal>=1.1,<2'
+source .venv/bin/activate
+uv pip install kaggle 'modal>=1.1,<2'
 modal setup
 modal volume create small-llm-data
 modal volume create small-llm-runs
@@ -21,27 +24,45 @@ modal secret create small-llm-training \
   SMALL_LLM_HF_REPO_ID="$SMALL_LLM_HF_REPO_ID"
 ```
 
-## Prepare the 2B Modal corpus
+Kaggle is only the remote source for the already-published 2B finite dataset. Authenticate the VPS Kaggle CLI with `KAGGLE_API_TOKEN` or an official token file. No Kaggle notebook participates in the Modal workflow.
 
-The 100M / 2B run uses the `modal-2b-b64` dataset profile rather than editing the historical block-16 corpus. Derive it byte-for-byte from the verified `20m-2b-dataset-001` directory:
+## Prepare the 2B Modal corpus from the VPS
 
-```bash
-python -m dataset.reblock \
-  --source-dir /local/path/to/20m-2b-dataset-001 \
-  --output-dir /local/path/to/modal-2b-b64-dataset-001
-```
-
-This is local I/O only: no source redownload, retokenization, packing, split assignment, or mixture scheduling. The output is reverified and contains 64-sequence prepared blocks with a new dataset identity.
-
-Upload the complete derived directory once:
+The 100M / 2B run uses the `modal-2b-b64` dataset profile rather than editing the historical block-16 corpus. The supported one-command preparation path is:
 
 ```bash
-modal volume put small-llm-data \
-  /local/path/to/modal-2b-b64-dataset-001 \
-  /datasets/modal-2b-b64-dataset-001
+python modal/prepare_dataset.py
 ```
 
-Keep the original `20m-2b-dataset-001` unchanged for Kaggle/reproduction.
+This command discovers the authenticated user's existing Kaggle dataset `small-llm-20m-2b-dataset-001`, downloads it to the VPS only if a verified cached source is absent, verifies production run ID `20m-2b-dataset-001`, performs the byte-preserving block-64 transformation through `dataset.reblock`, verifies the derivative, and uploads it from the VPS to Modal Volume `small-llm-data`.
+
+Fixed VPS paths:
+
+```text
+~/small-llm-data/kaggle/small-llm-20m-2b-dataset-001
+~/small-llm-data/modal-2b-b64-dataset-001
+```
+
+Fixed Modal destination:
+
+```text
+/datasets/modal-2b-b64-dataset-001
+```
+
+The helper is stage-idempotent. Rerunning normally skips a verified download, a verified reblock, and a matching completed upload. Repair flags are `--force-download`, `--force-reblock`, and `--force-upload`; `--no-upload` stops after VPS preparation.
+
+The original Kaggle dataset remains unchanged. The derived profile is:
+
+```text
+profile: modal-2b-b64
+dataset run ID: modal-2b-b64-dataset-001
+context: 2,048
+sequences per optimizer block: 64
+target shard size: 32 MiB
+train target tokens: 1,999,994,880
+optimizer updates: 15,259
+final train block: 48 sequences
+```
 
 ## Dry run
 
@@ -100,7 +121,7 @@ W&B runs online in project `Small-LLM` with stable run ID `100m-2b-data-001`. Re
 
 The run Volume stores `step-XXXXXXXX` joint checkpoints. On every fresh Modal container the launcher verifies candidate `local_manifest.json` files and chooses the newest checkpoint whose block cursor agrees with its step number. The existing trainer then restores model, optimizer, WSD scheduler, FP16 scaler, RNG, counters, and data cursor.
 
-Modal automatic retries use this same path. Manual recovery is the identical launch command from the frozen source commit. Do not launch one run identity concurrently on Kaggle and Modal.
+Modal automatic retries use this same path. Manual recovery is the identical launch command from the frozen source commit. The historical Kaggle 20M trajectory has a different W&B identity; do not create a second concurrent Modal invocation of the same 100M run identity.
 
 ## Hardware migration policy
 
