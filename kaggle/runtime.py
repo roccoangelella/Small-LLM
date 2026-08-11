@@ -4,9 +4,9 @@
 The finite-data training and publication mechanics were qualified in the 100M
 implementation and later reused through per-profile overlay modules. This
 module replaces those overlays with one explicit profile table and one adapter
-for training/publication. The underlying shared engines remain unchanged so
-checkpoint, dataset, W&B, and durability semantics do not drift before the 2B
-run.
+for training/publication. The underlying shared training engine remains pinned
+per experiment, while dataset verification/profile-plan commands run from the
+controlling repository so they use the consolidated ``dataset`` package.
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ PUBLISH_REQUIREMENTS = KAGGLE_DIR / "requirements-100m-publish.txt"
 PUBLISH_BOOTSTRAP_ENV = "SMALL_LLM_PUBLISH_BOOTSTRAPPED"
 KAGGLE_TRANSPORT_ARCHIVE = re.compile(r"^[0-9]+\.archive$")
 WANDB_INIT_TIMEOUT_SECONDS = "30"
+ACTIVE_DATASET_CONTROL_MODULES = frozenset({"dataset.main", "dataset.qualification"})
 
 if str(KAGGLE_DIR) not in sys.path:
     sys.path.insert(0, str(KAGGLE_DIR))
@@ -273,6 +274,15 @@ def _dataset_tree_identity(base: Any, root: Path) -> dict[str, object]:
     }
 
 
+def _uses_active_dataset_control_plane(command: Sequence[str]) -> bool:
+    """Return whether a subprocess must use the consolidated current dataset package."""
+
+    return any(
+        item == "-m" and index + 1 < len(command) and command[index + 1] in ACTIVE_DATASET_CONTROL_MODULES
+        for index, item in enumerate(command)
+    )
+
+
 def train(
     profile: ProfileSpec,
     *,
@@ -385,6 +395,12 @@ def train(
             profile.dataset_profile_key if item == "20m-100m" else item
             for item in command
         ]
+        if _uses_active_dataset_control_plane(rewritten):
+            # The per-experiment launch commit intentionally pins trainer/model
+            # execution and predates the consolidated dataset CLI for older
+            # profiles. Dataset verification and plan derivation are control-plane
+            # operations, so execute those from the clean controlling checkout.
+            kwargs["cwd"] = REPO
         return original_run(rewritten, *args, **kwargs)
 
     def profile_print(*values: object, **kwargs: object) -> None:
