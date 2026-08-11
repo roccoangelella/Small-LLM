@@ -13,20 +13,65 @@ from dataset.eval_core_accelerated import (
     _SourceBatch,
     _ValidationCandidate,
     _ordered_validation_batches,
+    _scan_item,
     build_eval_core_accelerated,
 )
-from dataset.src.bytesource import SourceFile
+from dataset.src.bytesource import LocalRangeReader, SourceFile
 from dataset.src.records import ParsedRecord
+from dataset.src.workplan import WorkItem
 
 
 class AcceleratedEvalCoreTests(unittest.TestCase):
+    def test_raw_scanner_materializes_only_validation_candidates(self) -> None:
+        lines = (
+            b'{"cluster_id":1,"tokens":[1,2]}',
+            b'{"cluster_id":2,"tokens":[3,4,5]}',
+            b'{"cluster_id":3,"tokens":[6,7]}',
+        )
+        data = b"\n".join(lines) + b"\n"
+        starts = (0, len(lines[0]) + 1, len(lines[0]) + len(lines[1]) + 2)
+        source = SourceFile(path="part_0.tokenized.jsonl", size=len(data))
+        item = WorkItem(
+            index=0,
+            filename=source.path,
+            range_start=0,
+            range_end=len(data),
+            work_item_id="synthetic",
+        )
+
+        with (
+            patch(
+                "dataset.eval_core_accelerated.HttpRangeReader",
+                side_effect=lambda *_args, **_kwargs: LocalRangeReader(data),
+            ),
+            patch(
+                "dataset.eval_core_accelerated._is_candidate",
+                side_effect=lambda _filename, record_start, _probability: record_start == starts[1],
+            ),
+            patch("dataset.eval_core_accelerated.EVAL_FETCH_CHUNK_BYTES", 7),
+        ):
+            batch = _scan_item(
+                ordinal=0,
+                item=item,
+                source=source,
+                validation_probability=0.001,
+            )
+
+        self.assertEqual(batch.scanned_records, 3)
+        self.assertEqual(len(batch.candidates), 1)
+        self.assertEqual(batch.candidates[0].scanned_through, 2)
+        self.assertEqual(batch.candidates[0].record.record_start, starts[1])
+        self.assertEqual(batch.candidates[0].record.raw, lines[1])
+
     def test_parallel_batches_are_yielded_in_frozen_workplan_order(self) -> None:
         source = SourceFile(
             path="part_0.tokenized.jsonl",
             size=config.REGION_BYTES * 4,
         )
 
-        def fake_scan_item(*, ordinal, item, source, validation_probability):
+        def fake_scan_item(
+            *, ordinal, item, source, validation_probability, stop_event=None
+        ):
             # Deliberately make earlier ordinals slower so completion order differs
             # from the required deterministic consumption order.
             time.sleep((3 - ordinal) * 0.005)
