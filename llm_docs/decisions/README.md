@@ -44,6 +44,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
 - [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
+- [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md)
 
 ## Superseded ADRs
 
