@@ -58,6 +58,33 @@ The corrected deterministic qualification passed the requested synthetic decay s
 
 Current contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
 
+## Active experiment — 100M / 2B on Modal H100
+
+ADR 0041 authorizes the approximately-100M-parameter / 2B-token Modal trajectory using the byte-preserving block-64 derivative of the verified 2B corpus. ADR 0043 keeps all Kaggle-to-Modal preparation and Modal operation on the VPS.
+
+By 2026-08-11 16:10 Europe/Rome, the user reported that the production training run had been started on an **H100 GPU**.
+
+```text
+model preset: 100M / trainer substantive
+W&B run ID: 100m-2b-data-001
+dataset profile: modal-2b-b64
+dataset run ID: modal-2b-b64-dataset-001
+context: 2,048
+prepared optimizer block: 64 sequences
+full-block target tokens: ~131,072
+planned optimizer updates: 15,259
+precision: FP16 autocast with FP32 master parameters
+microbatch qualification candidates: 16, 32, 48, 64
+GPU actually reported for live run: H100
+checkpoint cadence: every 250 successful updates plus final checkpoint
+validation cadence: every 250 successful updates
+checkpoint durability: Modal Volume small-llm-runs
+```
+
+The runtime probes 16/32/48/64 before optimizer step 1 and freezes the fastest safe measured execution microbatch. The selected live microbatch and current optimizer step have not yet been copied into project memory; use the Modal run evidence/W&B state rather than guessing them. The 64-sequence optimizer batch is fixed independently of execution microbatch.
+
+This is a distinct trajectory from the historical/ongoing 20M / 2B Kaggle run. The 2B sequence bytes and train/validation ordering are preserved by the reblock, while the optimizer batch is intentionally larger for Hopper utilization.
+
 ## Active experiment — fresh 20M / 2B
 
 ADR 0023 authorizes a new independent approximately-2B-token data-scaling trajectory. ADR 0027 adds the completed 500M qualitative result as justification for keeping model size fixed through this point.
@@ -134,6 +161,9 @@ Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11
 
 - Roadmap: [`roadmap.md`](roadmap.md)
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
+- Modal 100M / 2B block-64 decision: [`../decisions/0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md`](../decisions/0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md)
+- VPS-only Modal preparation decision: [`../decisions/0043-prepare-modal-block64-corpus-on-vps.md`](../decisions/0043-prepare-modal-block64-corpus-on-vps.md)
+- Modal training runbook: [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - Unified Kaggle runtime decision: [`../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
