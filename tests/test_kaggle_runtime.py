@@ -52,6 +52,23 @@ class KaggleRuntimeTests(unittest.TestCase):
         self.assertFalse(profile.run_microbatch_probe)
         self.assertEqual(profile.selected_microbatch, 4)
 
+    def test_dataset_control_plane_is_detected_independently_of_pinned_training_worktree(self) -> None:
+        self.assertTrue(
+            runtime._uses_active_dataset_control_plane(
+                ["uv", "run", "python", "-m", "dataset.main", "verify"]
+            )
+        )
+        self.assertTrue(
+            runtime._uses_active_dataset_control_plane(
+                ["uv", "run", "python", "-m", "dataset.qualification", "report"]
+            )
+        )
+        self.assertFalse(
+            runtime._uses_active_dataset_control_plane(
+                ["uv", "run", "python", "-m", "trainer", "--steps", "1"]
+            )
+        )
+
     def test_publication_bootstrap_replaces_shell_wrapper_behavior(self) -> None:
         command = runtime.publication_bootstrap_command(
             ["publish", "--model", "20M", "--tokens", "2B"],
