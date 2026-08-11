@@ -104,47 +104,31 @@ The subsequent repository-wide dataset-layout audit found a second latent bounda
 - Preserve fail-closed FP16 scaler/atomic-block behavior.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
 - New finite scaling trajectories start fresh unless a later ADR explicitly authorizes continuation.
-- Revisit additional fixed-size token scaling and model enlargement after the frozen 2B comparison; SFT qualification is now authorized in parallel under ADR 0032.
+- Revisit additional fixed-size token scaling and model enlargement after the frozen 2B comparison; SFT qualification is authorized in parallel under ADR 0032.
 
-## Authorized parallel SFT qualification
+## Completed 500M-parent SFT qualification
 
-ADR 0032 authorizes the completed 20M/500M checkpoint as the SFT qualification parent and freezes the 4%-of-parent token scaling rule. ADR 0033 freezes the comprehensive post-SFT scorecard and the pretraining-equivalent T4 microbatch/cadence defaults.
+ADR 0032 authorized the completed 20M/500M checkpoint as the first SFT qualification parent and froze the 4%-of-parent scaling rule. ADR 0033 froze the comprehensive parent-versus-SFT scorecard and the pretraining-equivalent T4 microbatch/cadence defaults.
 
-The operational implementation is now present on `main` behind one canonical human-facing launcher:
-
-```text
-kaggle/launch_sft.py
-  prepare
-  publish
-  train
-  eval
-  profiles
-```
-
-Current 500M-parent contract:
+The full qualification is now complete for `20m-500m-sft-s0-001`:
 
 ```text
-parent checkpoint namespace: 20m-500m-dataset-001
-verified parent consumed targets: 500,156,416
-requested SFT loss-bearing targets: 20,006,256
-overall mixture: 85% instruction / 15% ClimbMix replay
-instruction allocation: 75 / 10 / 7.5 / 7.5
-identity split: 95 / 2.5 / 2.5
-optimizer target block: ~32,768 active targets
-microbatch: 4
-checkpoint / validation / publication cadence: 250 updates
+parent checkpoint: step-00015264
+parent consumed targets: 500,156,416
+SFT checkpoint: step-00000621
+SFT consumed/train loss-bearing targets: 20,006,234
+bundle status: verified
+validation targets: 526,446
+test targets: 526,473
 ```
 
-The source preparation uses a pinned SmolTalk revision and source-independent prompt-family grouping, so aliases across source labels cannot cross the frozen identity split. Bundle verification binds the source provenance, split manifests, build reports, shard checksums, and target totals.
+The SFT objective was learned strongly on held-out SFT data: validation loss improved from 3.212253 to 2.639931 and test loss from 3.185668 to 2.609139. However, this did **not** translate into usable deterministic instruction following. The 30-case instruction suite remained 0/30 passed, with 0% EOS termination and 100% runaway generation in every evaluated checkpoint. Mean trigram repetition improved from 0.5742 to 0.4626, but no behavior category acquired a passing case.
 
-The SFT bundle can now be privately published to Kaggle and round-trip verified before training. Training independently recomputes the 4% budget from the verified parent checkpoint, uses fresh SFT optimizer/scheduler/scaler state, and automatically resumes from the newest valid local or remote SFT checkpoint while binding parent/data/template/objective identities.
+Base capability also regressed modestly and broadly on unchanged `eval_core_v1`: loss increased from 4.007289 to 4.047304 (+0.040016), perplexity from 54.997550 to 57.242943 (+2.245393), top-1 accuracy fell by 0.004536, and calibration ECE worsened by 0.012486. Eighteen of nineteen reported clusters regressed in loss and all eight position buckets worsened.
 
-The comprehensive evaluator compares parent and tuned checkpoints on unchanged `eval_core_v1`, base qualitative prompts, masked SFT validation/test loss, deterministic instruction behavior, EOS/runaway/leak/repetition diagnostics, per-category behavior, and parent-minus-tuned deltas without one arbitrary master score.
+Current interpretation: **the 500M-parent S0 run is a failed behavioral SFT qualification despite its strong held-out SFT-loss improvement.** It validates that the pipeline optimizes the intended masked target distribution, but it is not evidence that the unchanged S0 recipe should be promoted solely on SFT validation/test loss. The next SFT recipe/selection decision remains open.
 
-**Implementation status is operational but not yet accepted GPU evidence.** The remaining gate is repository test execution, private bundle publication/round-trip, bounded T4 FP16/mixed-FLA smoke, intentional exact resume, 250-update boundary validation, and fast/full post-SFT qualification on the 500M parent.
-
-Current implementation reference: [`../reference/post_training_sft.md`](../reference/post_training_sft.md)
-Current runbook: [`../runbooks/sft_s0_runbook.md`](../runbooks/sft_s0_runbook.md)
+Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md`](../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md)
 
 ## Current source of truth
 
