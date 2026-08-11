@@ -75,6 +75,13 @@ _COMMON_GEOMETRY = {
     "sequences_per_block": 16,
     "target_shard_bytes": 8 * 1024 * 1024,
 }
+_MODAL_B64_GEOMETRY = {
+    "context_length": 2_048,
+    "sequences_per_block": 64,
+    # Four full legacy 8 MiB/16-sequence shards reblock into one full
+    # 32 MiB/64-sequence shard without changing any stored sequence bytes.
+    "target_shard_bytes": 32 * 1024 * 1024,
+}
 
 PROFILES: dict[str, DatasetProfile] = {
     # Historical first finite qualification.  It is retained only so its
@@ -129,6 +136,18 @@ PROFILES: dict[str, DatasetProfile] = {
             **_COMMON_GEOMETRY,
         ),
     ),
+    "modal-2b-b64": DatasetProfile(
+        key="modal-2b-b64",
+        run_id="modal-2b-b64-dataset-001",
+        plan=QualificationProfile(
+            name="modal-2b-b64-v1",
+            target_source_tokens=2_000_000_000,
+            minimum_source_tokens=1_800_000_000,
+            maximum_source_tokens=2_200_000_000,
+            checkpoint_source_tokens=80_000_000,
+            **_MODAL_B64_GEOMETRY,
+        ),
+    ),
 }
 
 ALIASES = {
@@ -136,6 +155,7 @@ ALIASES = {
     "100m": "20m-100m",
     "500m": "20m-500m",
     "2b": "20m-2b",
+    "modal-2b": "modal-2b-b64",
 }
 
 _LOCKED_PRODUCTION_FLAGS = frozenset(
