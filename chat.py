@@ -201,8 +201,13 @@ def _fit_generation_prompt(history, *, template, encoding, max_prompt_tokens: in
     """Keep the newest complete turns while reserving room for the next answer."""
 
     while True:
-        prompt_ids = template.encode_generation_prompt(history, encoding)
-        if len(prompt_ids) <= max_prompt_tokens:
+        try:
+            prompt_ids = template.encode_generation_prompt(history, encoding)
+        except ValueError as error:
+            if "generation prompt exceeds model context" not in str(error):
+                raise
+            prompt_ids = None
+        if prompt_ids is not None and len(prompt_ids) <= max_prompt_tokens:
             return history, prompt_ids
         if len(history) <= 1:
             raise RuntimeError(
@@ -300,9 +305,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     except Exception as error:
         raise RuntimeError(
-            f"could not load a completed SFT checkpoint for {run_id} from {repo_id}. "
-            "The SFT may not be published/completed yet, or Hugging Face credentials/repository "
-            "configuration may be incorrect."
+            f"could not load a completed SFT checkpoint for {run_id} from {repo_id}: {error}"
         ) from error
 
     try:
