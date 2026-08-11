@@ -65,6 +65,7 @@ RETIRED_MODULES = frozenset(
 ACTIVE_PYTHON_ROOTS = (
     ROOT / "dataset",
     ROOT / "kaggle",
+    ROOT / "model",
     ROOT / "trainer",
     ROOT / "post_training",
 )
@@ -119,12 +120,24 @@ def _imports(path: Path) -> set[str]:
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            imported.add(_resolved_from_module(path, node))
+            base = _resolved_from_module(path, node)
+            if base:
+                imported.add(base)
+            for alias in node.names:
+                if alias.name != "*":
+                    imported.add(f"{base}.{alias.name}" if base else alias.name)
     return imported
 
 
 def _is_retired_module(name: str) -> bool:
     return any(name == retired or name.startswith(retired + ".") for retired in RETIRED_MODULES)
+
+
+def _runtime_python_files() -> tuple[Path, ...]:
+    files = set(ROOT.glob("*.py"))
+    for root in ACTIVE_PYTHON_ROOTS:
+        files.update(root.rglob("*.py"))
+    return tuple(sorted(files))
 
 
 class DatasetLayoutTests(unittest.TestCase):
@@ -134,22 +147,20 @@ class DatasetLayoutTests(unittest.TestCase):
                 self.assertFalse((ROOT / relative).exists(), f"retired dataset path returned: {relative}")
 
     def test_active_python_does_not_import_retired_dataset_modules(self) -> None:
-        for root in ACTIVE_PYTHON_ROOTS:
-            for path in root.rglob("*.py"):
-                with self.subTest(path=path.relative_to(ROOT)):
-                    retired = sorted(name for name in _imports(path) if _is_retired_module(name))
-                    self.assertEqual(retired, [], f"imports retired dataset modules: {retired}")
+        for path in _runtime_python_files():
+            with self.subTest(path=path.relative_to(ROOT)):
+                retired = sorted(name for name in _imports(path) if _is_retired_module(name))
+                self.assertEqual(retired, [], f"imports retired dataset modules: {retired}")
 
     def test_active_python_has_no_monolithic_train_validation_bin_contract(self) -> None:
         forbidden = ("train.bin", "validation.bin")
-        for root in ACTIVE_PYTHON_ROOTS:
-            for path in root.rglob("*.py"):
-                text = path.read_text(encoding="utf-8")
-                with self.subTest(path=path.relative_to(ROOT)):
-                    self.assertFalse(
-                        any(name in text for name in forbidden),
-                        "active source still refers to the retired monolithic dataset layout",
-                    )
+        for path in _runtime_python_files():
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(ROOT)):
+                self.assertFalse(
+                    any(name in text for name in forbidden),
+                    "active source still refers to the retired monolithic dataset layout",
+                )
 
     def test_retired_monolithic_path_constants_are_gone(self) -> None:
         for name in (
