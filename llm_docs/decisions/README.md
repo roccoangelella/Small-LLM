@@ -31,7 +31,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md`](0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md)
 - [`0021-qualify-fla-gdn2-v052-and-resume-step4000.md`](0021-qualify-fla-gdn2-v052-and-resume-step4000.md)
 - [`0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
-- [`0025-freeze-canonical-full-post-pretraining-prompt-suite.md`](0025-freeze-canonical-full-post-pretraining-prompt-suite.md)
+- [`0025-freeze-canonical-full-post-pretraining-prompt-suite.md`](0025-freeze-canonical-full-post-pretraining-prompt_suite.md)
 - [`0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - [`0028-use-one-profile-driven-launcher-for-publication-and-training.md`](0028-use-one-profile-driven-launcher-for-publication-and-training.md)
 - [`0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
@@ -45,6 +45,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
 - [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
 - [`0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md`](0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md)
+- [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-kaggle.md)
 
 ## Superseded ADRs
 
