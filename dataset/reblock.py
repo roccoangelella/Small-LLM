@@ -319,9 +319,10 @@ def reblock_dataset(
                 "run_id": target.run_id,
                 "configuration_hash": configuration_hash,
                 "schema_hash": schema_hash,
-                # This derived corpus is intended to become remotely durable in
-                # the named Modal Volume before training starts.  The companion
-                # compatibility manifest below binds those exact bytes.
+                # The profile requires remote durability before production use.
+                # The local derivative does not claim a particular remote copy;
+                # Modal establishes that boundary when it discovers these bytes
+                # inside the read-only small-llm-data Volume.
                 "remote_required": True,
                 "completion_reason": "byte_preserving_reblock",
             }
@@ -345,38 +346,12 @@ def reblock_dataset(
                     "target_sequences_per_block": target.sequences_per_block,
                     "train_stream_sha256": train_stream_sha,
                     "validation_stream_sha256": validation_stream_sha,
-                    "remote_transport": "modal_volume",
+                    "production_transport": "modal_volume",
                     "modal_volume": "small-llm-data",
                 },
             }
         )
         write_json_atomic(staging / config.MANIFEST_FILENAME, target_manifest)
-
-        drive_manifest = {
-            "version": 1,
-            "run_id": target.run_id,
-            "configuration_hash": configuration_hash,
-            "schema_hash": schema_hash,
-            "transport": "modal_volume",
-            "volume_name": "small-llm-data",
-            "shards": [
-                {
-                    "filename": row["filename"],
-                    # Qualification treats this field as an opaque durable-object
-                    # identifier.  For the Modal-derived corpus it names the
-                    # object in the immutable data Volume rather than Google Drive.
-                    "drive_file_id": f"modal-volume:{target.run_id}:{row['filename']}",
-                    "byte_size": row["byte_size"],
-                    "local_sha256": row["checksum"],
-                    "remote_durable": True,
-                    "configuration_hash": configuration_hash,
-                    "schema_hash": schema_hash,
-                }
-                for row in train_rows + validation_rows
-            ],
-        }
-        drive_path = staging / "drive_manifest.json"
-        write_json_atomic(drive_path, drive_manifest)
 
         target_report = verify(staging, full_scan=False)
         if not target_report.passed:
@@ -387,7 +362,6 @@ def reblock_dataset(
             target_manifest,
             profile=target,
             manifest_path=staging / config.MANIFEST_FILENAME,
-            drive_manifest_path=drive_path,
         )
         for split in ("train", "validation"):
             source_tokens = int(source_plan[split]["target_tokens"])
