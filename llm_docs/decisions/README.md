@@ -43,10 +43,11 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0036-add-local-completed-sft-chat-cli.md`](0036-add-local-completed-sft-chat-cli.md)
 - [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
+- [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
 
 ## Superseded ADRs
 
-- [`0008-run-500m-final-20m-data-scaling-probe.md`](0008-run-500m-final-20m-data-scaling-probe.md) — its 500M run decision was executed, but its claim that 500M would be the final 20M data-scaling probe was superseded by later scaling decisions.
+- [`0008-run-500m-final-20m-data-scaling-probe.md`](0008-run-500m-final-20m_data_scaling_probe.md) — its 500M run decision was executed, but its claim that 500M would be the final 20M data-scaling probe was superseded by later scaling decisions.
 - [`0012-bind-public-gdr2-repository-identity.md`](0012-bind-public-gdr2-repository-identity.md) — superseded by ADR 0013 after the repository was renamed.
 - [`0022-run-1b-20m-probe-via-vps-kaggle-dataset.md`](0022-run-1b-20m-probe-via-vps-kaggle-dataset.md) — superseded before execution by ADR 0023, which changes the target to 2B tokens while retaining VPS build plus private Kaggle attachment.
 - [`0024-freeze-canonical-questions-only-prompt-test-settings.md`](0024-freeze-canonical-questions-only-prompt-test-settings.md) — superseded by ADR 0025 after the user clarified that the reusable canonical comparison should run the full qualitative prompt suite.
