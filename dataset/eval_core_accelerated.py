@@ -3,10 +3,14 @@
 This module preserves the exact eval-core selection policy and output ordering while
 making the remote source scan practical:
 
-* record identity is hashed before JSON/token parsing, so only the ~0.1% validation
-  candidates are deserialized;
-* immutable 256 MiB source regions are scanned concurrently;
-* completed region results are consumed strictly in the frozen work-plan order, so
+* record boundaries are scanned from raw bytes and the frozen validation identity is
+  hashed before a JSONL line is materialized, so ~99.9% of source records are never
+  copied into Python record objects or JSON/token-deserialized;
+* immutable 256 MiB source regions are scanned concurrently using conservative
+  8 MiB HTTP range reads, which proved substantially more reliable than large reads;
+* more work is queued than there are workers, so one slow early region does not leave
+  the remaining workers idle;
+* completed region results are consumed strictly in frozen work-plan order, so
   concurrency cannot change which documents are selected or their manifest order.
 
 The verifier and corpus schema remain owned by :mod:`dataset.eval_core`.
@@ -20,17 +24,28 @@ import json
 import os
 from pathlib import Path
 import shutil
+import threading
 from typing import Iterator, Sequence
 
 from dataset import config
 from dataset import eval_core as core
 from dataset.src.bytesource import HttpRangeReader, SourceFile, list_source_files
-from dataset.src.records import ParsedRecord, iter_owned_records, record_identity_str, validate_record
+from dataset.src.records import ParsedRecord, record_identity_str, validate_record
 from dataset.src.split import is_validation
 from dataset.src.workplan import WorkItem, build_work_plan
 
-DEFAULT_SCAN_WORKERS = 8
-EVAL_FETCH_CHUNK_BYTES = 32 * 1024 * 1024
+DEFAULT_SCAN_WORKERS = 4
+EVAL_FETCH_CHUNK_BYTES = 8 * 1024 * 1024
+PREFETCH_PER_WORKER = 4
+
+_PROGRESS_LOCK = threading.Lock()
+_PROGRESS: dict[str, int] = {
+    "total_regions": 0,
+    "regions_finished": 0,
+    "regions_committed": 0,
+    "downloaded_bytes": 0,
+    "records_scanned": 0,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,15 +62,77 @@ class _SourceBatch:
     candidates: tuple[_ValidationCandidate, ...]
 
 
+def _reset_scan_progress(total_regions: int) -> None:
+    with _PROGRESS_LOCK:
+        _PROGRESS.update(
+            total_regions=total_regions,
+            regions_finished=0,
+            regions_committed=0,
+            downloaded_bytes=0,
+            records_scanned=0,
+        )
+
+
+def _progress_add(
+    *,
+    regions_finished: int = 0,
+    regions_committed: int = 0,
+    downloaded_bytes: int = 0,
+    records_scanned: int = 0,
+) -> None:
+    with _PROGRESS_LOCK:
+        _PROGRESS["regions_finished"] += regions_finished
+        _PROGRESS["regions_committed"] += regions_committed
+        _PROGRESS["downloaded_bytes"] += downloaded_bytes
+        _PROGRESS["records_scanned"] += records_scanned
+
+
+def scan_progress_snapshot() -> dict[str, int]:
+    """Return a thread-safe snapshot for user-facing build heartbeats."""
+    with _PROGRESS_LOCK:
+        return dict(_PROGRESS)
+
+
 def _scan_workers() -> int:
     raw = os.environ.get("SMALL_LLM_EVAL_SCAN_WORKERS", str(DEFAULT_SCAN_WORKERS))
     try:
         workers = int(raw)
     except ValueError as error:
         raise ValueError("SMALL_LLM_EVAL_SCAN_WORKERS must be an integer") from error
-    if not 1 <= workers <= 32:
-        raise ValueError("SMALL_LLM_EVAL_SCAN_WORKERS must be in [1, 32]")
+    if not 1 <= workers <= 16:
+        raise ValueError("SMALL_LLM_EVAL_SCAN_WORKERS must be in [1, 16]")
     return workers
+
+
+def _read_counted(reader: HttpRangeReader, offset: int, length: int) -> bytes:
+    data = reader.read_range(offset, length)
+    _progress_add(downloaded_bytes=len(data))
+    return data
+
+
+def _record_floor(reader: HttpRangeReader, start: int) -> int:
+    """Return the start of the JSONL record containing ``start``."""
+    pos = start
+    while pos > 0:
+        lo = max(0, pos - config.BOUNDARY_SCAN_CHUNK_BYTES)
+        data = _read_counted(reader, lo, pos - lo)
+        newline = data.rfind(b"\n")
+        if newline != -1:
+            return lo + newline + 1
+        if lo == 0:
+            return 0
+        pos = lo
+    return 0
+
+
+def _is_candidate(filename: str, record_start: int, probability: float) -> bool:
+    return is_validation(
+        seed=config.SELECTION_SEED,
+        revision=config.DATASET_REVISION,
+        filename=filename,
+        record_start=record_start,
+        probability=probability,
+    )
 
 
 def _scan_item(
@@ -64,35 +141,103 @@ def _scan_item(
     item: WorkItem,
     source: SourceFile,
     validation_probability: float,
+    stop_event: threading.Event | None = None,
 ) -> _SourceBatch:
+    """Scan one frozen work-plan region without materializing rejected records."""
     reader = HttpRangeReader(source, config.DATASET_REPOSITORY, config.DATASET_REVISION)
-    candidates: list[_ValidationCandidate] = []
+    start, end = item.range_start, item.range_end
+    file_size = reader.file_size()
+    floor = 0 if start == 0 else _record_floor(reader, start)
+
+    cursor = floor
+    line_start = floor
     scanned = 0
-    for record in iter_owned_records(
-        item,
-        reader,
-        fetch_chunk=EVAL_FETCH_CHUNK_BYTES,
-    ):
-        scanned += 1
-        # The split is a pure function of permanent source identity. Checking it
-        # before JSON parsing is exactly equivalent to the legacy builder but avoids
-        # deserializing the token arrays of the ~99.9% non-validation records.
-        if is_validation(
-            seed=config.SELECTION_SEED,
-            revision=config.DATASET_REVISION,
-            filename=item.filename,
-            record_start=record.record_start,
-            probability=validation_probability,
-        ):
-            candidates.append(
-                _ValidationCandidate(record=record, scanned_through=scanned)
-            )
-    return _SourceBatch(
-        ordinal=ordinal,
-        filename=item.filename,
-        scanned_records=scanned,
-        candidates=tuple(candidates),
+    reported_scanned = 0
+    candidates: list[_ValidationCandidate] = []
+    candidate_parts: list[bytes] | None = (
+        []
+        if start <= line_start < end
+        and _is_candidate(item.filename, line_start, validation_probability)
+        else None
     )
+
+    def report_records() -> None:
+        nonlocal reported_scanned
+        delta = scanned - reported_scanned
+        if delta:
+            _progress_add(records_scanned=delta)
+            reported_scanned = scanned
+
+    def finish() -> _SourceBatch:
+        report_records()
+        _progress_add(regions_finished=1)
+        return _SourceBatch(
+            ordinal=ordinal,
+            filename=item.filename,
+            scanned_records=scanned,
+            candidates=tuple(candidates),
+        )
+
+    while cursor < file_size:
+        if stop_event is not None and stop_event.is_set():
+            return finish()
+        length = min(EVAL_FETCH_CHUNK_BYTES, file_size - cursor)
+        chunk = _read_counted(reader, cursor, length)
+        if not chunk:
+            break
+
+        pos = 0
+        while True:
+            newline = chunk.find(b"\n", pos)
+            if newline == -1:
+                if candidate_parts is not None:
+                    candidate_parts.append(chunk[pos:])
+                break
+
+            if candidate_parts is not None:
+                candidate_parts.append(chunk[pos:newline])
+
+            if start <= line_start < end:
+                scanned += 1
+                if candidate_parts is not None:
+                    raw = b"".join(candidate_parts)
+                    if raw.endswith(b"\r"):
+                        raw = raw[:-1]
+                    candidates.append(
+                        _ValidationCandidate(
+                            record=ParsedRecord(record_start=line_start, raw=raw),
+                            scanned_through=scanned,
+                        )
+                    )
+
+            line_start = cursor + newline + 1
+            pos = newline + 1
+            if line_start >= end:
+                return finish()
+            candidate_parts = (
+                []
+                if line_start >= start
+                and _is_candidate(item.filename, line_start, validation_probability)
+                else None
+            )
+
+        cursor += len(chunk)
+        report_records()
+
+    # EOF may terminate the final JSONL record without a trailing newline.
+    if start <= line_start < end:
+        scanned += 1
+        if candidate_parts is not None:
+            raw = b"".join(candidate_parts)
+            if raw.endswith(b"\r"):
+                raw = raw[:-1]
+            candidates.append(
+                _ValidationCandidate(
+                    record=ParsedRecord(record_start=line_start, raw=raw),
+                    scanned_through=scanned,
+                )
+            )
+    return finish()
 
 
 def _ordered_validation_batches(
@@ -111,24 +256,34 @@ def _ordered_validation_batches(
     items = list(plan.work_items)
     if max_work_items is not None:
         items = items[:max_work_items]
+    _reset_scan_progress(len(items))
     by_name = {source.path: source for source in source_files}
     workers = min(_scan_workers(), max(1, len(items)))
+    queue_limit = min(len(items), max(workers, workers * PREFETCH_PER_WORKER))
 
     print(
         "eval_core accelerated scan: "
-        f"workers={workers} region_mib={config.REGION_BYTES / (1024 * 1024):.0f} "
+        f"workers={workers} queued={queue_limit} "
+        f"region_mib={config.REGION_BYTES / (1024 * 1024):.0f} "
         f"fetch_mib={EVAL_FETCH_CHUNK_BYTES / (1024 * 1024):.0f}",
         flush=True,
     )
 
+    stop_event = threading.Event()
     if workers == 1:
-        for ordinal, item in enumerate(items):
-            yield _scan_item(
-                ordinal=ordinal,
-                item=item,
-                source=by_name[item.filename],
-                validation_probability=validation_probability,
-            )
+        try:
+            for ordinal, item in enumerate(items):
+                batch = _scan_item(
+                    ordinal=ordinal,
+                    item=item,
+                    source=by_name[item.filename],
+                    validation_probability=validation_probability,
+                    stop_event=stop_event,
+                )
+                _progress_add(regions_committed=1)
+                yield batch
+        finally:
+            stop_event.set()
         return
 
     executor = ThreadPoolExecutor(
@@ -146,20 +301,23 @@ def _ordered_validation_batches(
             item=item,
             source=by_name[item.filename],
             validation_probability=validation_probability,
+            stop_event=stop_event,
         )
 
     try:
-        while next_submit < len(items) and len(pending) < workers:
+        while next_submit < len(items) and len(pending) < queue_limit:
             submit(next_submit)
             next_submit += 1
 
         for ordinal in range(len(items)):
             batch = pending.pop(ordinal).result()
+            _progress_add(regions_committed=1)
             yield batch
-            if next_submit < len(items):
+            while next_submit < len(items) and len(pending) < queue_limit:
                 submit(next_submit)
                 next_submit += 1
     finally:
+        stop_event.set()
         for future in pending.values():
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
@@ -205,6 +363,7 @@ def build_eval_core_accelerated(
     scanned_records = 0
     validation_records = 0
     complete = False
+    batches: Iterator[_SourceBatch] | None = None
 
     try:
         sources = list_source_files(config.DATASET_REPOSITORY, config.DATASET_REVISION)
@@ -217,8 +376,8 @@ def build_eval_core_accelerated(
         for batch in batches:
             scanned_within_batch = 0
             for candidate in batch.candidates:
-                # Reconstruct the legacy counter exactly even though the worker has
-                # already scanned the rest of this immutable region.
+                # Reconstruct the legacy counter exactly even though a worker may
+                # already have scanned the remainder of this immutable region.
                 scanned_records += candidate.scanned_through - scanned_within_batch
                 scanned_within_batch = candidate.scanned_through
                 record = candidate.record
@@ -311,7 +470,12 @@ def build_eval_core_accelerated(
                     f"clusters_remaining={missing}",
                     flush=True,
                 )
+    finally:
+        close = getattr(batches, "close", None)
+        if close is not None:
+            close()
 
+    try:
         if not core._complete(
             full,
             documents=full_documents_per_cluster,
@@ -401,5 +565,7 @@ def build_eval_core_accelerated(
 __all__ = [
     "DEFAULT_SCAN_WORKERS",
     "EVAL_FETCH_CHUNK_BYTES",
+    "PREFETCH_PER_WORKER",
     "build_eval_core_accelerated",
+    "scan_progress_snapshot",
 ]
