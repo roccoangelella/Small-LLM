@@ -2,7 +2,7 @@
 """Prepare the canonical 2B block-64 Modal corpus entirely from the VPS.
 
 The workflow intentionally keeps Kaggle and Modal interaction on the operator VPS:
-1. discover the authenticated user's existing Kaggle 2B dataset by its frozen slug;
+1. resolve the already-published Kaggle 2B dataset by its frozen slug/recorded handle;
 2. download/unzip it into a fixed VPS cache only when a verified source is absent;
 3. verify the exact schema-v2/run identity;
 4. byte-preservingly reblock the corpus to 64 sequences per optimizer block;
@@ -43,6 +43,8 @@ VPS_DATA_ROOT = Path.home() / "small-llm-data"
 KAGGLE_DOWNLOAD_DIR = VPS_DATA_ROOT / "kaggle" / SOURCE_DATASET_SLUG
 OUTPUT_DIR = VPS_DATA_ROOT / TARGET_RUN_ID
 UPLOAD_MARKER = VPS_DATA_ROOT / ".modal-2b-b64-upload.json"
+KAGGLE_PUBLISH_STATE = Path("/data/small-llm/20m-2b-ops/kaggle-publish-state.json")
+MAX_KAGGLE_LIST_PAGES = 100
 
 MODAL_VOLUME = "small-llm-data"
 MODAL_DESTINATION = f"/datasets/{TARGET_RUN_ID}"
@@ -95,7 +97,37 @@ def _run_live(command: Sequence[str]) -> None:
         raise RuntimeError(f"command failed ({process.returncode}): {' '.join(command)}")
 
 
+def _dataset_refs(output: str) -> set[str]:
+    refs: set[str] = set()
+    for row in csv.reader(io.StringIO(output)):
+        for cell in row:
+            value = cell.strip().strip('"')
+            if value.endswith("/" + SOURCE_DATASET_SLUG):
+                refs.add(value)
+    return refs
+
+
+def _recorded_publish_handle() -> str | None:
+    if not KAGGLE_PUBLISH_STATE.is_file():
+        return None
+    try:
+        handle = _read_object(KAGGLE_PUBLISH_STATE).get("handle")
+    except Exception:
+        return None
+    if isinstance(handle, str) and handle.endswith("/" + SOURCE_DATASET_SLUG):
+        return handle
+    return None
+
+
 def discover_kaggle_handle(kaggle_cli: str) -> str:
+    """Resolve the exact owner/slug without relying on search ranking.
+
+    Priority is explicit override, the durable publication state written when this
+    exact dataset was uploaded from the VPS, KAGGLE_USERNAME, then authenticated
+    API discovery. The API fallback first tries search and then walks owned pages
+    because Kaggle search is title/relevance based rather than an exact slug lookup.
+    """
+
     explicit = os.environ.get("SMALL_LLM_2B_KAGGLE_DATASET_HANDLE", "").strip()
     if explicit:
         if not explicit.endswith("/" + SOURCE_DATASET_SLUG):
@@ -104,7 +136,16 @@ def discover_kaggle_handle(kaggle_cli: str) -> str:
             )
         return explicit
 
-    output = _capture(
+    recorded = _recorded_publish_handle()
+    if recorded:
+        print(f"Using Kaggle handle recorded by VPS publication state: {recorded}", flush=True)
+        return recorded
+
+    username = os.environ.get("KAGGLE_USERNAME", "").strip()
+    if username:
+        return f"{username}/{SOURCE_DATASET_SLUG}"
+
+    searched = _capture(
         [
             kaggle_cli,
             "datasets",
@@ -115,19 +156,42 @@ def discover_kaggle_handle(kaggle_cli: str) -> str:
             "--csv",
         ]
     )
-    matches: set[str] = set()
-    for row in csv.reader(io.StringIO(output)):
-        for cell in row:
-            value = cell.strip().strip('"')
-            if value.endswith("/" + SOURCE_DATASET_SLUG):
-                matches.add(value)
-    if len(matches) != 1:
-        raise RuntimeError(
-            f"expected exactly one authenticated Kaggle dataset ending in /{SOURCE_DATASET_SLUG}; "
-            f"found {sorted(matches)}. Set SMALL_LLM_2B_KAGGLE_DATASET_HANDLE=owner/{SOURCE_DATASET_SLUG} "
-            "only if automatic discovery cannot resolve it."
+    matches = _dataset_refs(searched)
+    if len(matches) == 1:
+        return next(iter(matches))
+    if len(matches) > 1:
+        raise RuntimeError(f"multiple owned Kaggle datasets match the frozen slug: {sorted(matches)}")
+
+    seen_pages: set[str] = set()
+    for page in range(1, MAX_KAGGLE_LIST_PAGES + 1):
+        output = _capture(
+            [
+                kaggle_cli,
+                "datasets",
+                "list",
+                "--mine",
+                "--page",
+                str(page),
+                "--csv",
+            ]
         )
-    return next(iter(matches))
+        fingerprint = output.strip()
+        if not fingerprint or fingerprint in seen_pages:
+            break
+        seen_pages.add(fingerprint)
+        matches.update(_dataset_refs(output))
+        if len(matches) == 1:
+            return next(iter(matches))
+        if len(matches) > 1:
+            raise RuntimeError(f"multiple owned Kaggle datasets match the frozen slug: {sorted(matches)}")
+
+    raise RuntimeError(
+        f"authenticated Kaggle API could not resolve an owned dataset ending in /{SOURCE_DATASET_SLUG}. "
+        f"Checked publication state {KAGGLE_PUBLISH_STATE}, KAGGLE_USERNAME, search, and up to "
+        f"{MAX_KAGGLE_LIST_PAGES} owned-dataset pages. Set "
+        f"SMALL_LLM_2B_KAGGLE_DATASET_HANDLE=owner/{SOURCE_DATASET_SLUG} only if the dataset is "
+        "owned by a different account/organization than the current Kaggle token."
+    )
 
 
 def _profile_matches(root: Path, profile_key: str, run_id: str) -> bool:
