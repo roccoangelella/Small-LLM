@@ -44,7 +44,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
 - [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
-- [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md)
+- [`0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md`](0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md)
 
 ## Superseded ADRs
 
@@ -54,5 +54,6 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0024-freeze-canonical-questions-only-prompt-test-settings.md`](0024-freeze-canonical-questions-only-prompt-test-settings.md) — superseded by ADR 0025 after the user clarified that the reusable canonical comparison should run the full qualitative prompt suite.
 - [`0026-prune-superseded-one-off-kaggle-diagnostics.md`](0026-prune-superseded-one-off-kaggle-diagnostics.md) — superseded by ADR 0035 after the completed FLA investigation executables were re-audited and retired while active runtime/test dependencies were retained.
 - [`0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md`](0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md) — superseded by ADR 0030 after the user explicitly authorized consolidating profile wrappers/overlays before the 2B run.
+- [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md) — its Modal launch authorization is retained by ADR 0041, which replaces the 16-sequence dataset/optimizer block and 4/8/16 probe with byte-preserving block 64 and 16/32/48/64 qualification.
 
 Use [`template.md`](template.md) for new decisions. Historical omnibus decision registers are retained under [`../archive/decision_registers/`](../archive/decision_registers/decisions_and_ablations.md) but are no longer the preferred format for new choices.
