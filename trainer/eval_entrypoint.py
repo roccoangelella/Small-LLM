@@ -16,7 +16,10 @@ import threading
 from typing import Sequence
 
 from dataset.eval_core import verify_eval_core
-from dataset.eval_core_accelerated import build_eval_core_accelerated
+from dataset.eval_core_accelerated import (
+    build_eval_core_accelerated,
+    scan_progress_snapshot,
+)
 from trainer import eval_suite
 
 _BUILD_HEARTBEAT_SECONDS = 15.0
@@ -105,9 +108,15 @@ def _build_with_heartbeat(eval_dir: Path) -> None:
     def heartbeat() -> None:
         while not stop.wait(_BUILD_HEARTBEAT_SECONDS):
             written = _partial_build_bytes(eval_dir)
+            progress = scan_progress_snapshot()
+            downloaded_mib = progress["downloaded_bytes"] / (1024 * 1024)
             print(
                 "eval_core_v1 build active: accelerated pinned ClimbMix scan "
-                f"| partial_output={written / (1024 * 1024):.1f} MiB",
+                f"| downloaded={downloaded_mib:.0f} MiB "
+                f"records={progress['records_scanned']:,} "
+                f"regions_finished={progress['regions_finished']}/{progress['total_regions']} "
+                f"regions_committed={progress['regions_committed']}/{progress['total_regions']} "
+                f"partial_output={written / (1024 * 1024):.1f} MiB",
                 flush=True,
             )
 
@@ -135,7 +144,8 @@ def ensure_eval_core(eval_dir: Path) -> Path:
         )
         print(
             "Using the deterministic accelerated source scanner: validation identity "
-            "is checked before JSON parsing and source regions are fetched concurrently.",
+            "is checked before JSON/token materialization, conservative range reads "
+            "are fetched concurrently, and frozen work-plan order is preserved.",
             flush=True,
         )
         resolved.parent.mkdir(parents=True, exist_ok=True)
