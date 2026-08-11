@@ -242,7 +242,12 @@ def upload_to_modal(modal_cli: str, output_dir: Path, *, force: bool) -> bool:
     if not force and _upload_marker_matches(output_dir):
         print("Modal upload marker matches the derived manifest; skipping duplicate upload.", flush=True)
         return False
-    _run_live([modal_cli, "volume", "put", MODAL_VOLUME, str(output_dir), MODAL_DESTINATION])
+    # --force makes a rerun safe after a partially completed prior upload. The
+    # destination is frozen to this dataset identity and first-use training
+    # verification still checks every shard against the manifest.
+    _run_live(
+        [modal_cli, "volume", "put", "--force", MODAL_VOLUME, str(output_dir), MODAL_DESTINATION]
+    )
     UPLOAD_MARKER.parent.mkdir(parents=True, exist_ok=True)
     UPLOAD_MARKER.write_text(
         json.dumps(
