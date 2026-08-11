@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Publish a completed Modal training checkpoint to Hugging Face.
+"""Publish a verified Modal training checkpoint to Hugging Face.
 
 This is intentionally separate from the live trainer's legacy dataset-keyed
 remote checkpoint protocol. Modal Volume remains the exact-resume transport;
-this command exports the completed verified model/run artifact under a
-model-specific Hugging Face namespace.
+this command exports the latest verified model/run artifact under a
+model-specific Hugging Face namespace and can require final-run completion.
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _latest_verified_checkpoint(checkpoint_dir: Path) -> tuple[Path, int]:
     secrets=[TRAINING_SECRET],
     volumes={str(RUN_ROOT): RUN_VOLUME.with_mount_options(read_only=True)},
 )
-def publish_final(model: str, tokens: str) -> dict[str, object]:
+def publish_checkpoint(model: str, tokens: str, require_complete: bool = False) -> dict[str, object]:
     from huggingface_hub import HfApi
 
     model_preset, token_preset = resolve_presets(model, tokens)
@@ -104,7 +104,8 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
     total_steps = int(trainer["steps"])
 
     checkpoint, completed_steps = _latest_verified_checkpoint(checkpoint_dir)
-    if completed_steps != total_steps:
+    is_final = completed_steps == total_steps
+    if require_complete and not is_final:
         raise RuntimeError(
             f"refusing to publish an incomplete run: latest verified step {completed_steps}, "
             f"planned final step {total_steps}"
@@ -123,7 +124,9 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
     metadata_path = f"models/{run_id}/artifact.json"
     metadata = {
         "version": 1,
-        "artifact_type": "small-llm-final-joint-checkpoint",
+        "artifact_type": (
+            "small-llm-final-joint-checkpoint" if is_final else "small-llm-live-joint-checkpoint"
+        ),
         "run_id": run_id,
         "model_label": model_preset.label,
         "model_parameters_nominal": model_preset.parameters,
@@ -134,6 +137,7 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
         "checkpoint_id": checkpoint_id,
         "completed_steps": completed_steps,
         "total_steps": total_steps,
+        "is_final": is_final,
         "source_commit": runtime.get("source_commit"),
         "dataset_run_id": runtime.get("dataset_run_id"),
         "precision": runtime.get("precision"),
@@ -154,14 +158,14 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
         repo_type="model",
         folder_path=checkpoint,
         path_in_repo=prefix,
-        commit_message=f"Publish {run_id} final checkpoint {checkpoint_id}",
+        commit_message=f"Publish {run_id} checkpoint {checkpoint_id}",
     )
     metadata_commit = api.upload_file(
         repo_id=repo_id,
         repo_type="model",
         path_or_fileobj=(json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode("utf-8"),
         path_in_repo=metadata_path,
-        commit_message=f"Point {run_id} to final checkpoint {checkpoint_id}",
+        commit_message=f"Point {run_id} to checkpoint {checkpoint_id}",
     )
     return {
         "status": "published",
@@ -169,6 +173,8 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
         "run_id": run_id,
         "checkpoint_id": checkpoint_id,
         "completed_steps": completed_steps,
+        "total_steps": total_steps,
+        "is_final": is_final,
         "path_in_repo": prefix,
         "metadata_path": metadata_path,
         "checkpoint_commit": getattr(folder_commit, "oid", None),
@@ -177,26 +183,37 @@ def publish_final(model: str, tokens: str) -> dict[str, object]:
 
 
 @app.local_entrypoint()
-def main(model: str = "100M", tokens: str = "2B") -> None:
+def main(
+    model: str = "100M",
+    tokens: str = "2B",
+    require_complete: bool = False,
+) -> None:
     model_preset, token_preset = resolve_presets(model, tokens)
     print(
         json.dumps(
             {
-                "action": "publish_final_to_huggingface",
+                "action": "publish_verified_checkpoint_to_huggingface",
                 "model": model_preset.label,
                 "tokens": token_preset.label,
                 "run_id": canonical_run_id(model_preset, token_preset),
                 "source": "small-llm-runs Modal Volume",
-                "requires_complete_run": True,
+                "require_complete": require_complete,
             },
             indent=2,
             sort_keys=True,
         ),
         flush=True,
     )
-    result = publish_final.remote(model_preset.label, token_preset.label)
+    result = publish_checkpoint.remote(
+        model_preset.label,
+        token_preset.label,
+        require_complete,
+    )
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use: modal run modal/publish_hf.py --model 100M --tokens 2B")
+    raise SystemExit(
+        "Use: modal run modal/publish_hf.py --model 100M --tokens 2B "
+        "[--require-complete]"
+    )
