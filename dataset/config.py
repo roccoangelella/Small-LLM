@@ -183,17 +183,9 @@ from pathlib import Path  # noqa: E402
 DATASET_DIR: Path = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_DIR: Path = DATASET_DIR / "output"
 
-TRAIN_FILENAME = "train.bin"
-VALIDATION_FILENAME = "validation.bin"
 PROGRESS_FILENAME = "progress.json"
 WORK_PLAN_FILENAME = "work_plan.json"
 MANIFEST_FILENAME = "manifest.json"
-PROGRESS_CSV_FILENAME = "progress.csv"
-
-# ``progress.csv`` is an operational log, not a resume artefact.  It records
-# live counters between durable checkpoints so a long build can be watched
-# without treating a non-durable observation as committed corpus state.
-PROGRESS_CSV_HEARTBEAT_SECONDS = 60.0
 
 
 # ---------------------------------------------------------------------------
