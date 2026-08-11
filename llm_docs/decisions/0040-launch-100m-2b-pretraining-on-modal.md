@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-11
+superseded_by: 0041
 ---
 
 # Launch 100M / 2B pretraining on Modal
@@ -34,3 +35,7 @@ The existing 20M / 2B Kaggle trajectory is too slow for the next model-scale exp
 ```bash
 modal run --detach modal/launch.py --model 100M --tokens 2B --gpu H100
 ```
+
+## Supersession
+
+ADR 0041 keeps the Modal/H100 launch authorization, checkpointing, W&B, precision, optimizer, and run identity, but replaces this ADR's 16-sequence dataset/optimizer block and 4/8/16 microbatch probe with a byte-preserving block-64 Modal corpus and 16/32/48/64 probe.
