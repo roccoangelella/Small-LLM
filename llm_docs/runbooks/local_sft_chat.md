@@ -74,12 +74,22 @@ If no SFT pointer exists, the repository cannot be read, or the latest SFT check
 
 The conversation is serialized with the exact `small-llm-s0-v1` SFT generation template. When history grows too long, the oldest complete user/assistant pairs are discarded until the retained prompt leaves room for `MAX_NEW_TOKENS` inside the model context.
 
-## Device and Triton behavior
+## Streaming behavior
+
+After the user submits a message, `chat.py` prints and flushes `assistant> ` immediately. Once the model samples its first non-EOS token, decoded text is printed token-by-token instead of buffering the entire response.
+
+GPT-2 token boundaries do not always align with UTF-8 character boundaries, so the CLI incrementally decodes token bytes before printing. This prevents a multi-byte character split across tokens from being rendered as replacement characters.
+
+Streaming changes presentation only. It does not reduce time-to-first-token or the model's per-token compute cost.
+
+## Device, latency, and Triton behavior
 
 Device selection is automatic:
 
 - CUDA available: FP16 autocast plus the qualified FLA GDN-2 backend.
 - No CUDA: CPU FP32 plus the adaptive PyTorch GDN-2 fallback.
+
+Some delay after submitting the first message is expected. The first generated token requires a complete forward pass over the serialized prompt. On a cold CUDA process, the first FLA/Triton execution can additionally pay kernel import/JIT or cache-loading overhead. Later turns can also have noticeable prefill latency because the retained conversation history is longer.
 
 On CUDA, FLA calls Triton JIT kernels. A machine/environment with no matching Triton cache entry can pay compilation latency on first use. Triton maintains a persistent cache under its configured cache directory (by default beneath `~/.triton/`), so identical kernels normally do not need to be recompiled on every token or every process launch while that cache remains valid. Clearing the cache or changing relevant compiler/runtime/device/kernel specialization inputs can cause compilation again.
 
@@ -87,4 +97,4 @@ CPU execution does not use the FLA CUDA path and therefore does not compile Trit
 
 ## Current limitation
 
-`SmallLLM` does not yet expose a unified cached decode contract across GDN-2 and MHA layers. The existing sampler therefore recomputes the retained prefix for each generated token. This CLI is intended for local qualitative interaction, not throughput benchmarking or production serving.
+`SmallLLM` does not yet expose a unified cached decode contract across GDN-2 and MHA layers. The sampler therefore recomputes the retained prefix for each generated token. Streaming makes this computation visible as tokens finish, but does not make the computation itself faster. This CLI is intended for local qualitative interaction, not throughput benchmarking or production serving.
