@@ -46,15 +46,8 @@ class ProfileSpec:
     model_label: str
     token_label: str
     token_key: str
-    dataset_profile: str
-    dataset_run_id: str
+    dataset_profile_key: str
     dataset_slug: str
-    target_source_tokens: int
-    minimum_source_tokens: int
-    maximum_source_tokens: int
-    checkpoint_source_tokens: int
-    qualification_module: str
-    qualification_report_module: str
     launch_commit: str
     wandb_run_id: str
     wandb_run_name: str
@@ -70,6 +63,39 @@ class ProfileSpec:
     skipped_probe_reason: str
     selected_microbatch: int = 4
     durability_every: int = 250
+
+    @property
+    def dataset_contract(self) -> Any:
+        from dataset.qualification import get_profile
+
+        return get_profile(self.dataset_profile_key)
+
+    @property
+    def dataset_profile(self) -> str:
+        return str(self.dataset_contract.plan.name)
+
+    @property
+    def dataset_run_id(self) -> str:
+        run_id = self.dataset_contract.run_id
+        if run_id is None:
+            raise RuntimeFailure(f"dataset profile {self.dataset_profile_key} has no production run ID")
+        return str(run_id)
+
+    @property
+    def target_source_tokens(self) -> int:
+        return int(self.dataset_contract.target_source_tokens)
+
+    @property
+    def minimum_source_tokens(self) -> int:
+        return int(self.dataset_contract.minimum_source_tokens)
+
+    @property
+    def maximum_source_tokens(self) -> int:
+        return int(self.dataset_contract.maximum_source_tokens)
+
+    @property
+    def checkpoint_source_tokens(self) -> int:
+        return int(self.dataset_contract.checkpoint_source_tokens)
 
     @property
     def run_root_name(self) -> str:
@@ -98,15 +124,8 @@ PROFILES: dict[tuple[int, int], ProfileSpec] = {
         model_label="20M",
         token_label="100M",
         token_key="100m",
-        dataset_profile="20m-100m-data-scaling-v1",
-        dataset_run_id="20m-100m-dataset-001",
+        dataset_profile_key="20m-100m",
         dataset_slug="small-llm-20m-100m-dataset-001",
-        target_source_tokens=100_000_000,
-        minimum_source_tokens=90_000_000,
-        maximum_source_tokens=110_000_000,
-        checkpoint_source_tokens=20_000_000,
-        qualification_module="dataset.qualification_100m",
-        qualification_report_module="dataset.qualification_100m_report",
         launch_commit="8e3cd9cb149facc5fa28e8108a70304c1f8c1c15",
         wandb_run_id="20m-100m-data-004",
         wandb_run_name="20M model on 100M tokens",
@@ -127,15 +146,8 @@ PROFILES: dict[tuple[int, int], ProfileSpec] = {
         model_label="20M",
         token_label="500M",
         token_key="500m",
-        dataset_profile="20m-500m-data-scaling-v1",
-        dataset_run_id="20m-500m-dataset-001",
+        dataset_profile_key="20m-500m",
         dataset_slug="small-llm-20m-500m-dataset-001",
-        target_source_tokens=500_000_000,
-        minimum_source_tokens=450_000_000,
-        maximum_source_tokens=550_000_000,
-        checkpoint_source_tokens=20_000_000,
-        qualification_module="dataset.qualification_500m",
-        qualification_report_module="dataset.qualification_500m_report",
         launch_commit="c0214d00047c61a290d9a138a6bd94ed5701337c",
         wandb_run_id="20m-500m-data-001",
         wandb_run_name="20M model on 500M tokens",
@@ -156,15 +168,8 @@ PROFILES: dict[tuple[int, int], ProfileSpec] = {
         model_label="20M",
         token_label="2B",
         token_key="2b",
-        dataset_profile="20m-2b-data-scaling-v1",
-        dataset_run_id="20m-2b-dataset-001",
+        dataset_profile_key="20m-2b",
         dataset_slug="small-llm-20m-2b-dataset-001",
-        target_source_tokens=2_000_000_000,
-        minimum_source_tokens=1_800_000_000,
-        maximum_source_tokens=2_200_000_000,
-        checkpoint_source_tokens=80_000_000,
-        qualification_module="dataset.qualification_2b",
-        qualification_report_module="dataset.qualification_2b_report",
         launch_commit="3c920a7b682382181d4dc7557e217e6509d0dabe",
         wandb_run_id="20m-2b-data-001",
         wandb_run_name="20M model on 2B tokens",
@@ -220,13 +225,14 @@ def _profile_manifest_match(
         return False, row
     manifest = base.read_object(manifest_path, "dataset manifest")
     production = manifest.get("production")
+    contract = profile.dataset_contract
     top = {
         "schema_version": 2,
         "sequence_format": "context_plus_one",
-        "context_length": 2048,
-        "stored_tokens_per_sequence": 2049,
-        "sequences_per_block": 16,
-        "target_shard_bytes": 8 * 1024 * 1024,
+        "context_length": contract.context_length,
+        "stored_tokens_per_sequence": contract.context_length + 1,
+        "sequences_per_block": contract.sequences_per_block,
+        "target_shard_bytes": contract.target_shard_bytes,
     }
     matched = all(manifest.get(key) == value for key, value in top.items())
     matched = matched and isinstance(production, Mapping)
@@ -376,9 +382,7 @@ def train(
 
     def profile_run(command: Sequence[str], *args: Any, **kwargs: Any) -> dict[str, Any]:
         rewritten = [
-            profile.qualification_report_module
-            if item == "dataset.qualification_100m_report"
-            else item
+            profile.dataset_profile_key if item == "20m-100m" else item
             for item in command
         ]
         return original_run(rewritten, *args, **kwargs)
@@ -490,7 +494,10 @@ def publish(
         command = [
             sys.executable,
             "-m",
-            profile.qualification_module,
+            "dataset.qualification",
+            "build",
+            "--profile",
+            profile.dataset_profile_key,
             "--weights-file",
             str(config.weights),
             "--output-dir",
@@ -503,7 +510,10 @@ def publish(
             [
                 sys.executable,
                 "-m",
-                profile.qualification_report_module,
+                "dataset.qualification",
+                "report",
+                "--profile",
+                profile.dataset_profile_key,
                 "--dataset-dir",
                 str(root),
                 "--drive-manifest",

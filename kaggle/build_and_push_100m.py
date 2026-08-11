@@ -192,7 +192,7 @@ def dataset_complete(root: Path) -> bool:
 
 def producer_command(config: Config, resume: bool) -> list[str]:
     command = [
-        sys.executable, "-m", "dataset.qualification_100m",
+        sys.executable, "-m", "dataset.qualification", "build", "--profile", "20m-100m",
         "--weights-file", str(config.weights), "--output-dir", str(config.dataset),
     ]
     return command + (["--resume"] if resume else [])
@@ -219,7 +219,7 @@ def full_scan(root: Path, prefix: str, config: Config) -> None:
 def derive_plan(root: Path, prefix: str, config: Config) -> None:
     run(
         [
-            sys.executable, "-m", "dataset.qualification_100m_report",
+            sys.executable, "-m", "dataset.qualification", "report", "--profile", "20m-100m",
             "--dataset-dir", str(root), "--drive-manifest", str(root / "drive_manifest.json"),
             "--output", str(root / "qualification_plan.json"),
         ],

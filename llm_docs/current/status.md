@@ -88,7 +88,7 @@ pinned Nemotron-ClimbMix source
   -> T4 training from Kaggle-local input
 ```
 
-Current operational state: **the unified 2B publication/training launch surface is prepared on `main`; dataset production and optimizer update 1 have not yet been accepted as completed evidence.**
+Current operational state: **the unified 2B publication/training launch surface is prepared on `main`; dataset production and optimizer update 1 have not yet been accepted as completed evidence.** Under ADR 0037 the finite dataset identity/geometry is now centralized in `dataset.qualification` (`--profile 20m-2b`) rather than repeated across per-budget producer/report wrappers.
 
 ## Frozen decisions still in force for the 2B probe
 
@@ -149,6 +149,7 @@ Current runbook: [`../runbooks/sft_s0_runbook.md`](../runbooks/sft_s0_runbook.md
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
 - Unified Kaggle runtime decision: [`../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md`](../decisions/0030-consolidate-kaggle-profile-wrappers-behind-one-runtime.md)
+- Dataset tooling consolidation: [`../decisions/0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](../decisions/0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - Memory-governance decision: [`../decisions/0031-govern-project-memory-with-progressive-disclosure.md`](../decisions/0031-govern-project-memory-with-progressive-disclosure.md)
 - SFT scaling decision: [`../decisions/0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](../decisions/0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)
 - SFT scorecard/cadence decision: [`../decisions/0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md`](../decisions/0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md)

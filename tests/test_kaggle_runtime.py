@@ -19,34 +19,18 @@ import runtime  # noqa: E402
 class KaggleRuntimeTests(unittest.TestCase):
     def test_registered_profiles_preserve_qualified_identities(self) -> None:
         expected = {
-            "100M": (
-                "20m-100m-dataset-001",
-                "20m-100m-data-004",
-                "dataset.qualification_100m",
-                "dataset.qualification_100m_report",
-            ),
-            "500M": (
-                "20m-500m-dataset-001",
-                "20m-500m-data-001",
-                "dataset.qualification_500m",
-                "dataset.qualification_500m_report",
-            ),
-            "2B": (
-                "20m-2b-dataset-001",
-                "20m-2b-data-001",
-                "dataset.qualification_2b",
-                "dataset.qualification_2b_report",
-            ),
+            "100M": ("20m-100m", "20m-100m-dataset-001", "20m-100m-data-004"),
+            "500M": ("20m-500m", "20m-500m-dataset-001", "20m-500m-data-001"),
+            "2B": ("20m-2b", "20m-2b-dataset-001", "20m-2b-data-001"),
         }
         for profile in runtime.PROFILES.values():
             self.assertRegex(profile.launch_commit, r"^[0-9a-f]{40}$")
             self.assertEqual(profile.durability_every, 250)
             self.assertEqual(
                 (
+                    profile.dataset_profile_key,
                     profile.dataset_run_id,
                     profile.wandb_run_id,
-                    profile.qualification_module,
-                    profile.qualification_report_module,
                 ),
                 expected[profile.token_label],
             )

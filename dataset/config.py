@@ -1,16 +1,15 @@
 """Frozen production policy for the Nemotron-ClimbMix token-only corpus.
 
 Everything that defines *what* the production corpus is lives here as plain
-constants.  The implementation in :mod:`dataset.src` reads these defaults and
-never invents policy of its own.  Safe command-line overrides (smoke targets,
-output location, buffer sizes) are applied by :mod:`dataset.src.build` and do
-not change the frozen policy itself.
+constants. The implementations in :mod:`dataset.src`, :mod:`dataset.production`,
+and the frozen profile registry in :mod:`dataset.qualification` read this policy
+rather than inventing source-selection semantics of their own.
 
-The production path never decodes accepted documents.  It reads existing GPT-2
+The production path never decodes accepted documents. It reads existing GPT-2
 token IDs by deterministic HTTP byte-range access to the pinned Hugging Face
-source, keeps records by numeric ``cluster_id`` (the only semantic signal),
-appends little-endian ``uint16`` token IDs to one ``train.bin`` and one
-``validation.bin``, and is crash-safe and resumable.
+source, keeps records by numeric ``cluster_id`` (the only semantic signal), and
+writes little-endian ``uint16`` context-plus-one sequences into immutable
+schema-v2 train/validation shards with crash-safe resume and remote durability.
 """
 
 from __future__ import annotations

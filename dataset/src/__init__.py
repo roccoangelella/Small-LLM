@@ -1,1 +1,1 @@
-"""Implementation helpers for :mod:`dataset.main`."""
+"""Shared implementation primitives for dataset production, verification, and evaluation."""

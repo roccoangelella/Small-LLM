@@ -321,7 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary["dataset"] = {"selected": str(dataset), "inspected": inspected}
         verify = common + ["--with-requirements", "dataset/requirements-remote.txt", "python", "-m", "dataset.main", "verify", "--output-dir", str(dataset), "--full-scan"]
         summary["stages"].append(run(verify, name="dataset-full-scan", evidence=evidence, cwd=repo))
-        report = common + ["python", "-m", "dataset.qualification_20m_report", "--dataset-dir", str(dataset), "--drive-manifest", str(dataset / "drive_manifest.json"), "--output", str(plan_json)]
+        report = common + ["python", "-m", "dataset.qualification", "report", "--profile", "20m-10m", "--dataset-dir", str(dataset), "--drive-manifest", str(dataset / "drive_manifest.json"), "--output", str(plan_json)]
         summary["stages"].append(run(report, name="qualification-plan", evidence=evidence, cwd=repo))
         plan = validate_plan(plan_json)
         summary["plan"] = plan

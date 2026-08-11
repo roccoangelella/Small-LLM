@@ -114,7 +114,7 @@ training engine        publication engine
 
 The remaining older 100M-named engine/helper modules are **internal shared implementations**, not human entry points. The former `run_20m_100m.py`, `run_20m_500m.py`, `run_20m_2b.py`, 500M/2B scaling overlays, 500M/2B publisher overlays, compatibility entry, and publication `.sh` wrappers have been removed from `main`.
 
-The profile table preserves the historical contracts rather than re-deriving them from nominal sizes. In particular the 2B profile remains pinned to its already-qualified launch commit and uses its own dataset/W&B namespaces and `dataset.qualification_2b_report` dispatch.
+The profile table preserves the historical contracts rather than re-deriving them from nominal sizes. Dataset identity/geometry now comes from the shared `dataset.qualification` registry; in particular the 2B profile remains pinned to its already-qualified launch commit, its own dataset/W&B namespaces, and `dataset.qualification report --profile 20m-2b` dispatch.
 
 ## Adding a future profile
 

@@ -598,7 +598,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                    "python", "-m", "dataset.main", "verify", "--output-dir", str(dataset), "--full-scan"],
                    name="dataset-full-scan", evidence=EVIDENCE, cwd=WORKTREE)
         plan_path = EVIDENCE / "qualification_plan.json"
-        common.run(base + ["python", "-m", "dataset.qualification_100m_report",
+        common.run(base + ["python", "-m", "dataset.qualification", "report", "--profile", "20m-100m",
                    "--dataset-dir", str(dataset), "--drive-manifest", str(dataset / "drive_manifest.json"),
                    "--output", str(plan_path)], name="qualification-plan", evidence=EVIDENCE, cwd=WORKTREE)
         plan = validate_plan(plan_path)

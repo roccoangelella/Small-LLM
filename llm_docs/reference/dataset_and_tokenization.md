@@ -56,16 +56,9 @@ Mixture accounting is continuous across documents, microbatches, gradient-accumu
 
 ### Full calibration
 
-PR #3, merged at `a851242ff121a706ac5041319c27bba6c7e1dbf1`, added the resumable full-corpus calibration:
+PR #3, merged at `a851242ff121a706ac5041319c27bba6c7e1dbf1`, added the resumable full-corpus calibration. That one-time scan completed and was independently published; ADR 0037 therefore retired its executable from the active Small-LLM dataset package. The original implementation and command remain available in Git history, while the standalone reproducible calibration package lives in `roccoangelella/climbmix-token-mixture`.
 
-```bash
-uv run python -m dataset.mixture \
-  --output-dir /data/climbmix-mixture-calibration \
-  --workers 8 \
-  --max-in-flight-work-items 16
-```
-
-The pass scans the approximately 2.04 TB pinned release, reads `cluster_id` and `token_count` without materializing token arrays, checkpoints deterministic work, resumes without double counting, and fails closed on malformed metadata or source/work-plan drift.
+The completed pass scanned the approximately 2.04 TB pinned release, read `cluster_id` and `token_count` without materializing token arrays, checkpointed deterministic work, resumed without double counting, and failed closed on malformed metadata or source/work-plan drift.
 
 Outputs:
 

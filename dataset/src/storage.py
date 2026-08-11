@@ -7,6 +7,7 @@ can never leave a half-written checkpoint that could be mistaken for valid state
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -48,6 +49,16 @@ def read_json(path: Path) -> Any:
             return json.load(handle)
     except FileNotFoundError as error:
         raise FileNotFoundError(f"Required artefact does not exist: {path}") from error
+
+
+def sha256_file(path: Path, *, chunk_bytes: int = 16 * 1024 * 1024) -> str:
+    """Return the SHA-256 of a file without loading it into memory."""
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_bytes), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def canonical_json_bytes(payload: Any, *, exclude_keys: tuple[str, ...] = ()) -> bytes:

@@ -16,39 +16,52 @@ approved mixture-weight SHA-256: 76e82e22760adcac59c7294fe9bac11358f5a8b7a26035a
 
 The explicit programming cluster is excluded; the resulting corpus is not guaranteed code-free.
 
-## Supported paths
+## Active modules
 
-- `dataset.production`: production schema-v2 cache with exact mixture accounting, verified Google Drive durability, locking, resume, and migration.
-- `dataset.qualification_100m`: fixed producer for the current 20M-model/100M-token experiment.
-- `dataset.eval_core`: deterministic `eval_core_v1` fast/full held-out corpus builder and verifier.
-- `dataset.main`: lower-level build, status, stream-cache validation, and shared full-scan verification utilities.
+- `dataset.qualification`: the experiment-facing finite-dataset CLI and single registry for frozen 10M/100M/500M/2B profile details. Active profiles can be built; all profiles can derive a trainer plan.
+- `dataset.production`: reusable schema-v2 producer implementation with exact mixture accounting, verified Google Drive durability, locking, and resume. Normally invoked through `dataset.qualification build` for a fixed scaling run.
+- `dataset.qualification_report`: shared manifest/Drive validation and exact one-pass WSD plan engine used by the profile CLI.
+- `dataset.eval_core`, `dataset.eval_core_accelerated`, `dataset.eval_core_cli`: reusable `eval_core_v1` construction and verification. Eval-core is intentionally separate from the training-cache producer.
+- `dataset.main`: shared schema-v2 verification plus the low-level stream-cache development surface still covered by streaming tests.
+- `dataset.drive_auth`: Google Drive credential loading used by production, plus the infrequent interactive OAuth setup command.
+- `dataset.src`: shared producer, streaming, storage, work-plan, retry, verification, and remote-backend primitives.
 
-The obsolete decoded-text/LLM-review pipeline has been deleted. Do not recreate it from the archive; Git history is sufficient if its implementation ever needs to be studied.
+## Finite dataset profiles
 
-## Environment
+List the exact frozen identities:
 
 ```bash
-uv sync --locked
-uv pip install -r dataset/requirements-remote.txt
+uv run python -m dataset.qualification profiles
 ```
 
-## Production build
-
-Use the current experiment runbook rather than assembling flags manually:
-
-- [`../llm_docs/runbooks/20m_100m_runbook.md`](../llm_docs/runbooks/20m_100m_runbook.md)
-- [`../llm_docs/reference/dataset_and_tokenization.md`](../llm_docs/reference/dataset_and_tokenization.md)
-
-The general production command remains:
+Build or resume the current 2B profile without restating its scientific/storage geometry:
 
 ```bash
-uv run --env-file .env python -m dataset.production \
+uv run --env-file .env python -m dataset.qualification build \
+  --profile 20m-2b \
   --weights-file /path/to/approved-weights.json \
-  --output-dir /data/climbmix-cache \
-  --run-id climbmix-production-v1
+  --output-dir /data/small-llm/20m-2b-dataset-001
+
+uv run --env-file .env python -m dataset.qualification build \
+  --profile 20m-2b \
+  --weights-file /path/to/approved-weights.json \
+  --output-dir /data/small-llm/20m-2b-dataset-001 \
+  --resume
 ```
 
-Add `--resume` to continue the same immutable production identity.
+The profile fixes run ID, source-token envelope, checkpoint cadence, context length, sequences per block, shard size, and remote-durability requirement. Reader/queue tuning remains available through the underlying production CLI.
+
+Derive the exact one-pass trainer plan from a completed cache:
+
+```bash
+uv run python -m dataset.qualification report \
+  --profile 20m-2b \
+  --dataset-dir /data/small-llm/20m-2b-dataset-001 \
+  --drive-manifest /data/small-llm/20m-2b-dataset-001/drive_manifest.json \
+  --output /data/small-llm/20m-2b-dataset-001/qualification_plan.json
+```
+
+The historical `20m-10m` profile remains reportable for reproducibility but is intentionally not buildable again.
 
 ## Evaluation corpus
 
@@ -57,11 +70,19 @@ small-llm-eval-data build --output-dir /data/eval_core_v1
 small-llm-eval-data verify --eval-dir /data/eval_core_v1
 ```
 
-## Tests
+## Retired one-time tooling
+
+The full ~2 TB cluster-mixture calibration and the original 10M operational-acceptance suite were qualification jobs, not recurring production dependencies. Their active executables and tests were removed after acceptance. The approved mixture hash, measurements, and acceptance evidence remain under `llm_docs/`; the standalone reproducible calibration implementation is published in `roccoangelella/climbmix-token-mixture`. Historical commands remain readable in archived evidence and Git history.
+
+The earlier per-budget modules (`qualification_100m.py`, `qualification_500m.py`, `qualification_2b.py` and matching report wrappers) were also removed. Add future finite budgets as one profile row in `dataset.qualification`, not as new wrapper files.
+
+## Environment and tests
 
 ```bash
+uv sync --locked
+uv pip install -r dataset/requirements-remote.txt
 uv run --extra model --with-requirements dataset/requirements-remote.txt \
   python -m unittest discover -v
 ```
 
-Dataset production remains fail-closed: source revision, selection seed, split identity, mixture weights, sequence geometry, shard hashes, and remote durability must match the recorded contract.
+Dataset production remains fail-closed: source revision, selection seed, split identity, profile identity, mixture weights, sequence geometry, shard hashes, and remote durability must match the recorded contract.

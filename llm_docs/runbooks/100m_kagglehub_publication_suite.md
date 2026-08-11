@@ -49,7 +49,7 @@ They may be overridden through `SMALL_LLM_100M_*` environment variables or the s
 The unified command:
 
 1. requires a clean Small-LLM checkout and the fixed credentials;
-2. starts `dataset.qualification_100m` when producer output is absent;
+2. starts `dataset.qualification build --profile 20m-100m` when producer output is absent;
 3. automatically resumes an interrupted output directory;
 4. skips production when the fixed completed manifest already exists;
 5. runs a literal full local shard scan;

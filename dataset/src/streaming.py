@@ -29,7 +29,7 @@ from dataset import config
 
 from .bitio import tokens_to_uint16_le_bytes
 from .bytesource import RangeReader, SourceFile
-from .manifest import sha256_file
+from .storage import sha256_file
 from .records import iter_owned_records, validate_record
 from .split import is_validation
 from .storage import read_json, write_json_atomic
