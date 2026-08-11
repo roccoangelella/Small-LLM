@@ -17,9 +17,19 @@ from typing import Any, Mapping
 
 import modal
 
-LOCAL_REPO = Path(__file__).resolve().parents[1]
-LOCAL_MODAL = Path(__file__).resolve().parent
 REMOTE_REPO = Path("/root/small-llm")
+REMOTE_MODAL = REMOTE_REPO / "modal"
+_SOURCE_DIR = Path(__file__).resolve().parent
+if (_SOURCE_DIR / "profiles.py").is_file():
+    # Local CLI/deployment import from the repository checkout.
+    LOCAL_MODAL = _SOURCE_DIR
+    LOCAL_REPO = LOCAL_MODAL.parent
+else:
+    # Modal hydrates the defining source as /root/publish_hf.py. The repository
+    # itself is mounted separately at /root/small-llm, so resolve imports there.
+    LOCAL_REPO = REMOTE_REPO
+    LOCAL_MODAL = REMOTE_MODAL
+
 RUN_ROOT = Path("/runs")
 APP_NAME = "small-llm-hf-publication"
 _CHECKPOINT_ID = re.compile(r"^step-(\d{8})$")
@@ -33,7 +43,12 @@ TRAINING_SECRET = modal.Secret.from_name("small-llm-training")
 IMAGE = (
     modal.Image.debian_slim(python_version="3.13")
     .uv_pip_install("huggingface-hub>=0.30,<2")
-    .env({"PYTHONPATH": str(REMOTE_REPO), "PYTHONUNBUFFERED": "1"})
+    .env(
+        {
+            "PYTHONPATH": f"{REMOTE_REPO}:{REMOTE_MODAL}",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
     .add_local_dir(
         LOCAL_REPO,
         remote_path=str(REMOTE_REPO),
