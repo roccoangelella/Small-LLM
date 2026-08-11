@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
-import modal.prepare_dataset as prepare
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "small_llm_modal_prepare_dataset",
+    ROOT / "modal" / "prepare_dataset.py",
+)
+assert SPEC is not None and SPEC.loader is not None
+prepare = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(prepare)
 
 
 def _write_source(root: Path, *, run_id: str = prepare.SOURCE_RUN_ID) -> Path:
@@ -39,7 +47,7 @@ def test_handle_discovery_uses_authenticated_mine_search(monkeypatch) -> None:
         seen.append(list(command))
         return f"ref,title\n{expected},Small LLM 2B\n"
 
-    monkeypatch.setattr(prepare, "_capture", fake_capture)
+    prepare._capture = fake_capture
     assert prepare.discover_kaggle_handle("kaggle") == expected
     assert seen == [[
         "kaggle", "datasets", "list", "--mine", "--search",
@@ -65,6 +73,7 @@ def test_find_source_requires_exact_run_identity(tmp_path: Path) -> None:
     expected = _write_source(tmp_path)
     assert prepare.find_source(tmp_path) == expected.resolve()
 
-    (expected / "manifest.json").unlink()
-    _write_source(tmp_path, run_id="wrong-run")
+    manifest = json.loads((expected / "manifest.json").read_text(encoding="utf-8"))
+    manifest["production"]["run_id"] = "wrong-run"
+    (expected / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     assert prepare.find_source(tmp_path) is None
