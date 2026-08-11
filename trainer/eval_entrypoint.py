@@ -8,6 +8,7 @@ checkpoint.
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sys
@@ -21,12 +22,40 @@ from trainer import eval_suite
 _BUILD_HEARTBEAT_SECONDS = 15.0
 
 
+def _attached_eval_dir() -> Path | None:
+    """Return the unique attached Kaggle eval_core_v1 root, when present."""
+
+    kaggle_input = Path("/kaggle/input")
+    if not kaggle_input.is_dir():
+        return None
+    matches: list[Path] = []
+    for manifest_path in kaggle_input.rglob("manifest.json"):
+        if not manifest_path.is_file():
+            continue
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("name") == "eval_core_v1":
+            matches.append(manifest_path.parent.resolve())
+    unique = sorted(set(matches))
+    if len(unique) > 1:
+        raise RuntimeError(
+            f"expected at most one attached eval_core_v1 corpus; found {len(unique)}: {unique}"
+        )
+    return unique[0] if unique else None
+
+
 def default_eval_dir() -> Path:
-    """Return the persistent eval_core_v1 cache location for this environment."""
+    """Return an attached eval corpus or the writable local cache location."""
 
     configured = os.environ.get("SMALL_LLM_EVAL_DIR")
     if configured:
         return Path(configured).expanduser()
+    attached = _attached_eval_dir()
+    if attached is not None:
+        print(f"Discovered attached eval_core_v1 at {attached}", flush=True)
+        return attached
     kaggle_working = Path("/kaggle/working")
     if kaggle_working.is_dir():
         return kaggle_working / "eval_core_v1"
