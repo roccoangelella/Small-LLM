@@ -8,6 +8,7 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 import json
 import os
+from pathlib import Path
 import re
 from typing import Sequence
 
@@ -205,6 +206,37 @@ def _preflight_publish(parser: argparse.ArgumentParser, args: argparse.Namespace
         parser.error("publish requires KAGGLE_API_TOKEN in the process environment")
 
 
+def _discover_attached_eval_dir(explicit: str | None) -> str | None:
+    """Resolve an explicit eval dir or a unique attached ``eval_core_v1`` corpus."""
+    if explicit:
+        return str(Path(explicit).expanduser().resolve())
+
+    input_root = Path(os.environ.get("SMALL_LLM_INPUT_DIR", "/kaggle/input")).expanduser()
+    if not input_root.is_dir():
+        return None
+
+    matches: list[Path] = []
+    for manifest_path in input_root.rglob("manifest.json"):
+        if not manifest_path.is_file():
+            continue
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("name") == "eval_core_v1":
+            matches.append(manifest_path.parent.resolve())
+
+    unique = sorted(set(matches))
+    if len(unique) > 1:
+        raise ValueError(
+            f"expected at most one attached eval_core_v1 corpus; found {len(unique)}: {unique}"
+        )
+    if unique:
+        print(f"Discovered attached eval_core_v1 at {unique[0]}", flush=True)
+        return str(unique[0])
+    return None
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -260,10 +292,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_steps_this_session=args.max_steps_this_session,
             wandb_entity=args.wandb_entity,
         )
+    try:
+        selected_eval_dir = _discover_attached_eval_dir(args.eval_dir)
+    except ValueError as error:
+        parser.error(str(error))
     return sft_runtime.evaluate(
         profile,
         dataset_dir=args.dataset_dir,
-        eval_dir=args.eval_dir,
+        eval_dir=selected_eval_dir,
         parent_repo_id=args.parent_repo_id,
         checkpoint_repo_id=args.checkpoint_repo_id,
         output=args.output,
