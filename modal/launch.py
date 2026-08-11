@@ -36,6 +36,9 @@ IMAGE = (
     .apt_install("git")
     .uv_pip_install(
         "torch==2.10.0",
+        index_url="https://download.pytorch.org/whl/cu128",
+    )
+    .uv_pip_install(
         "fla-core==0.5.2",
         "wandb==0.26.1",
         "google-api-python-client>=2.100,<3",
