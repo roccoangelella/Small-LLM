@@ -33,13 +33,13 @@ TRAINING_SECRET = modal.Secret.from_name("small-llm-training")
 IMAGE = (
     modal.Image.debian_slim(python_version="3.13")
     .uv_pip_install("huggingface-hub>=0.30,<2")
+    .env({"PYTHONPATH": str(REMOTE_REPO), "PYTHONUNBUFFERED": "1"})
     .add_local_dir(
         LOCAL_REPO,
         remote_path=str(REMOTE_REPO),
         copy=False,
         ignore=[".git/**", ".venv/**", ".pytest_cache/**", "**/__pycache__/**", "*.pyc"],
     )
-    .env({"PYTHONPATH": str(REMOTE_REPO), "PYTHONUNBUFFERED": "1"})
 )
 app = modal.App(APP_NAME, image=IMAGE)
 
