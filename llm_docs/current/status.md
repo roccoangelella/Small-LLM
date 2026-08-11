@@ -92,6 +92,8 @@ Current operational state: **the 2B trajectory has been launched and user-observ
 
 A fresh Kaggle clone after the dataset/Kaggle cleanup exposed a launcher-path regression: direct `python kaggle/launch.py ...` execution could not import the top-level `dataset` package because only the `kaggle/` script directory was guaranteed on `sys.path`. Commit `27406f4a12fa450902e6ead1d9f95fbe51da6fce` fixes the human-facing launcher by adding the repository root before runtime/profile resolution.
 
+The subsequent repository-wide dataset-layout audit found a second latent boundary bug: the pinned per-experiment training worktree predates the consolidated `dataset.qualification` module, while the shared training engine tried to run current dataset verification/plan commands from that historical worktree. Commit `356c924ee5f39f5365e6608c7a8b9f3a070fd0d0` now keeps model/trainer execution pinned but routes `dataset.main` and `dataset.qualification` control-plane subprocesses through the clean controlling checkout. The audit also removed retired flat `train.bin`/`validation.bin` path constants, refreshed active launcher documentation, and added repository-wide regression coverage for deleted dataset modules, the schema-v2 layout, packaging, active commands, and direct-launch import behavior.
+
 ## Frozen decisions still in force for the 2B probe
 
 - Keep the pinned source revision, GPT-2 token IDs, and programming-cluster-11 exclusion policy.
