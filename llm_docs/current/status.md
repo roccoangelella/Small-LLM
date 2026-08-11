@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-10
+last_reviewed: 2026-08-11
 ---
 
 # Current project status
@@ -89,6 +89,8 @@ pinned Nemotron-ClimbMix source
 ```
 
 Current operational state: **the unified 2B publication/training launch surface is prepared on `main`; dataset production and optimizer update 1 have not yet been accepted as completed evidence.** Under ADR 0037 the finite dataset identity/geometry is now centralized in `dataset.qualification` (`--profile 20m-2b`) rather than repeated across per-budget producer/report wrappers.
+
+Direct Kaggle execution via `python kaggle/launch.py ...` now explicitly adds the repository root to `sys.path` before profile resolution, so the consolidated launcher can import the top-level `dataset` package even when Python does not implicitly expose the checkout root.
 
 ## Frozen decisions still in force for the 2B probe
 
