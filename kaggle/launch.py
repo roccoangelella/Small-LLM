@@ -7,7 +7,12 @@ import json
 import re
 import sys
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Sequence
+
+REPO = Path(__file__).resolve().parents[1]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 import runtime
 
