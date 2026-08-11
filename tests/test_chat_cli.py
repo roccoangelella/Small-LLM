@@ -62,3 +62,24 @@ def test_fit_generation_prompt_rejects_single_overlong_message() -> None:
             encoding=object(),
             max_prompt_tokens=5,
         )
+
+
+class _SplitUtf8Encoding:
+    _TOKENS = {
+        1: b"plain ",
+        2: b"\xe2",
+        3: b"\x82",
+        4: b"\xac",
+    }
+
+    def decode_single_token_bytes(self, token_id: int) -> bytes:
+        return self._TOKENS[token_id]
+
+
+def test_token_streamer_preserves_utf8_across_token_boundaries() -> None:
+    streamer = chat._TokenTextStreamer(_SplitUtf8Encoding())
+    assert streamer.push(1) == "plain "
+    assert streamer.push(2) == ""
+    assert streamer.push(3) == ""
+    assert streamer.push(4) == "€"
+    assert streamer.finish() == ""
