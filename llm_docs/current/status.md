@@ -58,7 +58,7 @@ The corrected deterministic qualification passed the requested synthetic decay s
 
 Current contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md)
 
-## Authorized next experiment — fresh 20M / 2B
+## Active experiment — fresh 20M / 2B
 
 ADR 0023 authorizes a new independent approximately-2B-token data-scaling trajectory. ADR 0027 adds the completed 500M qualitative result as justification for keeping model size fixed through this point.
 
@@ -88,9 +88,9 @@ pinned Nemotron-ClimbMix source
   -> T4 training from Kaggle-local input
 ```
 
-Current operational state: **the unified 2B publication/training launch surface is prepared on `main`; dataset production and optimizer update 1 have not yet been accepted as completed evidence.** Under ADR 0037 the finite dataset identity/geometry is now centralized in `dataset.qualification` (`--profile 20m-2b`) rather than repeated across per-budget producer/report wrappers.
+Current operational state: **the 2B trajectory has been launched and user-observed W&B data on 2026-08-11 covered optimizer steps 23,438 through 28,438; the exact live step may be later.** The consolidated dataset identity/geometry remains centralized in `dataset.qualification` (`--profile 20m-2b`) under ADR 0037.
 
-Direct Kaggle execution via `python kaggle/launch.py ...` now explicitly adds the repository root to `sys.path` before profile resolution, so the consolidated launcher can import the top-level `dataset` package even when Python does not implicitly expose the checkout root.
+A fresh Kaggle clone after the dataset/Kaggle cleanup exposed a launcher-path regression: direct `python kaggle/launch.py ...` execution could not import the top-level `dataset` package because only the `kaggle/` script directory was guaranteed on `sys.path`. Commit `27406f4a12fa450902e6ead1d9f95fbe51da6fce` fixes the human-facing launcher by adding the repository root before runtime/profile resolution.
 
 ## Frozen decisions still in force for the 2B probe
 
