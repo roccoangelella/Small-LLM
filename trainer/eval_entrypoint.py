@@ -2,8 +2,9 @@
 
 The underlying evaluator intentionally keeps eval_core verification explicit.
 This wrapper makes the normal user-facing command operationally complete:
-if the frozen eval corpus is absent, build it; always verify it; then run the
-existing evaluator against the selected checkpoint.
+if the frozen eval corpus is absent, build it with the deterministic accelerated
+scanner; always verify it; then run the existing evaluator against the selected
+checkpoint.
 """
 from __future__ import annotations
 
@@ -13,7 +14,8 @@ import sys
 import threading
 from typing import Sequence
 
-from dataset.eval_core import build_eval_core, verify_eval_core
+from dataset.eval_core import verify_eval_core
+from dataset.eval_core_accelerated import build_eval_core_accelerated
 from trainer import eval_suite
 
 _BUILD_HEARTBEAT_SECONDS = 15.0
@@ -75,7 +77,7 @@ def _build_with_heartbeat(eval_dir: Path) -> None:
         while not stop.wait(_BUILD_HEARTBEAT_SECONDS):
             written = _partial_build_bytes(eval_dir)
             print(
-                "eval_core_v1 build active: scanning pinned ClimbMix source "
+                "eval_core_v1 build active: accelerated pinned ClimbMix scan "
                 f"| partial_output={written / (1024 * 1024):.1f} MiB",
                 flush=True,
             )
@@ -87,7 +89,7 @@ def _build_with_heartbeat(eval_dir: Path) -> None:
     )
     thread.start()
     try:
-        build_eval_core(eval_dir)
+        build_eval_core_accelerated(eval_dir)
     finally:
         stop.set()
         thread.join(timeout=1.0)
@@ -103,8 +105,8 @@ def ensure_eval_core(eval_dir: Path) -> Path:
             flush=True,
         )
         print(
-            "The frozen validation partition is sparse; source scanning can run for many "
-            "records before the corpus builder selects its first reporting batch.",
+            "Using the deterministic accelerated source scanner: validation identity "
+            "is checked before JSON parsing and source regions are fetched concurrently.",
             flush=True,
         )
         resolved.parent.mkdir(parents=True, exist_ok=True)
