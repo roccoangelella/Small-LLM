@@ -100,6 +100,7 @@ class DatasetQualificationTests(unittest.TestCase):
             "20m-100m": ("20m-100m-dataset-001", 100_000_000, 90_000_000, 110_000_000, 20_000_000, True),
             "20m-500m": ("20m-500m-dataset-001", 500_000_000, 450_000_000, 550_000_000, 20_000_000, True),
             "20m-2b": ("20m-2b-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
+            "modal-2b-b64": ("modal-2b-b64-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
         }
         self.assertEqual(set(PROFILES), set(expected))
         for key, values in expected.items():
@@ -116,16 +117,27 @@ class DatasetQualificationTests(unittest.TestCase):
                 values,
             )
             self.assertEqual(profile.context_length, 2048)
-            self.assertEqual(profile.sequences_per_block, 16)
-            self.assertEqual(profile.target_shard_bytes, 8_388_608)
+            if key == "modal-2b-b64":
+                self.assertEqual(profile.sequences_per_block, 64)
+                self.assertEqual(profile.target_shard_bytes, 32 * 1024 * 1024)
+            else:
+                self.assertEqual(profile.sequences_per_block, 16)
+                self.assertEqual(profile.target_shard_bytes, 8_388_608)
 
     def test_short_budget_aliases_resolve_to_canonical_profiles(self) -> None:
-        for alias, canonical in (("10m", "20m-10m"), ("100m", "20m-100m"), ("500m", "20m-500m"), ("2b", "20m-2b")):
+        aliases = (
+            ("10m", "20m-10m"),
+            ("100m", "20m-100m"),
+            ("500m", "20m-500m"),
+            ("2b", "20m-2b"),
+            ("modal-2b", "modal-2b-b64"),
+        )
+        for alias, canonical in aliases:
             with self.subTest(alias=alias):
                 self.assertIs(get_profile(alias), get_profile(canonical))
 
     def test_active_profiles_append_exact_locked_production_identity(self) -> None:
-        for key in ("20m-100m", "20m-500m", "20m-2b"):
+        for key in ("20m-100m", "20m-500m", "20m-2b", "modal-2b-b64"):
             with self.subTest(profile=key):
                 profile = get_profile(key)
                 args = production_arguments(
@@ -138,9 +150,9 @@ class DatasetQualificationTests(unittest.TestCase):
                     "--minimum-tokens": str(profile.minimum_source_tokens),
                     "--maximum-tokens": str(profile.maximum_source_tokens),
                     "--checkpoint-source-tokens": str(profile.checkpoint_source_tokens),
-                    "--context-length": "2048",
-                    "--sequences-per-block": "16",
-                    "--target-shard-bytes": "8388608",
+                    "--context-length": str(profile.context_length),
+                    "--sequences-per-block": str(profile.sequences_per_block),
+                    "--target-shard-bytes": str(profile.target_shard_bytes),
                 }
                 for flag, value in expected.items():
                     index = args.index(flag)
@@ -181,6 +193,7 @@ class DatasetQualificationTests(unittest.TestCase):
             "20m-100m": (3_052, 153, 2_288, 611, 5_013_504, 74_973_184, 20_021_248, 100_007_936),
             "20m-500m": (15_250, 763, 11_437, 3_050, 25_001_984, 374_767_616, 99_942_400, 499_712_000),
             "20m-2b": (61_035, 3_052, 45_776, 12_207, 100_007_936, 1_499_987_968, 399_998_976, 1_999_994_880),
+            "modal-2b-b64": (15_259, 763, 11_444, 3_052, 100_007_936, 1_499_987_968, 399_998_976, 1_999_994_880),
         }
         for key, values in expected.items():
             with self.subTest(profile=key):
