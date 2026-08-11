@@ -364,118 +364,119 @@ def build_eval_core_accelerated(
     validation_records = 0
     complete = False
     batches: Iterator[_SourceBatch] | None = None
+    sources: Sequence[SourceFile] = ()
 
     try:
-        sources = list_source_files(config.DATASET_REPOSITORY, config.DATASET_REVISION)
-        batches = _ordered_validation_batches(
-            sources,
-            validation_probability=validation_probability,
-            max_work_items=max_work_items,
-        )
+        try:
+            sources = list_source_files(config.DATASET_REPOSITORY, config.DATASET_REVISION)
+            batches = _ordered_validation_batches(
+                sources,
+                validation_probability=validation_probability,
+                max_work_items=max_work_items,
+            )
 
-        for batch in batches:
-            scanned_within_batch = 0
-            for candidate in batch.candidates:
-                # Reconstruct the legacy counter exactly even though a worker may
-                # already have scanned the remainder of this immutable region.
-                scanned_records += candidate.scanned_through - scanned_within_batch
-                scanned_within_batch = candidate.scanned_through
-                record = candidate.record
+            for batch in batches:
+                scanned_within_batch = 0
+                for candidate in batch.candidates:
+                    # Reconstruct the legacy counter exactly even though a worker may
+                    # already have scanned the remainder of this immutable region.
+                    scanned_records += candidate.scanned_through - scanned_within_batch
+                    scanned_within_batch = candidate.scanned_through
+                    record = candidate.record
 
-                result = validate_record(record)
-                if (
-                    not result.valid
-                    or result.cluster_id not in config.ACCEPTED_CLUSTER_IDS
-                    or result.tokens is None
-                ):
-                    continue
+                    result = validate_record(record)
+                    if (
+                        not result.valid
+                        or result.cluster_id not in config.ACCEPTED_CLUSTER_IDS
+                        or result.tokens is None
+                    ):
+                        continue
 
-                validation_records += 1
-                cluster_id = int(result.cluster_id)
-                if not core._needs(
-                    full,
-                    cluster_id,
-                    documents=full_documents_per_cluster,
-                    targets=full_targets_per_cluster,
-                ):
-                    if core._complete(
+                    validation_records += 1
+                    cluster_id = int(result.cluster_id)
+                    if not core._needs(
                         full,
+                        cluster_id,
                         documents=full_documents_per_cluster,
                         targets=full_targets_per_cluster,
                     ):
-                        complete = True
-                        break
-                    continue
+                        if core._complete(
+                            full,
+                            documents=full_documents_per_cluster,
+                            targets=full_targets_per_cluster,
+                        ):
+                            complete = True
+                            break
+                        continue
 
-                windows = core.document_windows(result.tokens)
-                if not windows:
-                    continue
-                document_id = record_identity_str(
-                    config.DATASET_REVISION,
-                    batch.filename,
-                    record.record_start,
-                )
-                if document_id in selected_full:
-                    raise RuntimeError(f"source record selected twice: {document_id}")
-                selected_full.add(document_id)
-                full.add_document(
-                    document_id=document_id,
-                    cluster_id=cluster_id,
-                    filename=batch.filename,
-                    record_start=record.record_start,
-                    windows=windows,
-                )
-                if core._needs(
-                    fast,
-                    cluster_id,
-                    documents=fast_documents_per_cluster,
-                    targets=fast_targets_per_cluster,
-                ):
-                    fast.add_document(
+                    windows = core.document_windows(result.tokens)
+                    if not windows:
+                        continue
+                    document_id = record_identity_str(
+                        config.DATASET_REVISION,
+                        batch.filename,
+                        record.record_start,
+                    )
+                    if document_id in selected_full:
+                        raise RuntimeError(f"source record selected twice: {document_id}")
+                    selected_full.add(document_id)
+                    full.add_document(
                         document_id=document_id,
                         cluster_id=cluster_id,
                         filename=batch.filename,
                         record_start=record.record_start,
                         windows=windows,
                     )
+                    if core._needs(
+                        fast,
+                        cluster_id,
+                        documents=fast_documents_per_cluster,
+                        targets=fast_targets_per_cluster,
+                    ):
+                        fast.add_document(
+                            document_id=document_id,
+                            cluster_id=cluster_id,
+                            filename=batch.filename,
+                            record_start=record.record_start,
+                            windows=windows,
+                        )
 
-                if validation_records % 1_000 == 0:
+                    if validation_records % 1_000 == 0:
+                        print(
+                            f"validation_docs={validation_records:,} "
+                            f"full_targets={full.target_tokens:,} "
+                            f"full_docs={len(full.document_ids):,}",
+                            flush=True,
+                        )
+
+                if complete:
+                    break
+
+                scanned_records += batch.scanned_records - scanned_within_batch
+                if (batch.ordinal + 1) % 8 == 0:
+                    missing = sum(
+                        core._needs(
+                            full,
+                            cluster,
+                            documents=full_documents_per_cluster,
+                            targets=full_targets_per_cluster,
+                        )
+                        for cluster in core.ACCEPTED_CLUSTERS
+                    )
                     print(
+                        "eval_core source scan: "
+                        f"regions={batch.ordinal + 1:,} "
+                        f"scanned_records={scanned_records:,} "
                         f"validation_docs={validation_records:,} "
-                        f"full_targets={full.target_tokens:,} "
-                        f"full_docs={len(full.document_ids):,}",
+                        f"full_docs={len(full.document_ids):,} "
+                        f"clusters_remaining={missing}",
                         flush=True,
                     )
+        finally:
+            close = getattr(batches, "close", None)
+            if close is not None:
+                close()
 
-            if complete:
-                break
-
-            scanned_records += batch.scanned_records - scanned_within_batch
-            if (batch.ordinal + 1) % 8 == 0:
-                missing = sum(
-                    core._needs(
-                        full,
-                        cluster,
-                        documents=full_documents_per_cluster,
-                        targets=full_targets_per_cluster,
-                    )
-                    for cluster in core.ACCEPTED_CLUSTERS
-                )
-                print(
-                    "eval_core source scan: "
-                    f"regions={batch.ordinal + 1:,} "
-                    f"scanned_records={scanned_records:,} "
-                    f"validation_docs={validation_records:,} "
-                    f"full_docs={len(full.document_ids):,} "
-                    f"clusters_remaining={missing}",
-                    flush=True,
-                )
-    finally:
-        close = getattr(batches, "close", None)
-        if close is not None:
-            close()
-
-    try:
         if not core._complete(
             full,
             documents=full_documents_per_cluster,
