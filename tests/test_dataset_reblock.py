@@ -97,7 +97,6 @@ def test_reblock_preserves_bytes_and_uses_64_sequence_optimizer_blocks(tmp_path:
     result = reblock_dataset(source, target)
 
     manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
-    drive = json.loads((target / "drive_manifest.json").read_text(encoding="utf-8"))
     assert result["run_id"] == "modal-2b-b64-dataset-001"
     assert result["sequences_per_block"] == 64
     assert result["train_blocks"] == 24
@@ -105,9 +104,11 @@ def test_reblock_preserves_bytes_and_uses_64_sequence_optimizer_blocks(tmp_path:
     assert manifest["sequences_per_block"] == 64
     assert manifest["target_shard_bytes"] == 32 * 1024 * 1024
     assert manifest["production"]["run_id"] == "modal-2b-b64-dataset-001"
+    assert manifest["production"]["remote_required"] is True
     assert manifest["reblock"]["byte_preserving"] is True
-    assert drive["transport"] == "modal_volume"
-    assert drive["volume_name"] == "small-llm-data"
+    assert manifest["reblock"]["production_transport"] == "modal_volume"
+    assert manifest["reblock"]["modal_volume"] == "small-llm-data"
+    assert not (target / "drive_manifest.json").exists()
     assert (source / "train" / "train-000000.bin").read_bytes() == (
         target / "train" / "train-000000.bin"
     ).read_bytes()
