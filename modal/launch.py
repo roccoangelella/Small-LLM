@@ -20,6 +20,7 @@ sys.path.insert(0, str(LOCAL_MODAL))
 from profiles import (  # noqa: E402
     DEFAULT_GPU,
     DEFAULT_PRECISION,
+    MICROBATCH_CANDIDATES,
     SEQUENCES_PER_BLOCK,
     SUPPORTED_GPUS,
     canonical_run_id,
@@ -151,7 +152,11 @@ def main(
         "dataset_profile": token_preset.dataset_profile,
         "run_id": canonical_run_id(model_preset, token_preset),
         "gpu": gpu,
-        "microbatch_size": "auto:4,8,16" if microbatch_size == 0 else microbatch_size,
+        "microbatch_size": (
+            "auto:" + ",".join(str(value) for value in MICROBATCH_CANDIDATES)
+            if microbatch_size == 0
+            else microbatch_size
+        ),
         "precision": precision,
         "source_commit": source_commit,
         "dataset_dir": dataset_dir or "auto-discover unique matching dataset",
