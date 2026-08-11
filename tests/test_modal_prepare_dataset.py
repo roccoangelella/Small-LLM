@@ -47,7 +47,7 @@ def test_handle_discovery_uses_authenticated_mine_search(monkeypatch) -> None:
         seen.append(list(command))
         return f"ref,title\n{expected},Small LLM 2B\n"
 
-    prepare._capture = fake_capture
+    monkeypatch.setattr(prepare, "_capture", fake_capture)
     assert prepare.discover_kaggle_handle("kaggle") == expected
     assert seen == [[
         "kaggle", "datasets", "list", "--mine", "--search",
