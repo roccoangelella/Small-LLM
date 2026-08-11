@@ -31,10 +31,18 @@ def _shard(split: str, first: int, last: int, sequences: int) -> dict[str, objec
     }
 
 
-def _manifest(profile_key: str, train_blocks: int, validation_blocks: int = 4) -> dict[str, object]:
+def _manifest(
+    profile_key: str,
+    train_blocks: int,
+    validation_blocks: int = 4,
+    *,
+    train_sequences: int | None = None,
+) -> dict[str, object]:
     profile = get_profile(profile_key)
     accepted = profile.target_source_tokens + 100
     validation_source = max(1, profile.target_source_tokens // 1_000)
+    if train_sequences is None:
+        train_sequences = train_blocks * profile.sequences_per_block
     return {
         "schema_version": 2,
         "sequence_format": "context_plus_one",
@@ -56,7 +64,7 @@ def _manifest(profile_key: str, train_blocks: int, validation_blocks: int = 4) -
             "remote_required": True,
         },
         "shards": [
-            _shard("train", 0, train_blocks - 1, train_blocks * profile.sequences_per_block),
+            _shard("train", 0, train_blocks - 1, train_sequences),
             _shard(
                 "validation",
                 0,
@@ -198,7 +206,12 @@ class DatasetQualificationTests(unittest.TestCase):
         for key, values in expected.items():
             with self.subTest(profile=key):
                 steps, warmup, stable, decay, warmup_tokens, stable_tokens, decay_tokens, total_tokens = values
-                plan = derive_plan(_manifest(key, steps), profile=key)
+                manifest = _manifest(
+                    key,
+                    steps,
+                    train_sequences=976_560 if key == "modal-2b-b64" else None,
+                )
+                plan = derive_plan(manifest, profile=key)
                 trainer = plan["trainer"]
                 self.assertEqual(trainer["steps"], steps)
                 self.assertEqual(trainer["warmup_updates"], warmup)
