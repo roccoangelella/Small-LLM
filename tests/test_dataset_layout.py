@@ -69,6 +69,26 @@ ACTIVE_PYTHON_ROOTS = (
     ROOT / "post_training",
 )
 
+ACTIVE_DOCS = (
+    ROOT / "README.md",
+    ROOT / "dataset" / "README.md",
+    *(ROOT / "llm_docs" / "current").glob("*.md"),
+    *(ROOT / "llm_docs" / "reference").glob("*.md"),
+    *(ROOT / "llm_docs" / "runbooks").glob("*.md"),
+)
+
+RETIRED_COMMAND_SNIPPETS = (
+    "python kaggle/run_20m_100m.py",
+    "python kaggle/run_20m_500m.py",
+    "python kaggle/run_20m_2b.py",
+    "python -m dataset.qualification_100m",
+    "python -m dataset.qualification_20m",
+    "python -m dataset.qualification_500m",
+    "python -m dataset.qualification_2b",
+    "python -m dataset.acceptance",
+    "python -m dataset.mixture",
+)
+
 
 def _module_name(path: Path) -> str:
     parts = list(path.relative_to(ROOT).with_suffix("").parts)
@@ -140,6 +160,13 @@ class DatasetLayoutTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(config, name), f"retired dataset constant returned: {name}")
+
+    def test_active_docs_do_not_give_retired_dataset_or_launcher_commands(self) -> None:
+        for path in ACTIVE_DOCS:
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(path=path.relative_to(ROOT)):
+                stale = [command for command in RETIRED_COMMAND_SNIPPETS if command in text]
+                self.assertEqual(stale, [], f"active documentation gives retired commands: {stale}")
 
     def test_setuptools_packages_include_dataset_subpackages(self) -> None:
         payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
