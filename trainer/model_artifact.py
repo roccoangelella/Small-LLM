@@ -2,8 +2,12 @@
 
 Live trainer checkpoints may use the two-phase ``run/<run_id>/...`` namespace.
 Stable human-facing artifacts use ``models/<run_id>/<checkpoint_id>`` plus
-``models/<run_id>/artifact.json``.  These helpers make the latter transport
+``models/<run_id>/artifact.json``. These helpers make the latter transport
 provider-neutral for evaluation and Modal final publication.
+
+Stable artifacts are native saved checkpoints. Their integrity contract is
+``local_manifest.json``; ``checkpoint_manifest.json`` is publication metadata
+specific to the two-phase live ``run/...`` protocol and is not required here.
 """
 from __future__ import annotations
 
@@ -13,10 +17,7 @@ import shutil
 from pathlib import Path
 from typing import Mapping
 
-from dataset.src.joint_checkpoint import (
-    _verify_published_checkpoint_manifest,
-    verify_local_manifest,
-)
+from dataset.src.joint_checkpoint import verify_local_manifest
 from dataset.src.remote import HuggingFaceCheckpointStore
 
 _CHECKPOINT_ID = re.compile(r"^step-(\d{8})$")
@@ -26,16 +27,6 @@ def _valid_checkpoint_id(value: object) -> str:
     if not isinstance(value, str) or _CHECKPOINT_ID.fullmatch(value) is None:
         raise RuntimeError(f"invalid model artifact checkpoint_id: {value!r}")
     return value
-
-
-def _read_json(path: Path, *, label: str) -> dict[str, object]:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, TypeError, ValueError) as error:
-        raise RuntimeError(f"{label} is missing or invalid: {path}") from error
-    if not isinstance(payload, Mapping):
-        raise RuntimeError(f"{label} must be a JSON object: {path}")
-    return dict(payload)
 
 
 def resolve_model_artifact(
@@ -107,7 +98,12 @@ def download_verified_model_artifact(
     revision: str | None,
     destination: Path,
 ) -> tuple[Path, dict[str, object]]:
-    """Download and fully verify one stable model-repository checkpoint."""
+    """Download and verify one stable native model-repository checkpoint.
+
+    Stable ``models/...`` artifacts are verified with the checkpoint's native
+    ``local_manifest.json``. The publisher-level ``checkpoint_manifest.json``
+    used by two-phase live ``run/...`` checkpoints is deliberately not required.
+    """
 
     store = HuggingFaceCheckpointStore(
         repo_id,
@@ -123,11 +119,6 @@ def download_verified_model_artifact(
     try:
         store.download_tree(prefix, checkpoint_root)
         verify_local_manifest(checkpoint_root)
-        embedded_manifest = _read_json(
-            checkpoint_root / "checkpoint_manifest.json",
-            label="checkpoint_manifest.json",
-        )
-        _verify_published_checkpoint_manifest(checkpoint_root, embedded_manifest)
     except BaseException:
         shutil.rmtree(checkpoint_root, ignore_errors=True)
         raise
