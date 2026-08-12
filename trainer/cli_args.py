@@ -71,16 +71,15 @@ def parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help=(
-            "Publish a verified joint checkpoint to the private Hugging Face "
-            "repository every N successful updates. Zero disables publication."
+            "Publish a verified joint checkpoint to the configured Hugging Face "
+            "remote store every N successful updates. Zero disables publication."
         ),
     )
     p.add_argument(
         "--remote-drive-manifest",
         type=Path,
         help=(
-            "Verified Drive manifest whose durable shard identities are bound "
-            "into every remotely published checkpoint."
+            "Verified durability manifest bound into every remotely published checkpoint."
         ),
     )
     p.add_argument(
@@ -91,8 +90,15 @@ def parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--remote-checkpoint-bucket",
+        help=(
+            "Private Hugging Face Storage Bucket ID. When set, checkpoint objects use "
+            "mutable bucket storage instead of a Git-backed model repository."
+        ),
+    )
+    p.add_argument(
         "--remote-checkpoint-revision",
-        help="Optional Hugging Face revision used for checkpoint objects.",
+        help="Optional Hugging Face repository revision used for repository-backed checkpoint objects.",
     )
     p.add_argument(
         "--remote-token-env",
@@ -105,12 +111,18 @@ def parser() -> argparse.ArgumentParser:
         help="Create the configured private Hugging Face repository if missing.",
     )
     p.add_argument(
+        "--remote-create-bucket",
+        action="store_true",
+        help="Create the configured private Hugging Face Storage Bucket if missing.",
+    )
+    p.add_argument(
         "--remote-rolling-latest-only",
         action="store_true",
         help=(
-            "After each verified remote publication, retain only the latest run checkpoint "
-            "and squash Hub branch history. This disables remote best-checkpoint retention "
-            "and is intended for bounded cross-provider resume storage."
+            "After each verified remote publication, retain only the latest run checkpoint. "
+            "For Storage Buckets this deletes superseded mutable objects; repository-backed "
+            "stores retain the compatibility history-squash implementation. This disables "
+            "remote best-checkpoint retention."
         ),
     )
     p.add_argument(
@@ -163,6 +175,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit(
             "--remote-drive-manifest is required when remote publication is enabled"
         )
+    if args.remote_checkpoint_repo and args.remote_checkpoint_bucket:
+        raise SystemExit(
+            "choose only one of --remote-checkpoint-repo or --remote-checkpoint-bucket"
+        )
+    if args.remote_create_repo and args.remote_checkpoint_bucket:
+        raise SystemExit("--remote-create-repo cannot be used with --remote-checkpoint-bucket")
+    if args.remote_create_bucket and not args.remote_checkpoint_bucket:
+        raise SystemExit("--remote-create-bucket requires --remote-checkpoint-bucket")
     if args.remote_rolling_latest_only and args.remote_publish_every_steps == 0:
         raise SystemExit(
             "--remote-rolling-latest-only requires --remote-publish-every-steps"
