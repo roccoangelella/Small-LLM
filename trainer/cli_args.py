@@ -16,6 +16,25 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         help="Optional schema-v2 manifest or restored checkpoint drive_manifest.json.",
     )
+    p.add_argument(
+        "--dataset-shard-bucket",
+        help="Hugging Face Storage Bucket containing immutable dataset shards.",
+    )
+    p.add_argument(
+        "--dataset-shard-run-id",
+        help="Dataset run ID used under run/<id>/ in the immutable shard bucket.",
+    )
+    p.add_argument(
+        "--dataset-shard-token-env",
+        default="HF_TOKEN",
+        help="Environment variable containing the Hugging Face token for dataset shard reads.",
+    )
+    p.add_argument(
+        "--dataset-shard-prefetch",
+        type=int,
+        default=1,
+        help="Number of future train shards prefetched asynchronously; default keeps current + next.",
+    )
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--steps", type=int, required=True)
     p.add_argument("--resume")
@@ -169,6 +188,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit("--steps must be positive")
     if args.validation_blocks < 0:
         raise SystemExit("--validation-blocks cannot be negative")
+    if args.dataset_shard_prefetch < 1:
+        raise SystemExit("--dataset-shard-prefetch must be at least one")
+    if bool(args.dataset_shard_bucket) != bool(args.dataset_shard_run_id):
+        raise SystemExit(
+            "--dataset-shard-bucket and --dataset-shard-run-id must be supplied together"
+        )
+    if args.dataset_shard_bucket and args.dataset_manifest is None:
+        raise SystemExit("rolling dataset shards require --dataset-manifest")
     if args.remote_publish_every_steps < 0:
         raise SystemExit("--remote-publish-every-steps cannot be negative")
     if args.remote_publish_every_steps and args.remote_drive_manifest is None:
