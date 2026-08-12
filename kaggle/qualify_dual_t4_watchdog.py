@@ -3,9 +3,9 @@
 
 The scientific qualification remains implemented in ``qualify_dual_t4.py``.
 This wrapper only adds stage/block progress, runtime identity checks, GPU-memory
-headroom checks, Triton autotune visibility/cache persistence, and bounded
-worker lifetimes so a stuck CUDA/Triton/NCCL subprocess cannot silently consume
-a Kaggle session.
+headroom checks, bounded Triton autotuning with cache persistence, and worker
+lifetimes so a stuck CUDA/Triton/NCCL subprocess cannot silently consume a
+Kaggle session.
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ import qualify_dual_t4 as qualification
 
 DEFAULT_WORKER_INACTIVITY_TIMEOUT_SECONDS = 600
 DEFAULT_WORKER_TOTAL_TIMEOUT_SECONDS = 3600
+DEFAULT_AUTOTUNE_CONFIG_CAP = 6
 MINIMUM_FREE_GPU_BYTES = 12 * 1024**3
 EXPECTED_TORCH_VERSION = "2.10.0"
 EXPECTED_CUDA_VERSION = "12.8"
@@ -51,7 +52,7 @@ def _worker_name(command: Sequence[str]) -> str:
         return "unknown"
 
 
-def _positive_timeout_from_env(name: str, default: int) -> int:
+def _positive_int_from_env(name: str, default: int) -> int:
     raw = os.environ.get(name, str(default))
     try:
         value = int(raw)
@@ -63,17 +64,71 @@ def _positive_timeout_from_env(name: str, default: int) -> int:
 
 
 def _inactivity_timeout_seconds() -> int:
-    return _positive_timeout_from_env(
+    return _positive_int_from_env(
         "SMALL_LLM_DUAL_T4_INACTIVITY_TIMEOUT_SECONDS",
         DEFAULT_WORKER_INACTIVITY_TIMEOUT_SECONDS,
     )
 
 
 def _total_timeout_seconds() -> int:
-    return _positive_timeout_from_env(
+    return _positive_int_from_env(
         "SMALL_LLM_DUAL_T4_TOTAL_TIMEOUT_SECONDS",
         DEFAULT_WORKER_TOTAL_TIMEOUT_SECONDS,
     )
+
+
+def _autotune_config_cap() -> int:
+    return _positive_int_from_env(
+        "SMALL_LLM_DUAL_T4_AUTOTUNE_CONFIG_CAP",
+        DEFAULT_AUTOTUNE_CONFIG_CAP,
+    )
+
+
+def _representative_config_indices(count: int, cap: int) -> list[int]:
+    """Choose deterministic, evenly spread candidates from an autotune list."""
+    if count <= 0:
+        return []
+    if cap >= count:
+        return list(range(count))
+    if cap <= 1:
+        return [count // 2]
+    return [round(index * (count - 1) / (cap - 1)) for index in range(cap)]
+
+
+def _install_bounded_triton_autotune() -> None:
+    """Cap qualification-only Triton searches without changing production code.
+
+    Single-T4 and DDP both execute local microbatches of four sequences at the
+    same context length. A config selected by the single worker therefore has
+    the same kernel shape in both DDP ranks. Triton's disk autotune cache then
+    carries that exact selection into the DDP worker.
+    """
+    import triton.runtime.autotuner as triton_autotuner
+
+    current = triton_autotuner.Autotuner.prune_configs
+    if getattr(current, "_small_llm_dual_t4_bounded", False):
+        return
+    cap = _autotune_config_cap()
+    original = current
+
+    def prune_configs(self: Any, kwargs: dict[str, Any]) -> list[Any]:
+        configs = list(original(self, kwargs))
+        if len(configs) <= cap:
+            return configs
+        indices = _representative_config_indices(len(configs), cap)
+        selected = [configs[index] for index in indices]
+        base_fn = getattr(self, "base_fn", None)
+        kernel_name = getattr(base_fn, "__name__", type(self).__name__)
+        print(
+            f"[dual-t4 autotune] {kernel_name}: capping {len(configs)} -> "
+            f"{len(selected)} representative configs; indices={indices}",
+            flush=True,
+        )
+        return selected
+
+    prune_configs._small_llm_dual_t4_bounded = True  # type: ignore[attr-defined]
+    triton_autotuner.Autotuner.prune_configs = prune_configs
+    _progress(f"qualification-only Triton autotune cap installed: {cap} configs/kernel")
 
 
 def _distribution_version(name: str) -> str:
@@ -295,7 +350,8 @@ def _install_observability() -> None:
             f"inactivity_watchdog={inactivity_timeout}s total_watchdog={total_timeout}s"
         )
         _progress(
-            f"Triton autotune tracing enabled; disk autotune cache={cache_dir}"
+            f"Triton autotune tracing enabled; disk autotune cache={cache_dir}; "
+            f"qualification cap={_autotune_config_cap()} configs/kernel"
         )
         process = subprocess.Popen(
             list(command),
@@ -379,10 +435,14 @@ def _install_observability() -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if "--worker" in arguments:
+        _install_bounded_triton_autotune()
     _install_observability()
     _progress(
         "qualification watchdog active; worker limits are "
-        f"{_inactivity_timeout_seconds()}s inactivity / {_total_timeout_seconds()}s total"
+        f"{_inactivity_timeout_seconds()}s inactivity / {_total_timeout_seconds()}s total; "
+        f"autotune cap={_autotune_config_cap()} configs/kernel"
     )
     return int(qualification.main(argv))
 
