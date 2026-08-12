@@ -56,8 +56,10 @@ IMAGE = (
             "PYTHONUNBUFFERED": "1",
         }
     )
-    # copy=False mounts source at container startup, so Modal requires this to
-    # remain the final image mutation; later build steps would be invalid.
+    # Modal 1.x only auto-includes the defining launch.py module.  profiles.py
+    # is a sibling helper, so expose it explicitly at /root/profiles.py where
+    # the remotely re-imported /root/launch.py can resolve `from profiles ...`.
+    .add_local_python_source("profiles")
     .add_local_dir(
         LOCAL_REPO,
         remote_path=str(REMOTE_REPO),
@@ -86,6 +88,27 @@ def _local_source_commit() -> str:
     if dirty:
         raise RuntimeError("the controlling Small-LLM checkout is dirty; commit changes before launch")
     return head
+
+
+@app.function(timeout=2 * 60)
+def remote_import_preflight() -> dict[str, object]:
+    """Fail on CPU before requesting an H100 if packaged local imports are broken."""
+
+    profiles_path = Path("/root/profiles.py")
+    runtime_path = REMOTE_MODAL / "runtime.py"
+    if not profiles_path.is_file():
+        raise RuntimeError(f"Modal image is missing explicitly packaged profiles helper: {profiles_path}")
+    if not runtime_path.is_file():
+        raise RuntimeError(f"Modal image is missing repository runtime: {runtime_path}")
+    sys.path.insert(0, str(REMOTE_MODAL))
+    import profiles as remote_profiles  # noqa: PLC0415
+    import runtime as remote_runtime  # noqa: F401, PLC0415
+
+    return {
+        "status": "ok",
+        "profiles": str(Path(remote_profiles.__file__).resolve()),
+        "runtime": str(runtime_path),
+    }
 
 
 @app.function(
@@ -186,6 +209,15 @@ def main(
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
         return
+
+    _stage("remote_import_preflight_start")
+    preflight = remote_import_preflight.remote()
+    _stage(
+        "remote_import_preflight_complete",
+        status=preflight.get("status"),
+        profiles=preflight.get("profiles"),
+        runtime=preflight.get("runtime"),
+    )
     _stage(
         "dispatch_remote_training",
         run_id=payload["run_id"],
