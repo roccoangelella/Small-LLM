@@ -153,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         best_updated = False
         if (
-            not remote.rolling_latest_only
+            not bool(getattr(remote, "rolling_latest_only", False))
             and metric is not None
             and (best_remote_metric is None or metric > best_remote_metric)
         ):
