@@ -48,9 +48,6 @@ IMAGE = (
         "numpy>=2,<3",
         "fla-core==0.5.2",
         "wandb==0.26.1",
-        "google-api-python-client>=2.100,<3",
-        "google-auth>=2.20,<3",
-        "google-auth-oauthlib>=1.0.0,<2",
         "huggingface-hub>=1.5,<2",
     )
     .env(
@@ -217,8 +214,6 @@ def train_remote(
 @app.function(
     gpu=DEFAULT_GPU,
     timeout=24 * 60 * 60,
-    # Deliberately no automatic function retry. A new attempt must return to
-    # the CPU staging gate so the checkpoint-aligned shard is ready first.
     single_use_containers=True,
     secrets=[TRAINING_SECRET],
     volumes={
