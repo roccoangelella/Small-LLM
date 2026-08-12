@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -72,6 +73,37 @@ class DualT4QualificationContractTests(unittest.TestCase):
         self.assertIn("--nproc-per-node=2", command)
         self.assertIn("--worker", command)
         self.assertIn("ddp", command)
+
+    def test_canonical_launcher_exposes_qualification_dry_run(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "kaggle/launch.py",
+                "qualify-dual-t4",
+                "--model",
+                "20M",
+                "--tokens",
+                "2B",
+                "--measure-blocks",
+                "3",
+                "--minimum-speedup",
+                "1.5",
+                "--dry-run",
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["action"], "qualify-dual-t4")
+        self.assertEqual(payload["runtime"], "kaggle/qualify_dual_t4.py")
+        self.assertEqual(payload["dataset_run_id"], "20m-2b-dataset-001")
+        self.assertEqual(payload["resume"], "not_applicable")
+        self.assertEqual(payload["arguments"]["measure_blocks"], 3)
+        self.assertEqual(payload["arguments"]["minimum_speedup"], 1.5)
 
 
 if __name__ == "__main__":
