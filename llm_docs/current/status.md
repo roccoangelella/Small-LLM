@@ -93,7 +93,7 @@ The default private checkpoint bucket ID is derived from `SMALL_LLM_HF_REPO_ID` 
 
 The external ten-minute `modal/publish_hf.py` loop is retired for live durability. It had accumulated distinct versioned checkpoint paths/commits and triggered the private HF storage limit. `modal/publish_hf.py --require-complete` remains the explicit final model-repository publication path after the run completes.
 
-The VPS dataset preparation cache also exposed a separate account-migration bug: `.modal-2b-b64-upload.json` records volume/destination/manifest but not Modal workspace identity, so it can falsely skip upload after switching accounts. Until fixed, use `python modal/prepare_dataset.py --force-upload` when preparing the new Modal workspace.
+The VPS dataset preparation account-migration bug is now closed by ADR 0048: `modal/prepare_dataset.py` no longer trusts `.modal-2b-b64-upload.json` to skip transfer. Every upload-enabled run resolves the actually authenticated Modal workspace/environment, opens or creates `small-llm-data`, verifies the canonical destination from remote file sizes plus the manifest SHA-256, uploads only when needed, and verifies again after `modal volume put`. A workspace switch therefore uses the normal `python modal/prepare_dataset.py` command; `--force-upload` is reserved for explicit re-upload repair.
 
 The checkpoint-transport code change is infrastructure-only relative to the pre-migration training source: it touches Modal orchestration, trainer remote-publication plumbing, remote storage primitives, tests and project memory, not model geometry, optimizer math, schedule semantics or dataset token ordering. Therefore a verified legacy checkpoint can continue the same scientific trajectory across the transport migration.
 
@@ -179,6 +179,7 @@ Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11
 - VPS-only Modal preparation decision: [`../decisions/0043-prepare-modal-block64-corpus-on-vps.md`](../decisions/0043-prepare-modal-block64-corpus-on-vps.md)
 - Final HF artifact decision: [`../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md`](../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md)
 - Modal/HF bucket cross-workspace checkpoint decision: [`../decisions/0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md`](../decisions/0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md)
+- Modal dataset workspace-verification decision: [`../decisions/0048-verify-modal-dataset-in-active-workspace.md`](../decisions/0048-verify-modal-dataset-in-active-workspace.md)
 - Modal training runbook: [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)

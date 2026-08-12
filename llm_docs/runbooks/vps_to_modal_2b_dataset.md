@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-12
 ---
 
 # VPS preparation of the Modal 2B dataset
@@ -42,7 +42,7 @@ The helper is stage-idempotent. It performs:
 2. Kaggle download/unzip only if a verified cached source is absent;
 3. schema-v2 and production-run verification for `20m-2b-dataset-001`;
 4. byte-preserving block-64 reblocking through `dataset.reblock` only if a verified derivative is absent;
-5. upload from the VPS to Modal Volume `small-llm-data` at `/datasets/modal-2b-b64-dataset-001` unless the matching local upload marker already exists.
+5. resolve the actually authenticated Modal workspace/environment, create `small-llm-data` there if needed, verify `/datasets/modal-2b-b64-dataset-001` against the local manifest inventory, and upload only when that active remote destination is missing or incomplete; after any upload, verify the remote destination again before reporting readiness.
 
 Fixed VPS paths:
 
@@ -66,13 +66,15 @@ python modal/prepare_dataset.py
 
 ## Recovery controls
 
-Normal recovery is just rerunning the same command. Explicit controls exist only for repairing a known-bad stage:
+Normal recovery, including a Modal account/workspace switch, is just rerunning the same command. The local upload marker is diagnostic only; the active Modal workspace/environment is checked on every upload-enabled run. Explicit controls exist only for repairing a known-bad stage:
 
 ```bash
 python modal/prepare_dataset.py --force-download
 python modal/prepare_dataset.py --force-reblock
 python modal/prepare_dataset.py --force-upload
 ```
+
+`--force-upload` now means re-upload even when the current active Modal workspace already verifies. A successful `modal volume put` is followed by remote inventory + manifest-SHA verification; if that verification fails, the helper exits non-zero instead of trusting the CLI success message.
 
 Prepare locally on the VPS without touching Modal:
 
