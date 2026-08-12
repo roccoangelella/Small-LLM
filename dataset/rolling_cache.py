@@ -1,16 +1,14 @@
 """Rolling local cache for remotely stored immutable dataset shards.
 
 The cache deliberately keeps only the current training shard plus a small
-prefetch window.  Validation shards are staged once and retained because they
-are reused at every evaluation boundary.  Dataset identity and ordering remain
-owned by the completed schema-v2 manifest; this module only manages transport.
+prefetch window. Validation shards are staged once and retained because they are
+reused at every evaluation boundary. Dataset identity and ordering remain owned
+by the completed schema-v2 manifest; this module only manages transport.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -105,6 +103,17 @@ def _parse_shards(manifest: Mapping[str, object]) -> tuple[list[RemoteShard], li
     return train, validation
 
 
+def _train_index_for_block(train: list[RemoteShard], block_id: int) -> int | None:
+    if isinstance(block_id, bool) or not isinstance(block_id, int) or block_id < 0:
+        raise ValueError("train block ID must be a non-negative integer")
+    for index, shard in enumerate(train):
+        if shard.first_block_id <= block_id <= shard.last_block_id:
+            return index
+    if block_id == train[-1].last_block_id + 1:
+        return None
+    raise RuntimeError(f"dataset manifest has no train shard containing block {block_id}")
+
+
 def _file_matches(root: Path, shard: RemoteShard) -> bool:
     path = root / shard.filename
     if path.is_symlink() or not path.is_file():
@@ -144,9 +153,16 @@ def stage_dataset_window(
     store: HuggingFaceBucketShardStore,
     run_id: str,
     destination: Path,
+    start_block_id: int = 0,
     train_shards: int = 1,
 ) -> dict[str, object]:
-    """CPU-stage manifest, validation, and the first train shard(s) before GPU use."""
+    """CPU-stage validation plus the train shard required by the next optimizer step.
+
+    For a fresh run ``start_block_id=0`` stages ``train-000000.bin``. On resume,
+    the caller supplies the completed optimizer-step count, which equals the
+    next unconsumed block ID. This preserves the no-idle-H100 rule across
+    provider/workspace restarts rather than only for the first launch.
+    """
 
     if isinstance(train_shards, bool) or not isinstance(train_shards, int) or train_shards <= 0:
         raise ValueError("train_shards must be a positive integer")
@@ -154,11 +170,17 @@ def stage_dataset_window(
     manifest_path = destination / "manifest.json"
     manifest = store.download_dataset_manifest(run_id=run_id, destination=manifest_path)
     train, validation = _parse_shards(manifest)
-    selected_train = train[:train_shards]
+    start_index = _train_index_for_block(train, start_block_id)
+    training_complete = start_index is None
+    selected_train = (
+        []
+        if start_index is None
+        else train[start_index : min(len(train), start_index + train_shards)]
+    )
     selected_names = {item.filename for item in selected_train}
 
     # CPU staging is also the cleanup boundary after interrupted Modal sessions:
-    # retain only the requested initial train window. Validation stays resident.
+    # retain only the checkpoint-aligned train window. Validation stays resident.
     train_dir = ensure_safe_directory(destination / "train")
     ensure_safe_directory(destination / "validation")
     for path in train_dir.glob("train-*.bin"):
@@ -166,10 +188,11 @@ def stage_dataset_window(
         if relative not in selected_names:
             path.unlink()
 
-    for shard in validation:
-        _download_verified(store, run_id=run_id, root=destination, shard=shard)
-    for shard in selected_train:
-        _download_verified(store, run_id=run_id, root=destination, shard=shard)
+    if not training_complete:
+        for shard in validation:
+            _download_verified(store, run_id=run_id, root=destination, shard=shard)
+        for shard in selected_train:
+            _download_verified(store, run_id=run_id, root=destination, shard=shard)
 
     marker = {
         "version": 1,
@@ -177,12 +200,14 @@ def stage_dataset_window(
         "bucket_id": store.bucket_id,
         "run_id": run_id,
         "manifest_sha256": _manifest_sha256(manifest_path),
+        "start_block_id": start_block_id,
+        "training_complete": training_complete,
         "staged_train_shards": [item.filename for item in selected_train],
-        "validation_shards": [item.filename for item in validation],
+        "validation_shards": [] if training_complete else [item.filename for item in validation],
     }
     write_json_atomic(destination / STAGING_MARKER, marker)
     return {
-        "status": "ready",
+        "status": "training_complete" if training_complete else "ready",
         "dataset_dir": str(destination),
         **marker,
     }
@@ -193,7 +218,7 @@ def verify_staged_dataset(
     destination: Path,
     bucket_id: str,
     run_id: str,
-    require_first_train: bool = True,
+    required_train_block: int | None = 0,
 ) -> dict[str, object]:
     marker_path = destination / STAGING_MARKER
     manifest_path = destination / "manifest.json"
@@ -215,15 +240,33 @@ def verify_staged_dataset(
     if not isinstance(production, Mapping) or production.get("run_id") != run_id:
         raise RuntimeError("rolling dataset manifest run ID mismatch")
     train, validation = _parse_shards(manifest)
+    if marker.get("training_complete") is True:
+        if required_train_block is not None and required_train_block <= train[-1].last_block_id:
+            raise RuntimeError("rolling dataset staging marker incorrectly claims training is complete")
+        return {
+            "status": "training_complete",
+            "manifest_sha256": _manifest_sha256(manifest_path),
+            "validation_shards": 0,
+        }
     for shard in validation:
         if not _file_matches(destination, shard):
             raise RuntimeError(f"staged validation shard is missing or corrupt: {shard.filename}")
-    if require_first_train and not _file_matches(destination, train[0]):
-        raise RuntimeError("first training shard is not ready before GPU dispatch")
+    required_name: str | None = None
+    if required_train_block is not None:
+        index = _train_index_for_block(train, required_train_block)
+        if index is None:
+            raise RuntimeError("required train block is beyond the completed dataset")
+        required = train[index]
+        required_name = required.filename
+        if not _file_matches(destination, required):
+            raise RuntimeError(
+                f"train shard for block {required_train_block} is not ready before GPU dispatch"
+            )
     return {
         "status": "verified",
         "manifest_sha256": _manifest_sha256(manifest_path),
-        "first_train_shard": train[0].filename,
+        "required_train_block": required_train_block,
+        "required_train_shard": required_name,
         "validation_shards": len(validation),
     }
 
@@ -302,9 +345,6 @@ class RollingShardCache:
         shard = self.train[index]
         if block_id != shard.last_block_id:
             return
-        # The complete shard is now consumed. The next shard has been queued
-        # since first use of the current shard, so deletion never delays that
-        # network transfer.
         if self.evict_consumed:
             path = self.root / shard.filename
             if path.is_file() and not path.is_symlink():
@@ -322,13 +362,11 @@ class RollingShardCache:
                 return
             raise RuntimeError(f"rolling dataset cache cannot restore after block {block_id}")
         self._prune_before(index)
-        # Do not block checkpoint restore on network. The first next_batch call
-        # will wait if needed, while this immediately starts the request.
         self._future(index)
         self._prefetch_after(index)
 
     def close(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=False)
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def __del__(self) -> None:
         try:
