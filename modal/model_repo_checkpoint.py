@@ -13,6 +13,7 @@ Dataset Storage Buckets are intentionally unaffected.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -25,7 +26,6 @@ from trainer.model_artifact import (
 
 _ORIGINAL_TRAINER_COMMAND = base_runtime._trainer_command
 _ORIGINAL_HF_BUCKET_STORE = base_runtime._hf_bucket_store
-_ORIGINAL_HF_CHECKPOINT_BUCKET_ID = base_runtime._hf_checkpoint_bucket_id
 _ORIGINAL_WRITE_HF_TRANSPORT_MANIFEST = base_runtime._write_hf_transport_manifest
 _ORIGINAL_RUNTIME_CONTRACT = base_runtime._runtime_contract
 _ORIGINAL_ASSERT_CONTRACT = base_runtime._assert_contract
@@ -39,6 +39,23 @@ def _model_repo_store():
 
 def _model_repo_id() -> str:
     return base_runtime._hf_model_repo_id()
+
+
+def _assert_frozen_source(metadata: Mapping[str, object], *, source: str) -> None:
+    """Reject a live remote checkpoint produced by a different trainer commit."""
+
+    expected = os.environ.get("SMALL_LLM_MODAL_SOURCE_COMMIT")
+    observed = metadata.get("source_commit")
+    if (
+        expected
+        and isinstance(observed, str)
+        and observed
+        and observed != expected
+    ):
+        raise RuntimeError(
+            f"{source} checkpoint was created by source commit {observed}; "
+            f"checkout that frozen commit instead of resuming with {expected}"
+        )
 
 
 def _trainer_command_model_repo(*args: Any, **kwargs: Any) -> list[str]:
@@ -71,7 +88,7 @@ def _restore_hf_checkpoint_repo_first(run_id: str, run_dir: Path) -> dict[str, A
     if pointer is not None:
         if not isinstance(pointer, Mapping):
             raise RuntimeError("Hugging Face model-repository latest pointer is not a JSON object")
-        return base_runtime._restore_two_phase_pointer(
+        metadata = base_runtime._restore_two_phase_pointer(
             store=repo_store,
             run_id=run_id,
             run_dir=run_dir,
@@ -79,6 +96,8 @@ def _restore_hf_checkpoint_repo_first(run_id: str, run_dir: Path) -> dict[str, A
             source="hf_model_repo",
             expected_transport="modal-hf-checkpoint-v1",
         )
+        _assert_frozen_source(metadata, source="Hugging Face model-repository")
+        return metadata
 
     # Stable artifacts are also valid exact checkpoint snapshots.  This supports
     # the already-completed 100M/2B model that was manually moved from the bucket
@@ -105,6 +124,7 @@ def _restore_hf_checkpoint_repo_first(run_id: str, run_dir: Path) -> dict[str, A
             source_commit=info.get("source_commit") or transport.get("source_commit"),
             microbatch_size=info.get("microbatch_size") or transport.get("microbatch_size"),
         )
+        _assert_frozen_source(metadata, source="Hugging Face stable model")
         print(json.dumps({"hf_checkpoint_restore": metadata}, sort_keys=True), flush=True)
         return metadata
 
@@ -246,6 +266,7 @@ def run_training(**kwargs: Any) -> dict[str, object]:
     """Run the frozen Modal trainer with unified model-repository checkpoint transport."""
 
     install_model_repo_checkpoint_transport()
+    os.environ["SMALL_LLM_MODAL_SOURCE_COMMIT"] = str(kwargs["source_commit"])
     result = dict(_ORIGINAL_RUN_TRAINING(**kwargs))
     result["hf_checkpoint_transport"] = {
         "repo": _model_repo_id(),
