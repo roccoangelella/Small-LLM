@@ -1,9 +1,10 @@
 """Profile-driven finite dataset production and trainer-plan CLI.
 
-This is the single experiment-facing dataset surface.  The schema-v2 producer
-lives in :mod:`dataset.production`; this module only freezes the identity and
+This is the single experiment-facing dataset surface. The schema-v2 producer
+lives in :mod:`dataset.production`; this module freezes the identity and
 geometry of approved finite scaling profiles and dispatches the shared producer
-and report engines.
+and report engines. Remote production is Hugging Face Storage Bucket backed;
+legacy Drive manifests remain readable only for historical artifact compatibility.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ class DatasetProfile:
     run_id: str | None
     plan: QualificationProfile
     production_enabled: bool = True
-    remote_backend: str = "drive"
     evict_remote_shards: bool = False
 
     @property
@@ -147,7 +147,6 @@ PROFILES: dict[str, DatasetProfile] = {
     "modal-10b-b64": DatasetProfile(
         key="modal-10b-b64",
         run_id="modal-10b-b64-dataset-001",
-        remote_backend="hf_bucket",
         evict_remote_shards=True,
         plan=QualificationProfile(
             name="modal-10b-b64-v1",
@@ -181,7 +180,6 @@ _LOCKED_PRODUCTION_FLAGS = frozenset(
         "--sequences-per-block",
         "--target-shard-bytes",
         "--allow-local-only",
-        "--remote-backend",
         "--evict-remote-shards",
     }
 )
@@ -236,8 +234,6 @@ def production_arguments(profile: DatasetProfile | str, argv: Sequence[str]) -> 
         str(resolved.sequences_per_block),
         "--target-shard-bytes",
         str(resolved.target_shard_bytes),
-        "--remote-backend",
-        resolved.remote_backend,
     ]
     if resolved.evict_remote_shards:
         result.append("--evict-remote-shards")
@@ -264,6 +260,12 @@ def derive_plan(
     manifest_path: Path | None = None,
     drive_manifest_path: Path | None = None,
 ) -> dict[str, object]:
+    """Derive a plan while binding the selected profile's dataset run ID.
+
+    ``drive_manifest_path`` is retained solely for already-built historical
+    datasets whose qualification identity includes that legacy manifest.
+    """
+
     resolved = get_profile(profile) if isinstance(profile, str) else profile
     _validate_run_id(manifest, resolved)
     return derive_qualification_plan(
@@ -280,8 +282,8 @@ def profile_payload(profile: DatasetProfile) -> dict[str, object]:
         "key": profile.key,
         "run_id": profile.run_id,
         "production_enabled": profile.production_enabled,
-        "remote_backend": profile.remote_backend,
         "evict_remote_shards": profile.evict_remote_shards,
+        "remote_backend": "hf_bucket",
         **payload,
     }
 
@@ -309,7 +311,11 @@ def _run_build(argv: Sequence[str]) -> int:
 def _run_report(argv: Sequence[str]) -> int:
     parser = _profile_parser("report")
     parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--drive-manifest", type=Path)
+    parser.add_argument(
+        "--drive-manifest",
+        type=Path,
+        help="Legacy durability manifest for already-built historical datasets.",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     profile = get_profile(args.profile)
@@ -353,7 +359,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             "usage: python -m dataset.qualification {profiles,build,report} ...\n\n"
             "profiles  list frozen finite-dataset profiles\n"
-            "build     run the shared production builder with a frozen profile\n"
+            "build     run the shared HF-backed production builder with a frozen profile\n"
             "report    derive the exact one-pass trainer plan from a manifest"
         )
         return 0
