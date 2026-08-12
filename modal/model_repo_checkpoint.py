@@ -99,9 +99,9 @@ def _restore_hf_checkpoint_repo_first(run_id: str, run_dir: Path) -> dict[str, A
         _assert_frozen_source(metadata, source="Hugging Face model-repository")
         return metadata
 
-    # Stable artifacts are also valid exact checkpoint snapshots.  This supports
-    # the already-completed 100M/2B model that was manually moved from the bucket
-    # to models/<run_id>/<step> before this transport was standardized.
+    # Stable artifacts are also valid exact checkpoint snapshots. This supports
+    # the completed 100M/2B model that was manually moved from the bucket to
+    # models/<run_id>/<step> before this transport was standardized.
     try:
         restored, info = download_verified_model_artifact(
             repo_id=_model_repo_id(),
@@ -128,7 +128,7 @@ def _restore_hf_checkpoint_repo_first(run_id: str, run_dir: Path) -> dict[str, A
         print(json.dumps({"hf_checkpoint_restore": metadata}, sort_keys=True), flush=True)
         return metadata
 
-    # Legacy migration source only.  New writes never target this bucket.
+    # Legacy migration source only. New writes never target this bucket.
     bucket_store = _ORIGINAL_HF_BUCKET_STORE()
     legacy_pointer = bucket_store.read_json(f"run/{run_id}/latest.json")
     if legacy_pointer is None:
@@ -205,7 +205,7 @@ def _assert_contract_model_repo(path: Path, expected: Mapping[str, Any]) -> None
     if actual.get("checkpoint_transports") != desired:
         actual["checkpoint_transports"] = desired
         actual["checkpoint_transport_migration"] = (
-            "ADR-0054: HF Storage Bucket -> unified HF model repository"
+            "ADR-0055: HF Storage Bucket -> unified HF model repository"
         )
         base_runtime._write_json(path, actual)
 
@@ -295,7 +295,7 @@ def install_model_repo_checkpoint_transport() -> None:
     # The legacy runtime calls this accessor and labels its return value bucket_id;
     # after this adapter is installed the value is intentionally the model repo ID.
     base_runtime._hf_checkpoint_bucket_id = _model_repo_id
-    # rolling_dataset.next_unconsumed_block calls this historical accessor.  Make
+    # rolling_dataset.next_unconsumed_block calls this historical accessor. Make
     # it read the model-repository run/latest pointer without changing dataset buckets.
     base_runtime._hf_bucket_store = _model_repo_store
     base_runtime._write_hf_transport_manifest = _write_hf_transport_manifest_model_repo
