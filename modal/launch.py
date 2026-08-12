@@ -45,7 +45,7 @@ IMAGE = (
         "google-api-python-client>=2.100,<3",
         "google-auth>=2.20,<3",
         "google-auth-oauthlib>=1.0.0,<2",
-        "huggingface-hub>=0.30,<2",
+        "huggingface-hub>=1.5,<2",
     )
     .add_local_dir(
         LOCAL_REPO,
@@ -161,7 +161,7 @@ def main(
         "source_commit": source_commit,
         "dataset_dir": dataset_dir or "auto-discover unique matching dataset",
         "max_steps_this_session": max_steps_this_session or "remaining plan",
-        "resume": "automatic_verified_modal_volume",
+        "resume": "automatic_verified_modal_volume_then_hf_bucket",
     }
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
