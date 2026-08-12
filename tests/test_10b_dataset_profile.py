@@ -16,7 +16,6 @@ def test_modal_10b_profile_freezes_block64_one_gib_hf_shards() -> None:
     assert profile.context_length == 2048
     assert profile.sequences_per_block == 64
     assert profile.target_shard_bytes == 1024**3
-    assert profile.remote_backend == "hf_bucket"
     assert profile.evict_remote_shards is True
 
     block_bytes = (2048 + 1) * 64 * 2
@@ -25,11 +24,11 @@ def test_modal_10b_profile_freezes_block64_one_gib_hf_shards() -> None:
     assert 1024**3 - 4094 * block_bytes == 256
 
 
-def test_modal_10b_profile_forces_remote_backend_and_eviction() -> None:
+def test_modal_10b_profile_forces_remote_eviction_without_backend_switch() -> None:
     args = production_arguments("modal-10b-b64", ["--weights-file", "weights.json"])
 
     assert args[args.index("--run-id") + 1] == "modal-10b-b64-dataset-001"
     assert args[args.index("--target-shard-bytes") + 1] == str(1024**3)
     assert args[args.index("--sequences-per-block") + 1] == "64"
-    assert args[args.index("--remote-backend") + 1] == "hf_bucket"
+    assert "--remote-backend" not in args
     assert "--evict-remote-shards" in args
