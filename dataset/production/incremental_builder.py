@@ -100,8 +100,15 @@ def build_incremental_production_cache(
     training_validation_blocks: int,
     resume: bool = False,
     simulate_crash_after_documents: int | None = None,
+    durable_progress_hook: Callable[[], object] | None = None,
 ) -> dict[str, object]:
-    """Build a remotely durable prefix while publishing READY shards incrementally."""
+    """Build a remotely durable prefix while publishing READY shards incrementally.
+
+    ``durable_progress_hook`` is provider-neutral orchestration: files have
+    already been atomically written locally when it runs. Modal uses it to
+    commit its Volume snapshot before READY publication; ordinary filesystems
+    leave it unset.
+    """
 
     if not policy.remote_required:
         raise RuntimeError("incremental production requires remote durability")
@@ -135,6 +142,10 @@ def build_incremental_production_cache(
     write_json_atomic(output_dir / "run_contract.json", contract)
     publish_run_contract(frontier_store, run_id=policy.run_id, contract=contract)
 
+    def commit_progress_visibility() -> None:
+        if durable_progress_hook is not None:
+            durable_progress_hook()
+
     with RunLock(output_dir):
         if resume:
             recover_progress_backup(output_dir)
@@ -164,9 +175,6 @@ def build_incremental_production_cache(
                 state,
                 durability_manifest=durable,
             )
-            # Frontier visibility is reconstructed only from shards referenced
-            # by the committed producer cursor. A remote upload may safely be
-            # ahead of that cursor, but cannot become READY until the next commit.
             publish_frontier(
                 frontier_store,
                 run_id=policy.run_id,
@@ -221,9 +229,10 @@ def build_incremental_production_cache(
             )
             committed_durable = _durability_for_committed_state(durable, state)
             # Crash-consistency order is deliberate:
-            #   remote bytes verified -> producer cursor committed -> READY -> local eviction.
-            # A crash may leave READY behind progress, never ahead of it.
+            # remote bytes verified -> local producer cursor -> provider-specific
+            # durable progress commit -> READY -> local eviction.
             write_json_atomic(progress_path, state)
+            commit_progress_visibility()
             publish_frontier(
                 frontier_store,
                 run_id=policy.run_id,
@@ -414,10 +423,8 @@ def build_incremental_production_cache(
                     run_id=policy.run_id,
                     durability_manifest=durable,
                 )
-                # Commit final producer cursor before exposing the last active
-                # shard(s) as READY. CLI publication subsequently flips the
-                # frontier's producer_complete bit with the exact final-manifest hash.
                 write_json_atomic(progress_path, final_state)
+                commit_progress_visibility()
                 publish_frontier(
                     frontier_store,
                     run_id=policy.run_id,
@@ -440,6 +447,7 @@ def build_incremental_production_cache(
                 return manifest
             except BaseException:
                 write_json_atomic(progress_path, safe_state)
+                commit_progress_visibility()
                 unlink_durable(manifest_path)
                 raise
         finally:
