@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-12
 ---
 
 # Current project status
@@ -60,9 +60,9 @@ Current contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_bac
 
 ## Active experiment — 100M / 2B on Modal H100
 
-ADR 0041 authorizes the approximately-100M-parameter / 2B-token Modal trajectory using the byte-preserving block-64 derivative of the verified 2B corpus. ADR 0043 keeps all Kaggle-to-Modal preparation and Modal operation on the VPS.
+ADR 0041 authorizes the approximately-100M-parameter / 2B-token Modal trajectory using the byte-preserving block-64 derivative of the verified 2B corpus. ADR 0043 keeps all Kaggle-to-Modal preparation and Modal operation on the VPS. ADR 0046 now makes Hugging Face the integrated cross-workspace checkpoint transport while retaining the Modal Volume for faster same-workspace durability.
 
-By 2026-08-11 16:10 Europe/Rome, the user reported that the production training run had been started on an **H100 GPU**.
+By 2026-08-11 16:10 Europe/Rome, the user reported that the production training run had been started on an **H100 GPU**. On 2026-08-12 the original Modal account exhausted its credits and the user moved operational setup to a new Modal account/workspace. Modal Volumes are not shared across that boundary, so the run now requires a surviving HF or old-workspace checkpoint for exact continuation.
 
 ```text
 model preset: 100M / trainer substantive
@@ -75,13 +75,19 @@ full-block target tokens: ~131,072
 planned optimizer updates: 15,259
 precision: FP16 autocast with FP32 master parameters
 microbatch qualification candidates: 16, 32, 48, 64
-GPU actually reported for live run: H100
-checkpoint cadence: every 250 successful updates plus final checkpoint
+GPU actually reported for original live run: H100
+same-workspace checkpoint cadence: Modal Volume every 250 successful updates + final
+cross-workspace checkpoint cadence: Hugging Face every 500 successful updates + final
+HF checkpoint namespace: run/100m-2b-data-001/
+HF retention: rolling latest-only with branch-history squash after verified pointer move
 validation cadence: every 250 successful updates
-checkpoint durability: Modal Volume small-llm-runs
 ```
 
-The runtime probes 16/32/48/64 before optimizer step 1 and freezes the fastest safe measured execution microbatch. The selected live microbatch and current optimizer step have not yet been copied into project memory; use the Modal run evidence/W&B state rather than guessing them. The 64-sequence optimizer batch is fixed independently of execution microbatch.
+The original runtime probed 16/32/48/64 before optimizer step 1 and froze the fastest safe measured execution microbatch. The selected live microbatch and exact latest optimizer step have not yet been copied into project memory; use surviving checkpoint/W&B evidence rather than guessing them. When a new Modal workspace has no local run checkpoint, the ADR-0046 runtime first restores `run/100m-2b-data-001/latest.json` from HF. For migration of this already-running trajectory only, it can also bootstrap the older `models/100m-2b-data-001/artifact.json` layout produced by `modal/publish_hf.py`, verify the referenced joint checkpoint, and reuse its recorded microbatch without a new probe.
+
+The external ten-minute `modal/publish_hf.py` loop is retired for live durability. It had accumulated separate checkpoint paths/commits and triggered the user's private HF storage limit. Live training now uses the trainer's two-phase verified HF checkpoint protocol directly; after each new rolling checkpoint is durable, older run checkpoint folders are removed and HF branch history is squashed, then the latest pointer is read back before training continues. `modal/publish_hf.py --require-complete` remains the explicit final human-facing artifact publication path required by ADR 0044.
+
+The VPS dataset preparation cache also exposed a separate account-migration bug: `.modal-2b-b64-upload.json` records volume/destination/manifest but not Modal workspace identity, so it can falsely skip upload after switching accounts. Until fixed, use `python modal/prepare_dataset.py --force-upload` when preparing the new Modal workspace.
 
 This is a distinct trajectory from the historical/ongoing 20M / 2B Kaggle run. The 2B sequence bytes and train/validation ordering are preserved by the reblock, while the optimizer batch is intentionally larger for Hopper utilization.
 
@@ -163,6 +169,8 @@ Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11
 - Durable decisions: [`../decisions/README.md`](../decisions/README.md)
 - Modal 100M / 2B block-64 decision: [`../decisions/0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md`](../decisions/0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md)
 - VPS-only Modal preparation decision: [`../decisions/0043-prepare-modal-block64-corpus-on-vps.md`](../decisions/0043-prepare-modal-block64-corpus-on-vps.md)
+- Final HF artifact decision: [`../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md`](../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md)
+- Modal/HF cross-workspace checkpoint decision: [`../decisions/0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](../decisions/0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md)
 - Modal training runbook: [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
 - 500M scaling interpretation: [`../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md`](../decisions/0027-use-500m-schema-gains-to-justify-fixed-20m-token-scaling-through-2b.md)
