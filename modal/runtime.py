@@ -90,10 +90,6 @@ def _dataset_matches(root: Path, profile_key: str) -> tuple[bool, dict[str, Any]
         "validation": (root / "validation").is_dir(),
         "transport": "modal_volume",
     }
-    # A dataset discovered here is already inside the read-only small-llm-data
-    # Modal Volume. The dataset itself is independently reproducible from the
-    # frozen Kaggle source; checkpoint transport no longer depends on this
-    # Volume being in the same Modal workspace as a later resume.
     if not all(row[key] for key in ("manifest", "train", "validation")):
         return False, row
     manifest = _json(manifest_path)
@@ -148,9 +144,14 @@ def _find_dataset(data_root: Path, explicit: str, profile_key: str) -> tuple[Pat
 
 def _derive_plan(repo_root: Path, dataset: Path, profile_key: str, output: Path, log_path: Path) -> dict[str, Any]:
     command = [
-        sys.executable, "-m", "dataset.qualification", "report",
-        "--profile", profile_key,
-        "--dataset-dir", str(dataset),
+        sys.executable,
+        "-m",
+        "dataset.qualification",
+        "report",
+        "--profile",
+        profile_key,
+        "--dataset-dir",
+        str(dataset),
     ]
     drive_manifest = dataset / "drive_manifest.json"
     if drive_manifest.is_file():
@@ -183,68 +184,121 @@ def _trainer_command(
     online: bool,
     resume: str | None = None,
     remote_manifest: Path | None = None,
+    remote_bucket_id: str | None = None,
 ) -> list[str]:
     trainer = plan["trainer"]
     assert isinstance(trainer, Mapping)
     command = [
-        sys.executable, "-m", "trainer",
-        "--dataset-dir", str(dataset),
-        "--dataset-manifest", str(dataset / "manifest.json"),
-        "--checkpoint-dir", str(checkpoint_dir),
-        "--steps", str(steps),
-        "--sequences-per-block", str(SEQUENCES_PER_BLOCK),
-        "--model-size", model.trainer_size,
-        "--architecture", "gdn2_hybrid",
-        "--gdn-chunk-size", "32",
-        "--initialization", "normal",
-        "--optimizer", "hybrid_muon_adamw",
-        "--device", "cuda",
-        "--precision", precision,
-        "--microbatch-size", str(microbatch),
-        "--learning-rate", "3e-4",
-        "--weight-decay", "0.1",
-        "--muon-momentum", "0.95",
-        "--muon-lr-multiplier", "1.0",
-        "--muon-update-rms", "0.18",
-        "--muon-weight-decay", "0.1",
-        "--max-grad-norm", "1.0",
-        "--schedule", "wsd",
-        "--warmup-tokens", str(trainer["warmup_tokens"]),
-        "--stable-tokens", str(trainer["stable_tokens"]),
-        "--decay-tokens", str(trainer["decay_tokens"]),
-        "--minimum-lr-ratio", "0.1",
-        "--seed", "17",
+        sys.executable,
+        "-m",
+        "trainer",
+        "--dataset-dir",
+        str(dataset),
+        "--dataset-manifest",
+        str(dataset / "manifest.json"),
+        "--checkpoint-dir",
+        str(checkpoint_dir),
+        "--steps",
+        str(steps),
+        "--sequences-per-block",
+        str(SEQUENCES_PER_BLOCK),
+        "--model-size",
+        model.trainer_size,
+        "--architecture",
+        "gdn2_hybrid",
+        "--gdn-chunk-size",
+        "32",
+        "--initialization",
+        "normal",
+        "--optimizer",
+        "hybrid_muon_adamw",
+        "--device",
+        "cuda",
+        "--precision",
+        precision,
+        "--microbatch-size",
+        str(microbatch),
+        "--learning-rate",
+        "3e-4",
+        "--weight-decay",
+        "0.1",
+        "--muon-momentum",
+        "0.95",
+        "--muon-lr-multiplier",
+        "1.0",
+        "--muon-update-rms",
+        "0.18",
+        "--muon-weight-decay",
+        "0.1",
+        "--max-grad-norm",
+        "1.0",
+        "--schedule",
+        "wsd",
+        "--warmup-tokens",
+        str(trainer["warmup_tokens"]),
+        "--stable-tokens",
+        str(trainer["stable_tokens"]),
+        "--decay-tokens",
+        str(trainer["decay_tokens"]),
+        "--minimum-lr-ratio",
+        "0.1",
+        "--seed",
+        "17",
     ]
     if resume:
         command += ["--resume", resume]
     if not online:
         return command + [
-            "--checkpoint-every-steps", "0",
-            "--evaluation-every-steps", "0",
-            "--validation-blocks", "0",
-            "--remote-publish-every-steps", "0",
-            "--wandb-mode", "disabled",
+            "--checkpoint-every-steps",
+            "0",
+            "--evaluation-every-steps",
+            "0",
+            "--validation-blocks",
+            "0",
+            "--remote-publish-every-steps",
+            "0",
+            "--wandb-mode",
+            "disabled",
         ]
-    if remote_manifest is None:
-        raise RuntimeError("online Modal training requires a Hugging Face transport manifest")
+    if remote_manifest is None or not remote_bucket_id:
+        raise RuntimeError("online Modal training requires its Hugging Face bucket transport")
     command += [
-        "--checkpoint-every-steps", str(DURABILITY_EVERY),
-        "--evaluation-every-steps", str(DURABILITY_EVERY),
-        "--validation-blocks", str(trainer["validation_blocks"]),
-        "--remote-publish-every-steps", str(HF_REMOTE_EVERY),
-        "--remote-drive-manifest", str(remote_manifest),
-        "--remote-token-env", "HF_TOKEN",
-        "--remote-create-repo",
+        "--checkpoint-every-steps",
+        str(DURABILITY_EVERY),
+        "--evaluation-every-steps",
+        str(DURABILITY_EVERY),
+        "--validation-blocks",
+        str(trainer["validation_blocks"]),
+        "--remote-publish-every-steps",
+        str(HF_REMOTE_EVERY),
+        "--remote-drive-manifest",
+        str(remote_manifest),
+        "--remote-checkpoint-bucket",
+        remote_bucket_id,
+        "--remote-token-env",
+        "HF_TOKEN",
+        "--remote-create-bucket",
         "--remote-rolling-latest-only",
-        "--wandb-mode", "online",
-        "--wandb-project", "Small-LLM",
-        "--wandb-run-id", wandb_run_id,
-        "--wandb-run-name", run_name(model, tokens),
+        "--wandb-mode",
+        "online",
+        "--wandb-project",
+        "Small-LLM",
+        "--wandb-run-id",
+        wandb_run_id,
+        "--wandb-run-name",
+        run_name(model, tokens),
         "--wandb-tags",
-        model.label.lower(), f"{tokens.label.lower()}-tokens", "modal", gpu_tag,
-        "data-scaling", f"microbatch-{microbatch}", "one-pass", "exact-resume",
-        "hf-cross-provider-resume",
-        "--wandb-resume", "must" if resume else "allow",
+        model.label.lower(),
+        f"{tokens.label.lower()}-tokens",
+        "modal",
+        gpu_tag,
+        "data-scaling",
+        f"microbatch-{microbatch}",
+        "one-pass",
+        "exact-resume",
+        "hf-bucket-cross-provider-resume",
+        "--wandb-resume",
+        "must" if resume else "allow",
     ]
     entity = os.environ.get("WANDB_ENTITY")
     if entity:
@@ -380,18 +434,45 @@ def _latest_checkpoint(checkpoint_dir: Path) -> tuple[str | None, int]:
     return checkpoint_id, step
 
 
-def _hf_store():
-    from dataset.src.remote import HuggingFaceCheckpointStore
-
-    repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID")
+def _hf_token() -> str:
     token = os.environ.get("HF_TOKEN")
-    if not repo_id:
-        raise RuntimeError("SMALL_LLM_HF_REPO_ID is required for Modal checkpoint transport")
     if not token:
         raise RuntimeError("HF_TOKEN is required for Modal checkpoint transport")
+    return token
+
+
+def _hf_model_repo_id() -> str:
+    repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID")
+    if not repo_id:
+        raise RuntimeError("SMALL_LLM_HF_REPO_ID is required for Modal checkpoint transport")
+    return repo_id
+
+
+def _hf_checkpoint_bucket_id() -> str:
+    explicit = os.environ.get("SMALL_LLM_HF_CHECKPOINT_BUCKET_ID", "").strip()
+    if explicit:
+        return explicit
+    repo_id = _hf_model_repo_id()
+    return f"{repo_id}-checkpoints"
+
+
+def _hf_bucket_store():
+    from dataset.src.hf_bucket_checkpoint import HuggingFaceBucketCheckpointStore
+
+    return HuggingFaceBucketCheckpointStore(
+        _hf_checkpoint_bucket_id(),
+        token=_hf_token(),
+        private=True,
+        create_bucket=True,
+    )
+
+
+def _hf_model_repo_store():
+    from dataset.src.remote import HuggingFaceCheckpointStore
+
     return HuggingFaceCheckpointStore(
-        repo_id,
-        token=token,
+        _hf_model_repo_id(),
+        token=_hf_token(),
         private=True,
         create_repo=True,
     )
@@ -413,12 +494,46 @@ def _verified_checkpoint_metadata(root: Path, checkpoint_id: str) -> dict[str, A
     return {"checkpoint_id": checkpoint_id, "step": step}
 
 
-def _restore_hf_checkpoint_if_needed(run_id: str, run_dir: Path) -> dict[str, Any] | None:
-    """Restore the latest verified HF checkpoint when this Modal workspace is empty.
+def _restore_two_phase_pointer(
+    *,
+    store: object,
+    run_id: str,
+    run_dir: Path,
+    pointer: Mapping[str, object],
+    source: str,
+    expected_transport: str,
+) -> dict[str, Any]:
+    from dataset.src.joint_checkpoint import restore_on_empty_vps
+    from dataset.src.remote import TwoPhaseCheckpointPublisher
 
-    The rolling two-phase transport is preferred. For the already-running 100M
-    trajectory, the older modal/publish_hf.py artifact layout is accepted once as
-    a migration source so an account/workspace change does not strand the run.
+    restored = restore_on_empty_vps(
+        publisher=TwoPhaseCheckpointPublisher(store, run_id=run_id),
+        store=None,
+        run_id=run_id,
+        destination=run_dir,
+        checkpoint_pointer=pointer,
+        prefetch_shards=0,
+    )
+    checkpoint_id = str(pointer.get("checkpoint_id", ""))
+    metadata = _verified_checkpoint_metadata(restored, checkpoint_id)
+    transport = _json(restored / "drive_manifest.json")
+    if transport.get("transport") != expected_transport:
+        raise RuntimeError("restored checkpoint has the wrong Modal HF transport identity")
+    metadata.update(
+        source=source,
+        source_commit=transport.get("source_commit"),
+        microbatch_size=transport.get("microbatch_size"),
+    )
+    print(json.dumps({"hf_checkpoint_restore": metadata}, sort_keys=True), flush=True)
+    return metadata
+
+
+def _restore_hf_checkpoint_if_needed(run_id: str, run_dir: Path) -> dict[str, Any] | None:
+    """Restore verified HF state only when the current Modal workspace is empty.
+
+    Current production state lives in a mutable Hugging Face Storage Bucket.
+    Two older model-repository layouts are accepted only as migration sources for
+    the already-running 100M/2B trajectory.
     """
 
     checkpoint_dir = run_dir / "checkpoints"
@@ -426,36 +541,35 @@ def _restore_hf_checkpoint_if_needed(run_id: str, run_dir: Path) -> dict[str, An
     if local_id is not None:
         return None
 
-    from dataset.src.joint_checkpoint import restore_on_empty_vps
-    from dataset.src.remote import TwoPhaseCheckpointPublisher
-
-    store = _hf_store()
-    pointer = store.read_json(f"run/{run_id}/latest.json")
+    bucket_store = _hf_bucket_store()
+    pointer = bucket_store.read_json(f"run/{run_id}/latest.json")
     if pointer is not None:
         if not isinstance(pointer, Mapping):
-            raise RuntimeError("Hugging Face latest checkpoint pointer is not a JSON object")
-        restored = restore_on_empty_vps(
-            publisher=TwoPhaseCheckpointPublisher(store, run_id=run_id),
-            store=None,
+            raise RuntimeError("Hugging Face bucket latest pointer is not a JSON object")
+        return _restore_two_phase_pointer(
+            store=bucket_store,
             run_id=run_id,
-            destination=run_dir,
-            checkpoint_pointer=pointer,
-            prefetch_shards=0,
+            run_dir=run_dir,
+            pointer=pointer,
+            source="hf_bucket",
+            expected_transport="modal-hf-bucket-checkpoint-v1",
         )
-        checkpoint_id = str(pointer.get("checkpoint_id", ""))
-        metadata = _verified_checkpoint_metadata(restored, checkpoint_id)
-        transport = _json(restored / "drive_manifest.json")
-        if transport.get("transport") != "modal-hf-checkpoint-v1":
-            raise RuntimeError("restored checkpoint lacks the Modal HF transport identity")
-        metadata.update(
-            source="rolling_hf",
-            source_commit=transport.get("source_commit"),
-            microbatch_size=transport.get("microbatch_size"),
-        )
-        print(json.dumps({"hf_checkpoint_restore": metadata}, sort_keys=True), flush=True)
-        return metadata
 
-    artifact = store.read_json(f"models/{run_id}/artifact.json")
+    repo_store = _hf_model_repo_store()
+    old_pointer = repo_store.read_json(f"run/{run_id}/latest.json")
+    if old_pointer is not None:
+        if not isinstance(old_pointer, Mapping):
+            raise RuntimeError("legacy Hugging Face repository latest pointer is not a JSON object")
+        return _restore_two_phase_pointer(
+            store=repo_store,
+            run_id=run_id,
+            run_dir=run_dir,
+            pointer=old_pointer,
+            source="legacy_rolling_hf_repo",
+            expected_transport="modal-hf-checkpoint-v1",
+        )
+
+    artifact = repo_store.read_json(f"models/{run_id}/artifact.json")
     if artifact is None:
         return None
     if not isinstance(artifact, Mapping):
@@ -478,7 +592,7 @@ def _restore_hf_checkpoint_if_needed(run_id: str, run_dir: Path) -> dict[str, An
         else:
             staging.unlink()
     try:
-        store.download_tree(expected_prefix, staging)
+        repo_store.download_tree(expected_prefix, staging)
         metadata = _verified_checkpoint_metadata(staging, checkpoint_id)
         os.replace(staging, target)
     except BaseException:
@@ -502,6 +616,7 @@ def _write_hf_transport_manifest(
     source_commit: str,
     microbatch_size: int,
     resume_parent_source_commit: str | None,
+    bucket_id: str,
 ) -> dict[str, Any]:
     manifest = _json(dataset / "manifest.json")
     production = manifest.get("production")
@@ -509,18 +624,19 @@ def _write_hf_transport_manifest(
         "version": 1,
         "run_id": run_id,
         "shards": [],
-        "transport": "modal-hf-checkpoint-v1",
+        "transport": "modal-hf-bucket-checkpoint-v1",
+        "bucket_id": bucket_id,
         "dataset_profile": dataset_profile,
         "dataset_run_id": production.get("run_id") if isinstance(production, Mapping) else None,
         "dataset_manifest_sha256": _sha256(dataset / "manifest.json"),
         "source_commit": source_commit,
         "microbatch_size": microbatch_size,
         "remote_cadence_steps": HF_REMOTE_EVERY,
-        "retention": "latest_only_with_history_squash",
+        "retention": "latest_only_mutable_bucket",
     }
     if resume_parent_source_commit and resume_parent_source_commit != source_commit:
         payload["resume_parent_source_commit"] = resume_parent_source_commit
-        payload["source_migration"] = "legacy-HF checkpoint -> ADR-0046 transport-only Modal runtime"
+        payload["source_migration"] = "legacy HF repository checkpoint -> ADR-0047 HF bucket runtime"
     _write_json(path, payload)
     return payload
 
@@ -535,6 +651,7 @@ def _runtime_contract(
     dataset: Path,
     environment: Mapping[str, Any],
     qualification: object,
+    bucket_id: str,
     resume_parent_source_commit: str | None = None,
 ) -> dict[str, Any]:
     manifest = _json(dataset / "manifest.json")
@@ -561,12 +678,12 @@ def _runtime_contract(
         "microbatch_qualification": qualification,
         "checkpoint_transports": {
             "local": f"Modal Volume every {DURABILITY_EVERY} successful updates",
-            "remote": f"Hugging Face rolling latest every {HF_REMOTE_EVERY} successful updates plus final",
+            "remote": f"Hugging Face Storage Bucket {bucket_id} every {HF_REMOTE_EVERY} successful updates plus final",
         },
     }
     if resume_parent_source_commit and resume_parent_source_commit != source_commit:
         result["resume_parent_source_commit"] = resume_parent_source_commit
-        result["source_migration"] = "ADR-0046 transport-only checkpoint migration"
+        result["source_migration"] = "ADR-0047 infrastructure-only checkpoint migration"
     return result
 
 
@@ -576,11 +693,25 @@ def _assert_contract(path: Path, expected: Mapping[str, Any]) -> None:
         return
     actual = _json(path)
     immutable = (
-        "source_commit", "model_parameters", "model_size", "training_tokens",
-        "dataset_profile", "dataset_run_id", "precision", "microbatch_size",
-        "sequences_per_block", "architecture", "gdn_chunk_size_saved", "optimizer", "seed",
+        "source_commit",
+        "model_parameters",
+        "model_size",
+        "training_tokens",
+        "dataset_profile",
+        "dataset_run_id",
+        "precision",
+        "microbatch_size",
+        "sequences_per_block",
+        "architecture",
+        "gdn_chunk_size_saved",
+        "optimizer",
+        "seed",
     )
-    drift = {key: (actual.get(key), expected.get(key)) for key in immutable if actual.get(key) != expected.get(key)}
+    drift = {
+        key: (actual.get(key), expected.get(key))
+        for key in immutable
+        if actual.get(key) != expected.get(key)
+    }
     if drift:
         raise RuntimeError("refusing Modal run configuration drift: " + json.dumps(drift, indent=2))
 
@@ -639,14 +770,25 @@ def run_training(
     marker = _json(verify_marker) if verify_marker.is_file() else {}
     if marker.get("identity") != identity:
         _run(
-            [sys.executable, "-m", "dataset.main", "verify", "--output-dir", str(dataset), "--full-scan"],
+            [
+                sys.executable,
+                "-m",
+                "dataset.main",
+                "verify",
+                "--output-dir",
+                str(dataset),
+                "--full-scan",
+            ],
             cwd=repo_root,
             log_path=evidence_dir / "dataset-verify.log",
         )
         _write_json(verify_marker, {"identity": identity, "datasets_inspected": inspected})
 
     plan = _derive_plan(
-        repo_root, dataset, token_preset.dataset_profile, plan_path,
+        repo_root,
+        dataset,
+        token_preset.dataset_profile,
+        plan_path,
         evidence_dir / "qualification-plan.log",
     )
     restored = _restore_hf_checkpoint_if_needed(run_id, run_dir)
@@ -657,9 +799,9 @@ def run_training(
         restored_source_commit = restored.get("source_commit")
         if isinstance(restored_source_commit, str) and restored_source_commit:
             resume_parent_source_commit = restored_source_commit
-            if restored.get("source") == "rolling_hf" and restored_source_commit != source_commit:
+            if restored.get("source") == "hf_bucket" and restored_source_commit != source_commit:
                 raise RuntimeError(
-                    "rolling Hugging Face checkpoint was created by a different source commit; "
+                    "Hugging Face bucket checkpoint was created by a different source commit; "
                     "checkout the checkpoint's frozen commit before resuming"
                 )
 
@@ -701,6 +843,7 @@ def run_training(
         )
         selected_microbatch = int(qualification["selected_microbatch"])
 
+    bucket_id = _hf_checkpoint_bucket_id()
     contract = _runtime_contract(
         source_commit=source_commit,
         model=model_preset,
@@ -710,6 +853,7 @@ def run_training(
         dataset=dataset,
         environment=environment,
         qualification=qualification,
+        bucket_id=bucket_id,
         resume_parent_source_commit=resume_parent_source_commit,
     )
     _assert_contract(runtime_path, contract)
@@ -721,6 +865,7 @@ def run_training(
         source_commit=source_commit,
         microbatch_size=selected_microbatch,
         resume_parent_source_commit=resume_parent_source_commit,
+        bucket_id=bucket_id,
     )
     getattr(run_volume, "commit")()
     getattr(cache_volume, "commit")()
@@ -739,7 +884,10 @@ def run_training(
             "total_steps": total_steps,
             "microbatch_size": selected_microbatch,
             "gpu": environment,
-            "hf_checkpoint_transport": "rolling_latest_only",
+            "hf_checkpoint_transport": {
+                "bucket": bucket_id,
+                "retention": "latest_only_mutable_bucket",
+            },
         }
 
     additional = remaining if max_steps_this_session == 0 else min(remaining, max_steps_this_session)
@@ -761,6 +909,7 @@ def run_training(
             online=True,
             resume=latest_id,
             remote_manifest=remote_manifest_path,
+            remote_bucket_id=bucket_id,
         ),
         cwd=repo_root,
         log_path=log_path,
@@ -785,9 +934,9 @@ def run_training(
         "source_commit": source_commit,
         "resume_parent_source_commit": resume_parent_source_commit,
         "hf_checkpoint_transport": {
-            "repo": os.environ.get("SMALL_LLM_HF_REPO_ID"),
+            "bucket": bucket_id,
             "cadence_steps": HF_REMOTE_EVERY,
-            "retention": "latest_only_with_history_squash",
+            "retention": "latest_only_mutable_bucket",
         },
     }
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
