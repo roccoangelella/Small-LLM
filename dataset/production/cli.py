@@ -11,6 +11,7 @@ from pathlib import Path
 
 from dataset import config
 from dataset.src.bytesource import list_source_files, make_http_reader
+from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
 from dataset.src.remote import GoogleDriveShardStore, RemoteShardStore
 from dataset.src.storage import write_json_atomic
 from dataset.src.streaming import StreamCacheConfig
@@ -18,7 +19,7 @@ from dataset.src.workplan import build_work_plan, load_work_plan, save_work_plan
 
 from .builder import build_production_cache
 from .policy import DEFAULT_CHECKPOINT_SOURCE_TOKENS, ProductionPolicy
-from .safety import preflight_disk
+from .safety import preflight_disk, preflight_remote_shard_disk
 
 
 def _load_weights(path: Path) -> dict[str, object]:
@@ -31,18 +32,16 @@ def _load_weights(path: Path) -> dict[str, object]:
     return payload
 
 
+def _default_hf_dataset_bucket() -> str | None:
+    explicit = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
+    if explicit:
+        return explicit
+    repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID", "").strip()
+    return f"{repo_id}-datasets" if repo_id else None
+
+
 def _builder_resume_mode(output_dir: Path) -> bool:
-    """Return whether the cache builder has a durable checkpoint to resume.
-
-    The CLI freezes ``work_plan.json`` before remote authentication. If auth or
-    another bootstrap step fails after that write but before the builder starts,
-    a later wrapper invocation legitimately arrives with ``--resume`` even
-    though no ``progress.json`` exists yet. Reuse that immutable work plan but
-    start the cache builder from empty state.
-
-    Fail closed if any other dataset artifacts are present without progress:
-    those could be uncheckpointed producer output and must not be guessed away.
-    """
+    """Return whether the cache builder has a durable checkpoint to resume."""
 
     progress_path = output_dir / config.PROGRESS_FILENAME
     if progress_path.is_file():
@@ -80,6 +79,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--allow-local-only", action="store_true")
     parser.add_argument("--allow-unsafe-low-disk", action="store_true")
+    parser.add_argument(
+        "--remote-backend",
+        choices=("drive", "hf_bucket"),
+        default="drive",
+        help="Durable immutable-shard backend; finite profile wrappers may freeze this value.",
+    )
+    parser.add_argument(
+        "--evict-remote-shards",
+        action="store_true",
+        help=(
+            "Delete finalized local shards only after verified remote upload and durable progress commit. "
+            "Intended for large HF-bucket datasets."
+        ),
+    )
     parser.add_argument("--drive-folder-id", default=os.environ.get("SMALL_LLM_DRIVE_FOLDER_ID"))
     parser.add_argument(
         "--google-oauth-token",
@@ -88,6 +101,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("SMALL_LLM_GOOGLE_OAUTH_TOKEN")
         or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
         help="Path to Google Drive authorized-user OAuth token JSON file.",
+    )
+    parser.add_argument(
+        "--hf-bucket-id",
+        default=_default_hf_dataset_bucket(),
+        help=(
+            "Private Hugging Face Storage Bucket for dataset shards. Defaults to "
+            "SMALL_LLM_HF_DATASET_BUCKET_ID or <SMALL_LLM_HF_REPO_ID>-datasets."
+        ),
+    )
+    parser.add_argument(
+        "--hf-token-env",
+        default="HF_TOKEN",
+        help="Environment variable containing the Hugging Face token for dataset bucket access.",
     )
 
     parser.add_argument("--target-tokens", type=int, default=config.TARGET_ACCEPTED_SOURCE_TOKENS)
@@ -127,6 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
     try:
+        if args.allow_local_only and args.evict_remote_shards:
+            raise RuntimeError("--evict-remote-shards requires remote durability")
+        if args.evict_remote_shards and args.remote_backend != "hf_bucket":
+            raise RuntimeError("local shard eviction is currently qualified only for --remote-backend hf_bucket")
+
         weights = _load_weights(args.weights_file)
         policy = ProductionPolicy(
             run_id=args.run_id,
@@ -156,11 +187,18 @@ def main(argv: list[str] | None = None) -> int:
             reader_batch_max_bytes=args.reader_batch_max_bytes,
         )
         output_dir = args.output_dir.resolve()
-        preflight_disk(
-            output_dir,
-            policy.maximum_source_tokens,
-            allow_unsafe=args.allow_unsafe_low_disk,
-        )
+        if args.evict_remote_shards:
+            preflight_remote_shard_disk(
+                output_dir,
+                stream.target_shard_bytes,
+                allow_unsafe=args.allow_unsafe_low_disk,
+            )
+        else:
+            preflight_disk(
+                output_dir,
+                policy.maximum_source_tokens,
+                allow_unsafe=args.allow_unsafe_low_disk,
+            )
 
         plan_path = output_dir / config.WORK_PLAN_FILENAME
         builder_resume = False
@@ -184,14 +222,33 @@ def main(argv: list[str] | None = None) -> int:
             save_work_plan(plan_path, plan)
 
         remote_store: RemoteShardStore | None = None
+        hf_store: HuggingFaceBucketShardStore | None = None
         if not args.allow_local_only:
-            if not args.drive_folder_id:
-                raise RuntimeError(
-                    "remote durability requires --drive-folder-id or SMALL_LLM_DRIVE_FOLDER_ID"
+            if args.remote_backend == "drive":
+                if not args.drive_folder_id:
+                    raise RuntimeError(
+                        "Drive durability requires --drive-folder-id or SMALL_LLM_DRIVE_FOLDER_ID"
+                    )
+                remote_store = GoogleDriveShardStore.from_credentials(
+                    args.google_credentials,
+                    folder_id=args.drive_folder_id,
                 )
-            remote_store = GoogleDriveShardStore.from_credentials(
-                args.google_credentials, folder_id=args.drive_folder_id
-            )
+            else:
+                if not args.hf_bucket_id:
+                    raise RuntimeError(
+                        "HF dataset durability requires --hf-bucket-id, SMALL_LLM_HF_DATASET_BUCKET_ID, "
+                        "or SMALL_LLM_HF_REPO_ID"
+                    )
+                token = os.environ.get(args.hf_token_env)
+                if not token:
+                    raise RuntimeError(f"{args.hf_token_env} is required for HF dataset bucket access")
+                hf_store = HuggingFaceBucketShardStore(
+                    args.hf_bucket_id,
+                    token=token,
+                    private=True,
+                    create_bucket=True,
+                )
+                remote_store = hf_store
 
         manifest = build_production_cache(
             output_dir,
@@ -204,15 +261,34 @@ def main(argv: list[str] | None = None) -> int:
             remote_store=remote_store,
             resume=builder_resume,
             simulate_crash_after_documents=args.simulate_crash_after_documents,
+            evict_remote_shards=args.evict_remote_shards,
         )
         # Keep the completed manifest directly self-describing for trainer and
-        # launch-report consumers.  These values are already bound by the schema
-        # and configuration hashes; exposing them here avoids relying on operator
-        # memory or an external command transcript.
+        # launch-report consumers. These values are already bound by schema and
+        # configuration hashes; publication happens only after this final form.
         manifest["sequences_per_block"] = stream.sequences_per_block
         manifest["target_shard_bytes"] = stream.target_shard_bytes
-        write_json_atomic(output_dir / config.MANIFEST_FILENAME, manifest)
-        print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
+        manifest["remote_transport"] = {
+            "backend": args.remote_backend if not args.allow_local_only else "local_only",
+            "evict_local_finalized_shards": bool(args.evict_remote_shards),
+            "hf_bucket_id": args.hf_bucket_id if hf_store is not None else None,
+        }
+        manifest_path = output_dir / config.MANIFEST_FILENAME
+        write_json_atomic(manifest_path, manifest)
+        ready: dict[str, object] | None = None
+        if hf_store is not None:
+            ready = hf_store.publish_dataset_manifest(
+                run_id=policy.run_id,
+                manifest_path=manifest_path,
+            )
+        print(
+            json.dumps(
+                {"manifest": manifest, "hf_bucket_ready": ready},
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     except Exception as error:  # noqa: BLE001 - concise CLI failure boundary
         sys.stderr.write(f"production dataset error: {type(error).__name__}: {error}\n")
