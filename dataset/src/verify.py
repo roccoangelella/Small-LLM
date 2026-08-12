@@ -187,18 +187,19 @@ def _verify_stream_cache(
         if not isinstance(emitted, int) or train_source_total != emitted:
             problems.append("train-shard source-token total disagrees with scheduler")
 
-    drive_manifest_path = output_dir / "drive_manifest.json"
-    if drive_manifest_path.exists():
-        drive = read_json(drive_manifest_path)
-        drive_shards = drive.get("shards", []) if isinstance(drive, dict) else []
-        if not isinstance(drive, dict) or not isinstance(drive_shards, list):
-            problems.append("Drive manifest is invalid")
+    # Historical filename retained by current producer/checkpoint compatibility.
+    durability_manifest_path = output_dir / "drive_manifest.json"
+    if durability_manifest_path.exists():
+        durability = read_json(durability_manifest_path)
+        remote_shards = durability.get("shards", []) if isinstance(durability, dict) else []
+        if not isinstance(durability, dict) or not isinstance(remote_shards, list):
+            problems.append("legacy durability manifest is invalid")
         elif any(
             not entry.get("remote_durable")
-            for entry in drive_shards
+            for entry in remote_shards
             if isinstance(entry, dict)
         ):
-            problems.append("Drive manifest contains unverified shard")
+            problems.append("legacy durability manifest contains unverified shard")
 
     complete = manifest.get("complete", True) is True
     if not complete:
