@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from dataset.incremental_frontier import (
     RUN_CONTRACT_FILENAME,
     SHARD_FRONTIER_FILENAME,
     build_consumer_manifest,
+    stage_incremental_window,
 )
 from dataset.src.remote import sha256_path
 
@@ -22,6 +24,48 @@ def _load(path: Path, *, label: str) -> dict[str, object]:
     if not isinstance(payload, Mapping):
         raise RuntimeError(f"{label} must contain an object")
     return dict(payload)
+
+
+def stage_incremental_window_when_ready(
+    *,
+    store: object,
+    run_id: str,
+    destination: Path,
+    start_block_id: int,
+    timeout_seconds: float = 6 * 60 * 60,
+    poll_seconds: float = 5.0,
+) -> dict[str, object]:
+    """Wait on producer bootstrap metadata entirely on CPU, then stage the lead window.
+
+    Only the two expected not-yet-published conditions are retried. Identity,
+    monotonicity, checksum, and all other integrity failures remain fail-closed.
+    """
+
+    if timeout_seconds <= 0 or poll_seconds <= 0:
+        raise ValueError("incremental CPU-stage wait intervals must be positive")
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("timed out waiting for incremental producer bootstrap metadata")
+        try:
+            return stage_incremental_window(
+                store=store,
+                run_id=run_id,
+                destination=destination,
+                start_block_id=start_block_id,
+                timeout_seconds=remaining,
+                poll_seconds=poll_seconds,
+            )
+        except RuntimeError as error:
+            message = str(error)
+            retryable = (
+                "incremental dataset run contract is not ready" in message
+                or "incremental shard frontier is not ready" in message
+            )
+            if not retryable:
+                raise
+            time.sleep(min(poll_seconds, max(0.0, remaining)))
 
 
 def _shards(frontier: Mapping[str, object], field: str) -> list[dict[str, object]]:
@@ -114,4 +158,4 @@ def verify_incremental_stage(
     }
 
 
-__all__ = ["verify_incremental_stage"]
+__all__ = ["stage_incremental_window_when_ready", "verify_incremental_stage"]
