@@ -4,14 +4,6 @@ This is the single experiment-facing dataset surface.  The schema-v2 producer
 lives in :mod:`dataset.production`; this module only freezes the identity and
 geometry of approved finite scaling profiles and dispatches the shared producer
 and report engines.
-
-Examples::
-
-    python -m dataset.qualification profiles
-    python -m dataset.qualification build --profile 20m-2b \
-        --weights-file weights.json --output-dir /data/20m-2b
-    python -m dataset.qualification report --profile 20m-2b \
-        --dataset-dir /data/20m-2b --drive-manifest /data/20m-2b/drive_manifest.json
 """
 
 from __future__ import annotations
@@ -40,6 +32,8 @@ class DatasetProfile:
     run_id: str | None
     plan: QualificationProfile
     production_enabled: bool = True
+    remote_backend: str = "drive"
+    evict_remote_shards: bool = False
 
     @property
     def target_source_tokens(self) -> int:
@@ -78,15 +72,17 @@ _COMMON_GEOMETRY = {
 _MODAL_B64_GEOMETRY = {
     "context_length": 2_048,
     "sequences_per_block": 64,
-    # Four full legacy 8 MiB/16-sequence shards reblock into one full
-    # 32 MiB/64-sequence shard without changing any stored sequence bytes.
     "target_shard_bytes": 32 * 1024 * 1024,
+}
+_MODAL_B64_1G_GEOMETRY = {
+    "context_length": 2_048,
+    "sequences_per_block": 64,
+    # 1 GiB holds 4,094 complete block-64/context-2048 optimizer blocks
+    # (1,073,741,568 bytes), leaving only 256 bytes below the target.
+    "target_shard_bytes": 1024**3,
 }
 
 PROFILES: dict[str, DatasetProfile] = {
-    # Historical first finite qualification.  It is retained only so its
-    # manifest/plan can still be reproduced; producing this dataset again is
-    # intentionally disabled after operational acceptance completed.
     "20m-10m": DatasetProfile(
         key="20m-10m",
         run_id=None,
@@ -148,6 +144,20 @@ PROFILES: dict[str, DatasetProfile] = {
             **_MODAL_B64_GEOMETRY,
         ),
     ),
+    "modal-10b-b64": DatasetProfile(
+        key="modal-10b-b64",
+        run_id="modal-10b-b64-dataset-001",
+        remote_backend="hf_bucket",
+        evict_remote_shards=True,
+        plan=QualificationProfile(
+            name="modal-10b-b64-v1",
+            target_source_tokens=10_000_000_000,
+            minimum_source_tokens=9_000_000_000,
+            maximum_source_tokens=11_000_000_000,
+            checkpoint_source_tokens=500_000_000,
+            **_MODAL_B64_1G_GEOMETRY,
+        ),
+    ),
 }
 
 ALIASES = {
@@ -156,6 +166,8 @@ ALIASES = {
     "500m": "20m-500m",
     "2b": "20m-2b",
     "modal-2b": "modal-2b-b64",
+    "10b": "modal-10b-b64",
+    "modal-10b": "modal-10b-b64",
 }
 
 _LOCKED_PRODUCTION_FLAGS = frozenset(
@@ -169,6 +181,8 @@ _LOCKED_PRODUCTION_FLAGS = frozenset(
         "--sequences-per-block",
         "--target-shard-bytes",
         "--allow-local-only",
+        "--remote-backend",
+        "--evict-remote-shards",
     }
 )
 
@@ -204,7 +218,7 @@ def production_arguments(profile: DatasetProfile | str, argv: Sequence[str]) -> 
             f"dataset profile {resolved.key} fixes these arguments: "
             + ", ".join(conflicts)
         )
-    return [
+    result = [
         *argv,
         "--run-id",
         resolved.run_id,
@@ -222,7 +236,12 @@ def production_arguments(profile: DatasetProfile | str, argv: Sequence[str]) -> 
         str(resolved.sequences_per_block),
         "--target-shard-bytes",
         str(resolved.target_shard_bytes),
+        "--remote-backend",
+        resolved.remote_backend,
     ]
+    if resolved.evict_remote_shards:
+        result.append("--evict-remote-shards")
+    return result
 
 
 def _validate_run_id(manifest: Mapping[str, object], profile: DatasetProfile) -> None:
@@ -245,8 +264,6 @@ def derive_plan(
     manifest_path: Path | None = None,
     drive_manifest_path: Path | None = None,
 ) -> dict[str, object]:
-    """Derive a plan while binding the selected profile's dataset run ID."""
-
     resolved = get_profile(profile) if isinstance(profile, str) else profile
     _validate_run_id(manifest, resolved)
     return derive_qualification_plan(
@@ -263,6 +280,8 @@ def profile_payload(profile: DatasetProfile) -> dict[str, object]:
         "key": profile.key,
         "run_id": profile.run_id,
         "production_enabled": profile.production_enabled,
+        "remote_backend": profile.remote_backend,
+        "evict_remote_shards": profile.evict_remote_shards,
         **payload,
     }
 
