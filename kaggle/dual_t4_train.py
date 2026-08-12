@@ -124,6 +124,23 @@ def _with_raw_model(engine: Any, function: Callable[..., Any], *args: Any, **kwa
         engine.model = wrapper
 
 
+def _local_scaler_found_inf(engine: Any) -> bool:
+    """Read the inf result recorded by the pinned PyTorch 2.10 GradScaler."""
+
+    if not engine.scaler.is_enabled():
+        return False
+    states = getattr(engine.scaler, "_per_optimizer_states", None)
+    if states is None:
+        raise RuntimeError("qualified GradScaler no longer exposes optimizer inf state")
+    state = states.get(id(engine.optimizer))
+    if not isinstance(state, dict):
+        raise RuntimeError("GradScaler did not record optimizer state after unscale")
+    found = state.get("found_inf_per_device")
+    if not isinstance(found, dict) or not found:
+        raise RuntimeError("GradScaler did not record found_inf after unscale")
+    return any(float(value.detach().item()) != 0.0 for value in found.values())
+
+
 def _prewarm_raw_model(engine: Any, *, rank: int) -> None:
     """Populate Triton/FLA caches once without changing optimizer or token state."""
 
@@ -252,6 +269,7 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
             del logits, loss_sum, scaled, micro_inputs, micro_labels
 
         engine.scaler.unscale_(engine.optimizer)
+        scaler_found_inf = _local_scaler_found_inf(engine)
         role_gradient_norms = pinned_step._optimizer_gradient_norms(engine.optimizer)
         raw_model = engine._small_llm_raw_model
         gradient_norm = torch.nn.utils.clip_grad_norm_(
@@ -261,16 +279,21 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
         grad_value = float(gradient_norm.detach())
         gradient_clipped = finite_gradient and grad_value > float(engine.config.max_grad_norm)
 
-        # Fail/overflow is a global decision made before either optimizer can
-        # step. This closes the asymmetric-overflow hole in the disposable
-        # qualification harness.
+        # All failure decisions are synchronized before either GradScaler is
+        # allowed to invoke the underlying optimizer.
         flags = torch.tensor(
-            [int(not local_forward_finite), int(not finite_gradient)],
+            [
+                int(not local_forward_finite),
+                int(not finite_gradient),
+                int(scaler_found_inf),
+            ],
             dtype=torch.int32,
             device=engine.device,
         )
         dist.all_reduce(flags, op=dist.ReduceOp.MAX)
-        forward_bad, gradient_bad = (bool(int(item)) for item in flags.tolist())
+        forward_bad, gradient_bad, any_scaler_inf = (
+            bool(int(item)) for item in flags.tolist()
+        )
         if forward_bad:
             engine.optimizer.zero_grad(set_to_none=True)
             raise FloatingPointError(
@@ -278,16 +301,31 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
                 "loss-scale reduction cannot repair a forward loss "
                 f"(block={batch.block_id})"
             )
-        if gradient_bad:
-            if not engine.scaler.is_enabled():
+
+        if any_scaler_inf:
+            # With DDP-reduced gradients every rank must observe the same inf.
+            # Prove that before calling scaler.step(): if any rank disagrees, fail
+            # closed rather than risk one optimizer mutating while another skips.
+            unanimous = torch.tensor(
+                int(scaler_found_inf), dtype=torch.int32, device=engine.device
+            )
+            dist.all_reduce(unanimous, op=dist.ReduceOp.MIN)
+            if not bool(int(unanimous.item())):
                 engine.optimizer.zero_grad(set_to_none=True)
-                raise FloatingPointError("non-finite DDP gradient norm")
+                raise RuntimeError(
+                    "asymmetric GradScaler found_inf across DDP ranks before optimizer step"
+                )
             retries += 1
             engine.overflow_events += 1
             scale_before = float(engine.scaler.get_scale())
-            backoff = float(engine.scaler.get_backoff_factor())
-            engine.scaler.update(new_scale=scale_before * backoff)
+            pinned_step._clear_optimizer_step_statistics(engine.optimizer)
+            # found_inf is true on every rank, so GradScaler skips the underlying
+            # optimizer on every rank, then backs the scale off identically.
+            engine.scaler.step(engine.optimizer)
+            engine.scaler.update()
             scaler_scale = float(engine.scaler.get_scale())
+            if scaler_scale >= scale_before:
+                raise RuntimeError("GradScaler did not reduce scale after synchronized overflow")
             if retries > overflow_retry_limit:
                 engine.optimizer.zero_grad(set_to_none=True)
                 raise FloatingPointError(
@@ -299,6 +337,13 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
                 )
             continue
 
+        if gradient_bad:
+            engine.optimizer.zero_grad(set_to_none=True)
+            raise FloatingPointError(
+                "non-finite DDP gradient norm without GradScaler found_inf; "
+                "loss-scale replay cannot safely repair this condition"
+            )
+
         # Confirm the global loss while all ranks are still at the same atomic
         # boundary, then take the optimizer step on both replicas.
         dist.all_reduce(local_loss, op=dist.ReduceOp.SUM)
@@ -308,8 +353,7 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
         engine.scaler.update()
         scaler_scale = float(engine.scaler.get_scale())
         if engine.scaler.is_enabled() and scaler_scale < scale_before:
-            # All reduced gradients were explicitly finite, so GradScaler must
-            # not discover an additional overflow here.
+            # We already proved found_inf was false on both ranks.
             raise RuntimeError(
                 "GradScaler reported an unexpected post-synchronization overflow"
             )
