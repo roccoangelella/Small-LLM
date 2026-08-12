@@ -121,7 +121,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
 
         def cleanup(_remote, *, checkpoint_id: str):
             cleanup_calls.append(checkpoint_id)
-            return {"status": "pruned_and_squashed", "checkpoint_id": checkpoint_id}
+            return {"status": "pruned", "checkpoint_id": checkpoint_id}
 
         with (
             patch("trainer.cli.setup", return_value=setup_result),
@@ -148,9 +148,11 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_publish_every_steps=50,
                 remote_drive_manifest=manifest_path,
                 remote_checkpoint_repo=None,
+                remote_checkpoint_bucket=None,
                 remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
+                remote_create_bucket=False,
                 remote_rolling_latest_only=True,
             )
             store = object()
@@ -176,6 +178,42 @@ class TrainerRemotePublicationTests(unittest.TestCase):
             )
             publisher_type.assert_called_once_with(store, run_id="qualification-run")
 
+    def test_configuration_can_use_storage_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest_path = Path(tmp) / "transport.json"
+            manifest = {"version": 1, "run_id": "modal-run", "shards": []}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            args = SimpleNamespace(
+                remote_publish_every_steps=500,
+                remote_drive_manifest=manifest_path,
+                remote_checkpoint_repo=None,
+                remote_checkpoint_bucket="owner/modal-checkpoints",
+                remote_token_env="HF_TOKEN",
+                remote_checkpoint_revision=None,
+                remote_create_repo=False,
+                remote_create_bucket=True,
+                remote_rolling_latest_only=True,
+            )
+            store = object()
+            publisher = object()
+            with (
+                patch.dict("os.environ", {"HF_TOKEN": "secret"}, clear=False),
+                patch("trainer.remote_publication.HuggingFaceBucketCheckpointStore", return_value=store) as store_type,
+                patch("trainer.remote_publication.TwoPhaseCheckpointPublisher", return_value=publisher) as publisher_type,
+            ):
+                configured = configure_remote_publication(args)
+
+            self.assertIsNotNone(configured)
+            assert configured is not None
+            self.assertTrue(configured.rolling_latest_only)
+            store_type.assert_called_once_with(
+                "owner/modal-checkpoints",
+                token="secret",
+                private=True,
+                create_bucket=True,
+            )
+            publisher_type.assert_called_once_with(store, run_id="modal-run")
+
     def test_configuration_rejects_non_durable_shard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = Path(tmp) / "drive_manifest.json"
@@ -193,9 +231,11 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_publish_every_steps=50,
                 remote_drive_manifest=manifest_path,
                 remote_checkpoint_repo="owner/private",
+                remote_checkpoint_bucket=None,
                 remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
+                remote_create_bucket=False,
                 remote_rolling_latest_only=False,
             )
             with self.assertRaisesRegex(SystemExit, "not verified remote_durable"):
