@@ -40,6 +40,7 @@ IMAGE = (
         index_url="https://download.pytorch.org/whl/cu128",
     )
     .uv_pip_install(
+        "numpy>=2,<3",
         "fla-core==0.5.2",
         "wandb==0.26.1",
         "google-api-python-client>=2.100,<3",
@@ -63,6 +64,10 @@ IMAGE = (
     )
 )
 app = modal.App(APP_NAME, image=IMAGE)
+
+
+def _stage(name: str, **fields: object) -> None:
+    print(json.dumps({"modal_stage": name, **fields}, sort_keys=True), flush=True)
 
 
 def _local_source_commit() -> str:
@@ -102,10 +107,16 @@ def train_remote(
     microbatch_size: int = 0,
     precision: str = DEFAULT_PRECISION,
 ) -> dict[str, object]:
+    _stage(
+        "remote_runtime_start",
+        model=model,
+        tokens=tokens,
+        source_commit=source_commit,
+    )
     sys.path.insert(0, str(REMOTE_MODAL))
     from runtime import run_training
 
-    return run_training(
+    result = run_training(
         model=model,
         tokens=tokens,
         source_commit=source_commit,
@@ -120,6 +131,13 @@ def train_remote(
         run_volume=RUN_VOLUME,
         cache_volume=CACHE_VOLUME,
     )
+    _stage(
+        "remote_runtime_complete",
+        status=result.get("status"),
+        run_id=result.get("run_id"),
+        completed_steps=result.get("completed_steps"),
+    )
+    return result
 
 
 @app.local_entrypoint()
@@ -166,6 +184,11 @@ def main(
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
         return
+    _stage(
+        "dispatch_remote_training",
+        run_id=payload["run_id"],
+        gpu=gpu,
+    )
     result = train_remote.with_options(gpu=gpu).spawn(
         model_preset.label,
         token_preset.label,
