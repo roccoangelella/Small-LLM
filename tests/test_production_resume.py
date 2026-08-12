@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dataset import production
 from tests.production_helpers import (
-    CountingDriveStore,
+    CountingShardStore,
     ReaderPatchMixin,
     documents,
     stream_config,
@@ -21,7 +21,7 @@ class ProductionResumeTest(ReaderPatchMixin, unittest.TestCase):
         self.use_documents(values)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            store = CountingDriveStore()
+            store = CountingShardStore()
             policy = production.ProductionPolicy(
                 "run",
                 target_source_tokens=10,
