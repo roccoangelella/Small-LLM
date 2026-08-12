@@ -18,10 +18,17 @@ from .shards import SchemaV2ShardReader
 
 
 def _rolling_cache(args: object) -> object | None:
-    bucket_id = getattr(args, "dataset_shard_bucket", None)
+    # Explicit trainer flags remain the generic provider-neutral interface.
+    # Modal may inject the same values through environment variables so its
+    # existing command builder does not acquire dataset-provider logic.
+    bucket_id = getattr(args, "dataset_shard_bucket", None) or os.environ.get(
+        "SMALL_LLM_DATASET_SHARD_BUCKET"
+    )
     if not bucket_id:
         return None
-    run_id = getattr(args, "dataset_shard_run_id", None)
+    run_id = getattr(args, "dataset_shard_run_id", None) or os.environ.get(
+        "SMALL_LLM_DATASET_SHARD_RUN_ID"
+    )
     manifest_path = getattr(args, "dataset_manifest", None)
     if not run_id or manifest_path is None:
         raise RuntimeError("rolling dataset shards require a run ID and manifest")
@@ -29,6 +36,16 @@ def _rolling_cache(args: object) -> object | None:
     token = os.environ.get(token_env)
     if not token:
         raise RuntimeError(f"{token_env} is required for rolling dataset shard reads")
+    prefetch = getattr(args, "dataset_shard_prefetch", 1)
+    env_prefetch = os.environ.get("SMALL_LLM_DATASET_SHARD_PREFETCH")
+    if env_prefetch is not None:
+        try:
+            prefetch = int(env_prefetch)
+        except ValueError as error:
+            raise RuntimeError("SMALL_LLM_DATASET_SHARD_PREFETCH must be an integer") from error
+    if isinstance(prefetch, bool) or prefetch < 1:
+        raise RuntimeError("rolling dataset shard prefetch must be at least one")
+
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(payload, Mapping):
         raise RuntimeError("rolling dataset manifest must contain a JSON object")
@@ -45,7 +62,7 @@ def _rolling_cache(args: object) -> object | None:
         run_id=run_id,
         manifest=payload,
         store=store,
-        prefetch_shards=getattr(args, "dataset_shard_prefetch", 1),
+        prefetch_shards=prefetch,
         evict_consumed=True,
     )
 
