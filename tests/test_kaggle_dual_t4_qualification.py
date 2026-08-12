@@ -105,6 +105,15 @@ class DualT4QualificationContractTests(unittest.TestCase):
         self.assertIn("https://download.pytorch.org/whl/cu128", command)
         self.assertIn(str(KAGGLE / "qualify_dual_t4_watchdog.py"), command)
 
+    def test_watchdog_streams_and_caches_cold_triton_autotuning(self) -> None:
+        source = (KAGGLE / "qualify_dual_t4_watchdog.py").read_text(encoding="utf-8")
+        self.assertIn('env["TRITON_PRINT_AUTOTUNING"] = "1"', source)
+        self.assertIn('env["TRITON_CACHE_AUTOTUNING"] = "1"', source)
+        self.assertIn('env["FLA_CACHE_RESULTS"] = "1"', source)
+        self.assertIn("selectors.DefaultSelector()", source)
+        self.assertIn("DEFAULT_WORKER_INACTIVITY_TIMEOUT_SECONDS = 600", source)
+        self.assertIn("DEFAULT_WORKER_TOTAL_TIMEOUT_SECONDS = 3600", source)
+
     def test_canonical_launcher_exposes_qualification_dry_run(self) -> None:
         result = subprocess.run(
             [
