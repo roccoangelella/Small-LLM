@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 from dataset import config
 from dataset.incremental_frontier import publish_frontier
@@ -140,7 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    durable_progress_hook: Callable[[], object] | None = None,
+) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
     try:
@@ -264,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                 training_validation_blocks=args.training_validation_blocks,
                 resume=builder_resume,
                 simulate_crash_after_documents=args.simulate_crash_after_documents,
+                durable_progress_hook=durable_progress_hook,
             )
         else:
             manifest = build_production_cache(
