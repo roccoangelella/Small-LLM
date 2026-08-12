@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Build, verify, and privately publish the fixed 100M-token Kaggle dataset."""
+"""Build an HF-durable dataset, verify it, then privately publish it to Kaggle.
+
+The filename is historical because ``kaggle/runtime.py`` reuses this engine for
+all finite 20M data profiles. New remote durability is Hugging Face Storage
+Bucket only. The staged Kaggle tree still includes ``drive_manifest.json`` as a
+legacy compatibility filename consumed by existing trainer/checkpoint code.
+"""
 from __future__ import annotations
 
 import argparse
@@ -130,17 +136,32 @@ def arguments(argv: Sequence[str] | None = None, env: Mapping[str, str] | None =
 
 
 def check_environment(config: Config) -> str:
-    for name in ("KAGGLE_API_TOKEN", "SMALL_LLM_GOOGLE_OAUTH_TOKEN", "SMALL_LLM_DRIVE_FOLDER_ID"):
+    for name in ("KAGGLE_API_TOKEN", "HF_TOKEN"):
         if not os.environ.get(name):
             raise SuiteFailure(f"Missing required .env value: {name}")
+    if not (
+        os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID")
+        or os.environ.get("SMALL_LLM_HF_REPO_ID")
+    ):
+        raise SuiteFailure(
+            "Set SMALL_LLM_HF_DATASET_BUCKET_ID or SMALL_LLM_HF_REPO_ID for dataset durability"
+        )
     if not config.weights.is_file():
         raise SuiteFailure(f"Mixture weights file is missing: {config.weights}")
-    root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], cwd=REPO, text=True).strip()).resolve()
+    root = Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=REPO, text=True
+        ).strip()
+    ).resolve()
     if root != REPO.resolve():
         raise SuiteFailure(f"Repository root mismatch: {root}")
-    if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True).strip():
+    if subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True
+    ).strip():
         raise SuiteFailure("The repository has tracked modifications")
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+    ).strip()
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise SuiteFailure("Cannot resolve the source commit")
     config.dataset.parent.mkdir(parents=True, exist_ok=True)
@@ -150,11 +171,18 @@ def check_environment(config: Config) -> str:
 
 def run(command: Sequence[str], name: str, config: Config) -> None:
     log_path = config.logs / f"{name}.log"
-    write_json(config.logs / f"{name}.command.json", {"command": list(command), "started_utc": now()})
+    write_json(
+        config.logs / f"{name}.command.json",
+        {"command": list(command), "started_utc": now()},
+    )
     with log_path.open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
-            list(command), cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
+            list(command),
+            cwd=REPO,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -192,8 +220,16 @@ def dataset_complete(root: Path) -> bool:
 
 def producer_command(config: Config, resume: bool) -> list[str]:
     command = [
-        sys.executable, "-m", "dataset.qualification", "build", "--profile", "20m-100m",
-        "--weights-file", str(config.weights), "--output-dir", str(config.dataset),
+        sys.executable,
+        "-m",
+        "dataset.qualification",
+        "build",
+        "--profile",
+        "20m-100m",
+        "--weights-file",
+        str(config.weights),
+        "--output-dir",
+        str(config.dataset),
     ]
     return command + (["--resume"] if resume else [])
 
@@ -203,7 +239,11 @@ def build(config: Config) -> str:
         print(f"Dataset is already complete: {config.dataset}")
         return "already_complete"
     resume = config.dataset.exists()
-    run(producer_command(config, resume), "dataset-build-resume" if resume else "dataset-build", config)
+    run(
+        producer_command(config, resume),
+        "dataset-build-resume" if resume else "dataset-build",
+        config,
+    )
     if not dataset_complete(config.dataset):
         raise SuiteFailure("Producer exited successfully but the fixed dataset is incomplete")
     return "resumed" if resume else "built"
@@ -211,19 +251,40 @@ def build(config: Config) -> str:
 
 def full_scan(root: Path, prefix: str, config: Config) -> None:
     run(
-        [sys.executable, "-m", "dataset.main", "verify", "--output-dir", str(root), "--full-scan"],
-        f"{prefix}-full-scan", config,
+        [
+            sys.executable,
+            "-m",
+            "dataset.main",
+            "verify",
+            "--output-dir",
+            str(root),
+            "--full-scan",
+        ],
+        f"{prefix}-full-scan",
+        config,
     )
 
 
 def derive_plan(root: Path, prefix: str, config: Config) -> None:
+    # Existing Kaggle datasets/checkpoints bind this legacy filename into their
+    # identity. It is a provider-neutral durability manifest now.
     run(
         [
-            sys.executable, "-m", "dataset.qualification", "report", "--profile", "20m-100m",
-            "--dataset-dir", str(root), "--drive-manifest", str(root / "drive_manifest.json"),
-            "--output", str(root / "qualification_plan.json"),
+            sys.executable,
+            "-m",
+            "dataset.qualification",
+            "report",
+            "--profile",
+            "20m-100m",
+            "--dataset-dir",
+            str(root),
+            "--drive-manifest",
+            str(root / "drive_manifest.json"),
+            "--output",
+            str(root / "qualification_plan.json"),
         ],
-        f"{prefix}-qualification-plan", config,
+        f"{prefix}-qualification-plan",
+        config,
     )
 
 
@@ -239,11 +300,14 @@ def validate_shape(root: Path) -> dict[str, object]:
         if not (root / name).is_dir():
             raise SuiteFailure(f"Missing training-facing directory: {name}")
     manifest = read_json(root / "manifest.json", "dataset manifest")
-    drive = read_json(root / "drive_manifest.json", "Drive manifest")
+    durability = read_json(root / "drive_manifest.json", "legacy durability manifest")
     plan = read_json(root / "qualification_plan.json", "qualification plan")
     expected = {
-        "schema_version": 2, "sequence_format": "context_plus_one", "context_length": 2_048,
-        "stored_tokens_per_sequence": 2_049, "sequences_per_block": 16,
+        "schema_version": 2,
+        "sequence_format": "context_plus_one",
+        "context_length": 2_048,
+        "stored_tokens_per_sequence": 2_049,
+        "sequences_per_block": 16,
         "target_shard_bytes": 8 * 1024 * 1024,
     }
     if any(manifest.get(key) != value for key, value in expected.items()):
@@ -253,22 +317,29 @@ def validate_shape(root: Path) -> dict[str, object]:
         production.get(key) != value for key, value in production_identity().items()
     ):
         raise SuiteFailure("Dataset production identity mismatch")
-    shards = drive.get("shards")
-    if drive.get("version") != 1 or drive.get("run_id") != RUN_ID:
-        raise SuiteFailure("Drive manifest identity mismatch")
+    shards = durability.get("shards")
+    if durability.get("version") != 1 or durability.get("run_id") != RUN_ID:
+        raise SuiteFailure("Durability manifest identity mismatch")
     if not isinstance(shards, list) or not shards or any(
-        not isinstance(item, Mapping) or item.get("remote_durable") is not True for item in shards
+        not isinstance(item, Mapping) or item.get("remote_durable") is not True
+        for item in shards
     ):
-        raise SuiteFailure("Drive manifest contains a non-durable shard")
+        raise SuiteFailure("Durability manifest contains a non-durable shard")
     identity = plan.get("identity")
-    manifest_hash, drive_hash = sha256(root / FILES[0]), sha256(root / FILES[1])
+    manifest_hash = sha256(root / FILES[0])
+    durability_hash = sha256(root / FILES[1])
     if plan.get("qualification_profile") != PROFILE or not isinstance(identity, Mapping):
         raise SuiteFailure("Qualification-plan profile mismatch")
-    if identity.get("manifest_sha256") != manifest_hash or identity.get("drive_manifest_sha256") != drive_hash:
+    if (
+        identity.get("manifest_sha256") != manifest_hash
+        or identity.get("drive_manifest_sha256") != durability_hash
+    ):
         raise SuiteFailure("Qualification-plan hashes mismatch")
     return {
-        "profile": PROFILE, "run_id": RUN_ID,
-        "manifest_sha256": manifest_hash, "drive_manifest_sha256": drive_hash,
+        "profile": PROFILE,
+        "run_id": RUN_ID,
+        "manifest_sha256": manifest_hash,
+        "drive_manifest_sha256": durability_hash,
         "qualification_plan_sha256": sha256(root / FILES[2]),
         "accepted_source_tokens": manifest.get("accepted_source_tokens"),
     }
@@ -289,7 +360,11 @@ def stage(config: Config) -> dict[str, object]:
     for name in FILES:
         shutil.copy2(config.dataset / name, config.publish / name)
     for name in DIRS:
-        shutil.copytree(config.dataset / name, config.publish / name, copy_function=link_or_copy)
+        shutil.copytree(
+            config.dataset / name,
+            config.publish / name,
+            copy_function=link_or_copy,
+        )
     return validate_shape(config.publish)
 
 
@@ -298,13 +373,23 @@ def tree_identity(root: Path) -> dict[str, object]:
     files = sorted(path for path in root.rglob("*") if path.is_file())
     total = 0
     for path in files:
-        relative, size, file_hash = path.relative_to(root).as_posix(), path.stat().st_size, sha256(path)
+        relative = path.relative_to(root).as_posix()
+        size = path.stat().st_size
+        file_hash = sha256(path)
         total += size
         digest.update(f"{relative}\0{size}\0{file_hash}\n".encode())
-    return {"tree_sha256": digest.hexdigest(), "file_count": len(files), "total_bytes": total}
+    return {
+        "tree_sha256": digest.hexdigest(),
+        "file_count": len(files),
+        "total_bytes": total,
+    }
 
 
-def state_matches(state: Mapping[str, object], config: Config, identity: Mapping[str, object]) -> bool:
+def state_matches(
+    state: Mapping[str, object],
+    config: Config,
+    identity: Mapping[str, object],
+) -> bool:
     return all(
         (
             state.get("handle") == config.handle,
@@ -318,18 +403,27 @@ def state_matches(state: Mapping[str, object], config: Config, identity: Mapping
 def anonymous_access(handle: str) -> bool:
     with tempfile.TemporaryDirectory(prefix="small-llm-kaggle-anonymous-") as temporary:
         root = Path(temporary)
-        env = {key: value for key, value in os.environ.items() if key not in {"KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"}}
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"KAGGLE_API_TOKEN", "KAGGLE_USERNAME", "KAGGLE_KEY"}
+        }
         env.update(
-            HOME=str(root / "home"), KAGGLE_CONFIG_DIR=str(root / "config"),
-            KAGGLEHUB_CACHE=str(root / "cache"), XDG_CACHE_HOME=str(root / "xdg"),
+            HOME=str(root / "home"),
+            KAGGLE_CONFIG_DIR=str(root / "config"),
+            KAGGLEHUB_CACHE=str(root / "cache"),
+            XDG_CACHE_HOME=str(root / "xdg"),
         )
         code = (
-            "import kagglehub,sys; kagglehub.dataset_download(" 
+            "import kagglehub,sys; kagglehub.dataset_download("
             "sys.argv[1], path='manifest.json', output_dir=sys.argv[2], force_download=True)"
         )
         return subprocess.run(
             [sys.executable, "-c", code, handle, str(root / "download")],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
         ).returncode == 0
 
 
@@ -341,7 +435,8 @@ def upload(config: Config, identity: Mapping[str, object], commit: str) -> None:
     except ImportError as error:
         raise SuiteFailure("kagglehub is not installed by the wrapper") from error
     kagglehub.dataset_upload(
-        config.handle, str(config.publish),
+        config.handle,
+        str(config.publish),
         version_notes=f"{PROFILE}; source {commit}; tree {identity['tree_sha256']}",
     )
 
@@ -370,7 +465,9 @@ def roundtrip(config: Config, expected: Mapping[str, object]) -> dict[str, objec
         config.roundtrip.mkdir(parents=True)
         try:
             returned = kagglehub.dataset_download(
-                config.handle, output_dir=str(config.roundtrip), force_download=True
+                config.handle,
+                output_dir=str(config.roundtrip),
+                force_download=True,
             )
             root = downloaded_root(returned, config.roundtrip)
             break
@@ -385,15 +482,26 @@ def roundtrip(config: Config, expected: Mapping[str, object]) -> dict[str, objec
     shape = validate_shape(root)
     if anonymous_access(config.handle):
         raise SuiteFailure("Uploaded Kaggle dataset is publicly readable")
-    return {"status": "passed", "root": str(root), "shape": shape, "anonymous_access": "denied"}
+    return {
+        "status": "passed",
+        "root": str(root),
+        "shape": shape,
+        "anonymous_access": "denied",
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     config = arguments(argv)
     summary: dict[str, object] = {
-        "schema_version": 1, "started_utc": now(), "status": "initializing",
-        "profile": PROFILE, "run_id": RUN_ID, "handle": config.handle,
-        "dataset_dir": str(config.dataset), "ops_dir": str(config.ops),
+        "schema_version": 1,
+        "started_utc": now(),
+        "status": "initializing",
+        "profile": PROFILE,
+        "run_id": RUN_ID,
+        "handle": config.handle,
+        "dataset_dir": str(config.dataset),
+        "ops_dir": str(config.ops),
+        "dataset_durability": "hf_storage_bucket",
     }
     try:
         commit = check_environment(config)
@@ -409,28 +517,57 @@ def main(argv: Sequence[str] | None = None) -> int:
         previous = read_json(config.state, "publish state") if config.state.is_file() else {}
         if state_matches(previous, config, identity) and not config.force_upload:
             if previous.get("status") == "verified":
-                summary.update(status="already_published", completed_utc=now(), remote=previous.get("remote"))
+                summary.update(
+                    status="already_published",
+                    completed_utc=now(),
+                    remote=previous.get("remote"),
+                )
                 write_json(config.summary, summary)
                 print(f"Already privately published and verified: {config.handle}")
                 return 0
             if previous.get("status") in {"upload_attempting", "upload_submitted"}:
                 remote = roundtrip(config, identity)
-                write_json(config.state, {**previous, "status": "verified", "verified_utc": now(), "remote": remote})
+                write_json(
+                    config.state,
+                    {
+                        **previous,
+                        "status": "verified",
+                        "verified_utc": now(),
+                        "remote": remote,
+                    },
+                )
                 summary.update(status="completed", completed_utc=now(), remote=remote)
                 write_json(config.summary, summary)
                 print(f"Privately published and verified: {config.handle}")
                 return 0
         attempt = {
-            "schema_version": 1, "status": "upload_attempting", "started_utc": now(),
-            "profile": PROFILE, "run_id": RUN_ID, "handle": config.handle,
-            "source_commit": commit, **identity,
+            "schema_version": 1,
+            "status": "upload_attempting",
+            "started_utc": now(),
+            "profile": PROFILE,
+            "run_id": RUN_ID,
+            "handle": config.handle,
+            "source_commit": commit,
+            **identity,
         }
         write_json(config.state, attempt)
         upload(config, identity, commit)
-        submitted = {**attempt, "status": "upload_submitted", "submitted_utc": now()}
+        submitted = {
+            **attempt,
+            "status": "upload_submitted",
+            "submitted_utc": now(),
+        }
         write_json(config.state, submitted)
         remote = roundtrip(config, identity)
-        write_json(config.state, {**submitted, "status": "verified", "verified_utc": now(), "remote": remote})
+        write_json(
+            config.state,
+            {
+                **submitted,
+                "status": "verified",
+                "verified_utc": now(),
+                "remote": remote,
+            },
+        )
         summary.update(status="completed", completed_utc=now(), remote=remote)
         write_json(config.summary, summary)
         print(f"Privately published and verified: {config.handle}")
@@ -441,9 +578,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_json(config.summary, summary)
         return 130
     except Exception as error:  # noqa: BLE001
-        summary.update(status="failed", finished_utc=now(), error=f"{type(error).__name__}: {error}")
+        summary.update(
+            status="failed",
+            finished_utc=now(),
+            error=f"{type(error).__name__}: {error}",
+        )
         write_json(config.summary, summary)
-        print(f"100M BUILD/PUBLISH FAILED CLOSED: {error}", file=sys.stderr)
+        print(f"DATASET BUILD/PUBLISH FAILED CLOSED: {error}", file=sys.stderr)
         return 1
 
 
