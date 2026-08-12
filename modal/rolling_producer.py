@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 from typing import Callable
 
@@ -11,7 +10,6 @@ import runtime as base_runtime
 from profiles import resolve_presets
 
 APPROVED_WEIGHTS_SHA256 = "76e82e22760adcac59c7294fe9bac11358f5a8b7a26035aae64c3f2e6fa1acb7"
-COMMIT_INTERVAL_SECONDS = 60.0
 
 
 def _dataset_bucket_id() -> str:
@@ -31,10 +29,11 @@ def produce_incremental_dataset(
     producer_root: Path,
     commit_cache_volume: Callable[[], object],
 ) -> dict[str, object]:
-    """Build/publish READY shards while periodically committing Modal producer state."""
+    """Build/publish READY shards with Volume commits on exact durability boundaries."""
 
     from dataset.incremental_frontier import SHARD_FRONTIER_FILENAME
-    from dataset.qualification import get_profile, main as dataset_main
+    from dataset.production.cli import main as production_main
+    from dataset.qualification import get_profile, production_arguments
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
     from dataset.src.remote import sha256_path
 
@@ -72,44 +71,25 @@ def produce_incremental_dataset(
     output.mkdir(parents=True, exist_ok=True)
     resume = (output / "work_plan.json").is_file()
 
-    stop = threading.Event()
-    commit_errors: list[BaseException] = []
-
-    def commit_loop() -> None:
-        while not stop.wait(COMMIT_INTERVAL_SECONDS):
-            try:
-                commit_cache_volume()
-            except BaseException as error:  # noqa: BLE001 - surfaced at producer boundary
-                commit_errors.append(error)
-                stop.set()
-                return
-
-    thread = threading.Thread(target=commit_loop, name="modal-dataset-producer-volume-commit", daemon=True)
-    thread.start()
-    try:
-        argv = [
-            "build",
-            "--profile",
-            profile.key,
-            "--weights-file",
-            str(weights),
-            "--output-dir",
-            str(output),
-        ]
-        if resume:
-            argv.append("--resume")
-        code = dataset_main(argv)
-        if code:
-            raise RuntimeError(f"incremental dataset producer exited with status {code}")
-        if commit_errors:
-            raise RuntimeError(
-                "Modal cache Volume commit failed during dataset production: "
-                f"{type(commit_errors[0]).__name__}: {commit_errors[0]}"
-            )
-        commit_cache_volume()
-    finally:
-        stop.set()
-        thread.join(timeout=5.0)
+    producer_args = [
+        "--weights-file",
+        str(weights),
+        "--output-dir",
+        str(output),
+    ]
+    if resume:
+        producer_args.append("--resume")
+    code = production_main(
+        production_arguments(profile, producer_args),
+        # The dataset builder invokes this only after atomically writing its
+        # progress cursor and before making newly uploaded shards READY.
+        durable_progress_hook=commit_cache_volume,
+    )
+    if code:
+        raise RuntimeError(f"incremental dataset producer exited with status {code}")
+    # Persist terminal manifest/frontier-adjacent local state too. READY safety
+    # does not depend on this final commit, but future same-workspace inspection does.
+    commit_cache_volume()
 
     final_frontier = store._read_json(store.object_key(profile.run_id, SHARD_FRONTIER_FILENAME))
     if not isinstance(final_frontier, dict) or final_frontier.get("producer_complete") is not True:
