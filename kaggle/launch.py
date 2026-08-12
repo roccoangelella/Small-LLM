@@ -168,7 +168,7 @@ def _dry_run_payload(
         "model": profile.model_label,
         "tokens": profile.token_label,
         "runtime": (
-            "kaggle/qualify_dual_t4.py"
+            "kaggle/qualify_dual_t4_watchdog.py"
             if action == "qualify-dual-t4"
             else "kaggle/runtime.py"
         ),
@@ -211,7 +211,7 @@ def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
         "--extra",
         "model",
         "python",
-        str(REPO / "kaggle" / "qualify_dual_t4.py"),
+        str(REPO / "kaggle" / "qualify_dual_t4_watchdog.py"),
         *_dual_t4_arguments(args),
     ]
     return int(subprocess.call(command, cwd=REPO))
