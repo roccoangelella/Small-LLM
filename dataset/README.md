@@ -1,6 +1,6 @@
 # Nemotron-ClimbMix dataset pipeline
 
-This package owns deterministic source selection, structural validation, cluster filtering, context-plus-one packing, immutable shards, remote durability, resume, and evaluation-set construction.
+This package owns deterministic source selection, structural validation, cluster filtering, context-plus-one packing, immutable shards, remote durability, resume, rolling-cache transport, and evaluation-set construction.
 
 ## Frozen source contract
 
@@ -18,13 +18,15 @@ The explicit programming cluster is excluded; the resulting corpus is not guaran
 
 ## Active modules
 
-- `dataset.qualification`: the experiment-facing finite-dataset CLI and single registry for frozen 10M/100M/500M/2B profile details. Active profiles can be built; all profiles can derive a trainer plan.
-- `dataset.production`: reusable schema-v2 producer implementation with exact mixture accounting, verified Google Drive durability, locking, and resume. Normally invoked through `dataset.qualification build` for a fixed scaling run.
-- `dataset.qualification_report`: shared manifest/Drive validation and exact one-pass WSD plan engine used by the profile CLI.
+- `dataset.qualification`: experiment-facing finite-dataset CLI and single registry for frozen profiles, including the block-64 Modal profiles.
+- `dataset.production`: reusable schema-v2 producer with exact mixture accounting, verified Hugging Face Storage Bucket durability, bounded-disk shard eviction, locking, and resume.
+- `dataset.rolling_cache`: checkpoint-aligned CPU staging plus current/next verified local shard caching for remotely stored datasets.
+- `dataset.qualification_report`: shared manifest validation and exact one-pass WSD plan engine. Its optional `drive_manifest` input is legacy compatibility for already-built historical datasets.
 - `dataset.eval_core`, `dataset.eval_core_accelerated`, `dataset.eval_core_cli`: reusable `eval_core_v1` construction and verification. Eval-core is intentionally separate from the training-cache producer.
 - `dataset.main`: shared schema-v2 verification plus the low-level stream-cache development surface still covered by streaming tests.
-- `dataset.drive_auth`: Google Drive credential loading used by production, plus the infrequent interactive OAuth setup command.
-- `dataset.src`: shared producer, streaming, storage, work-plan, retry, verification, and remote-backend primitives.
+- `dataset.src`: shared producer, streaming, storage, work-plan, retry, verification, HF bucket, checkpoint, and compatibility primitives.
+
+Google Drive is not an active storage backend. New remote dataset production uses a private Hugging Face Storage Bucket. The historical filename `drive_manifest.json` and legacy `drive_file_id` fields remain readable only because existing datasets and checkpoints already bind those names into their identity.
 
 ## Finite dataset profiles
 
@@ -34,7 +36,7 @@ List the exact frozen identities:
 uv run python -m dataset.qualification profiles
 ```
 
-Build or resume the current 2B profile without restating its scientific/storage geometry:
+Build or resume a finite dataset without restating its scientific/storage geometry:
 
 ```bash
 uv run --env-file .env python -m dataset.qualification build \
@@ -49,19 +51,26 @@ uv run --env-file .env python -m dataset.qualification build \
   --resume
 ```
 
+Remote builds require `HF_TOKEN` and either `SMALL_LLM_HF_DATASET_BUCKET_ID` or `SMALL_LLM_HF_REPO_ID`; the latter derives `<repo>-datasets`. The `modal-10b-b64` profile additionally freezes one-GiB shards and verified local eviction so the producer never needs enough disk for the complete derived corpus.
+
 The profile fixes run ID, source-token envelope, checkpoint cadence, context length, sequences per block, shard size, and remote-durability requirement. Reader/queue tuning remains available through the underlying production CLI.
 
-Derive the exact one-pass trainer plan from a completed cache:
+Derive the exact one-pass trainer plan from a completed current-format cache:
 
 ```bash
 uv run python -m dataset.qualification report \
   --profile 20m-2b \
   --dataset-dir /data/small-llm/20m-2b-dataset-001 \
-  --drive-manifest /data/small-llm/20m-2b-dataset-001/drive_manifest.json \
   --output /data/small-llm/20m-2b-dataset-001/qualification_plan.json
 ```
 
+For an already-built historical dataset whose identity included `drive_manifest.json`, pass `--drive-manifest` explicitly when reproducing its old qualification plan. This does not activate or require Google Drive.
+
 The historical `20m-10m` profile remains reportable for reproducibility but is intentionally not buildable again.
+
+## Rolling reuse
+
+Remote shard storage is independent of training epochs. A future multi-pass experiment can traverse the same immutable HF shard sequence again: while the current shard trains, the rolling cache can prefetch the next logical shard, including wrapping from the final shard back to shard zero at an epoch boundary. The current trainer remains one-pass; adding repeated epochs requires an epoch-aware logical cursor/checkpoint contract, not another storage backend or another corpus copy.
 
 ## Evaluation corpus
 
