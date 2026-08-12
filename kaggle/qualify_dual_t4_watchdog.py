@@ -3,13 +3,15 @@
 
 The scientific qualification remains implemented in ``qualify_dual_t4.py``.
 This wrapper only adds stage/block progress, runtime identity checks, GPU-memory
-headroom checks, and bounded worker lifetimes so a stuck CUDA/Triton/NCCL
-subprocess cannot silently consume a Kaggle session.
+headroom checks, Triton autotune visibility/cache persistence, and bounded
+worker lifetimes so a stuck CUDA/Triton/NCCL subprocess cannot silently consume
+a Kaggle session.
 """
 from __future__ import annotations
 
 import importlib.metadata
 import os
+import selectors
 import signal
 import subprocess
 import sys
@@ -26,7 +28,8 @@ if str(REPO) not in sys.path:
 
 import qualify_dual_t4 as qualification
 
-DEFAULT_WORKER_TIMEOUT_SECONDS = 600
+DEFAULT_WORKER_INACTIVITY_TIMEOUT_SECONDS = 600
+DEFAULT_WORKER_TOTAL_TIMEOUT_SECONDS = 3600
 MINIMUM_FREE_GPU_BYTES = 12 * 1024**3
 EXPECTED_TORCH_VERSION = "2.10.0"
 EXPECTED_CUDA_VERSION = "12.8"
@@ -48,22 +51,29 @@ def _worker_name(command: Sequence[str]) -> str:
         return "unknown"
 
 
-def _timeout_seconds() -> int:
-    raw = os.environ.get(
-        "SMALL_LLM_DUAL_T4_WORKER_TIMEOUT_SECONDS",
-        str(DEFAULT_WORKER_TIMEOUT_SECONDS),
-    )
+def _positive_timeout_from_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
     try:
         value = int(raw)
     except ValueError as error:
-        raise qualification.QualificationFailure(
-            "SMALL_LLM_DUAL_T4_WORKER_TIMEOUT_SECONDS must be an integer"
-        ) from error
+        raise qualification.QualificationFailure(f"{name} must be an integer") from error
     if value <= 0:
-        raise qualification.QualificationFailure(
-            "SMALL_LLM_DUAL_T4_WORKER_TIMEOUT_SECONDS must be positive"
-        )
+        raise qualification.QualificationFailure(f"{name} must be positive")
     return value
+
+
+def _inactivity_timeout_seconds() -> int:
+    return _positive_timeout_from_env(
+        "SMALL_LLM_DUAL_T4_INACTIVITY_TIMEOUT_SECONDS",
+        DEFAULT_WORKER_INACTIVITY_TIMEOUT_SECONDS,
+    )
+
+
+def _total_timeout_seconds() -> int:
+    return _positive_timeout_from_env(
+        "SMALL_LLM_DUAL_T4_TOTAL_TIMEOUT_SECONDS",
+        DEFAULT_WORKER_TOTAL_TIMEOUT_SECONDS,
+    )
 
 
 def _distribution_version(name: str) -> str:
@@ -177,6 +187,13 @@ def _terminate_process_group(process: subprocess.Popen[Any], label: str) -> None
     process.wait()
 
 
+def _triton_cache_dir(env: dict[str, str]) -> str:
+    explicit = env.get("TRITON_CACHE_DIR")
+    if explicit:
+        return explicit
+    return str(Path.home() / ".triton" / "cache")
+
+
 def _install_observability() -> None:
     original_load_blocks = qualification._load_blocks
     original_build_model = qualification._build_model
@@ -263,36 +280,91 @@ def _install_observability() -> None:
 
     def run_child(command: Sequence[str], *, visible_devices: str) -> None:
         worker_kind = _worker_name(command)
-        timeout = _timeout_seconds()
+        inactivity_timeout = _inactivity_timeout_seconds()
+        total_timeout = _total_timeout_seconds()
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = visible_devices
         env["PYTHONUNBUFFERED"] = "1"
+        env["TRITON_PRINT_AUTOTUNING"] = "1"
+        env["TRITON_CACHE_AUTOTUNING"] = "1"
+        env["FLA_CACHE_RESULTS"] = "1"
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+        cache_dir = _triton_cache_dir(env)
         _progress(
             f"starting {worker_kind} worker on CUDA_VISIBLE_DEVICES={visible_devices}; "
-            f"watchdog={timeout}s"
+            f"inactivity_watchdog={inactivity_timeout}s total_watchdog={total_timeout}s"
+        )
+        _progress(
+            f"Triton autotune tracing enabled; disk autotune cache={cache_dir}"
         )
         process = subprocess.Popen(
             list(command),
             cwd=REPO,
             env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
             start_new_session=True,
         )
-        try:
-            returncode = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as error:
-            _progress(f"{worker_kind} worker exceeded {timeout}s")
+        if process.stdout is None:
             _terminate_process_group(process, worker_kind)
-            raise qualification.QualificationFailure(
-                f"{worker_kind} worker exceeded {timeout}s. The qualification is hung; "
-                "use the last progress line to identify whether the stall is model/JIT, "
-                "a specific training block, state save, or DDP/NCCL."
-            ) from error
+            raise qualification.QualificationFailure("worker stdout pipe was not created")
+
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        worker_started = time.monotonic()
+        last_output = worker_started
+        returncode: int | None = None
+        try:
+            while True:
+                events = selector.select(timeout=1.0)
+                if events:
+                    line = process.stdout.readline()
+                    if line:
+                        print(line, end="", flush=True)
+                        last_output = time.monotonic()
+                    elif process.poll() is not None:
+                        returncode = process.wait()
+                        break
+                elif process.poll() is not None:
+                    returncode = process.wait()
+                    break
+
+                now = time.monotonic()
+                idle = now - last_output
+                total = now - worker_started
+                if idle > inactivity_timeout:
+                    _progress(
+                        f"{worker_kind} worker produced no output for {idle:.0f}s; "
+                        "treating it as stalled"
+                    )
+                    _terminate_process_group(process, worker_kind)
+                    raise qualification.QualificationFailure(
+                        f"{worker_kind} worker was silent for more than {inactivity_timeout}s. "
+                        "The last streamed line identifies the stalled kernel/stage."
+                    )
+                if total > total_timeout:
+                    _progress(
+                        f"{worker_kind} worker exceeded total limit of {total_timeout}s"
+                    )
+                    _terminate_process_group(process, worker_kind)
+                    raise qualification.QualificationFailure(
+                        f"{worker_kind} worker exceeded the {total_timeout}s total qualification limit"
+                    )
+
+            # Drain any bytes emitted immediately before process exit.
+            for line in process.stdout:
+                print(line, end="", flush=True)
         except BaseException:
             # Manual notebook interruption must not leave a detached CUDA worker
             # holding most of a T4, which would poison the next qualification.
             _terminate_process_group(process, worker_kind)
             raise
+        finally:
+            selector.close()
+            process.stdout.close()
+
         if returncode:
             raise subprocess.CalledProcessError(returncode, command)
         _progress(f"{worker_kind} worker completed successfully")
@@ -309,8 +381,8 @@ def _install_observability() -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     _install_observability()
     _progress(
-        "qualification watchdog active; each single/DDP worker has a "
-        f"{_timeout_seconds()}s limit"
+        "qualification watchdog active; worker limits are "
+        f"{_inactivity_timeout_seconds()}s inactivity / {_total_timeout_seconds()}s total"
     )
     return int(qualification.main(argv))
 
