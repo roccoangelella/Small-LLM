@@ -26,6 +26,10 @@ _MULTIPLIERS = {
     "B": Decimal(1_000_000_000),
     "T": Decimal(1_000_000_000_000),
 }
+DUAL_T4_TORCH_VERSION = "2.10.0"
+DUAL_T4_CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
+DUAL_T4_TRITON_VERSION = "3.6.0"
+DUAL_T4_FLA_VERSION = "0.5.2"
 
 
 def parse_quantity(value: str) -> int:
@@ -199,22 +203,37 @@ def _dual_t4_arguments(args: argparse.Namespace) -> list[str]:
     return forwarded
 
 
-def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
-    uv = shutil.which("uv")
-    if not uv:
-        raise RuntimeError("uv is required for dual-T4 qualification")
-    command = [
+def _dual_t4_uv_command(args: argparse.Namespace, uv: str) -> list[str]:
+    """Build an isolated command matching the T4 FLA runtime qualification."""
+    return [
         uv,
         "run",
         "--python",
         "3.13",
-        "--extra",
-        "model",
+        "--no-project",
+        "--with",
+        f"torch=={DUAL_T4_TORCH_VERSION}",
+        "--with",
+        f"triton=={DUAL_T4_TRITON_VERSION}",
+        "--with",
+        f"fla-core=={DUAL_T4_FLA_VERSION}",
+        "--with",
+        "packaging>=24",
+        "--with",
+        "numpy>=2.1,<3",
+        "--extra-index-url",
+        DUAL_T4_CUDA_WHEEL_INDEX,
         "python",
         str(REPO / "kaggle" / "qualify_dual_t4_watchdog.py"),
         *_dual_t4_arguments(args),
     ]
-    return int(subprocess.call(command, cwd=REPO))
+
+
+def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        raise RuntimeError("uv is required for dual-T4 qualification")
+    return int(subprocess.call(_dual_t4_uv_command(args, uv), cwd=REPO))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
