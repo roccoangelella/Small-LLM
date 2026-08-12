@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
+from collections.abc import Mapping
+
 from dataset.src.joint_checkpoint import CheckpointCoordinator
 from model.config import ModelConfig
 from model.initialization import initialize_model
@@ -11,6 +15,39 @@ from .config import TrainerConfig
 from .engine import TrainerEngine, TrainingSession, seed_everything
 from .identity import checkpoint_identity, saved_checkpoint_identity
 from .shards import SchemaV2ShardReader
+
+
+def _rolling_cache(args: object) -> object | None:
+    bucket_id = getattr(args, "dataset_shard_bucket", None)
+    if not bucket_id:
+        return None
+    run_id = getattr(args, "dataset_shard_run_id", None)
+    manifest_path = getattr(args, "dataset_manifest", None)
+    if not run_id or manifest_path is None:
+        raise RuntimeError("rolling dataset shards require a run ID and manifest")
+    token_env = getattr(args, "dataset_shard_token_env", "HF_TOKEN")
+    token = os.environ.get(token_env)
+    if not token:
+        raise RuntimeError(f"{token_env} is required for rolling dataset shard reads")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("rolling dataset manifest must contain a JSON object")
+    production = payload.get("production")
+    if not isinstance(production, Mapping) or production.get("run_id") != run_id:
+        raise RuntimeError("rolling dataset manifest run ID mismatch")
+
+    from dataset.rolling_cache import RollingShardCache
+    from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
+
+    store = HuggingFaceBucketShardStore(bucket_id, token=token, create_bucket=False)
+    return RollingShardCache(
+        root=args.dataset_dir,
+        run_id=run_id,
+        manifest=payload,
+        store=store,
+        prefetch_shards=getattr(args, "dataset_shard_prefetch", 1),
+        evict_consumed=True,
+    )
 
 
 def setup(args: object):
@@ -42,6 +79,7 @@ def setup(args: object):
         evaluation_every_steps=args.evaluation_every_steps,
         seed=args.seed,
     )
+    cache_manager = _rolling_cache(args)
     source = SchemaV2ShardReader(
         args.dataset_dir,
         split="train",
@@ -49,6 +87,7 @@ def setup(args: object):
         semantic_vocab_size=model_config.semantic_vocab_size,
         manifest_path=args.dataset_manifest,
         context_length=model_config.max_seq_len if args.dataset_manifest is not None else None,
+        cache_manager=cache_manager,
     )
     engine = TrainerEngine(model, trainer_config, device=args.device)
     session = TrainingSession(engine, source)
