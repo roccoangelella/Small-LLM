@@ -94,6 +94,10 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
                 self._shard_futures[shard.filename] = future
             return future
 
+    @staticmethod
+    def _prefetch_key(shard: FrontierShard) -> str:
+        return f"next-after:{shard.filename}"
+
     def _prefetch_successor(self, shard: FrontierShard) -> None:
         next_block = shard.last_block_id + 1
         if next_block >= self.planned_block_count:
@@ -108,10 +112,32 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
                 shard=successor,
             )
 
-        key = f"next-after:{shard.filename}"
+        key = self._prefetch_key(shard)
         with self._lock:
             if key not in self._shard_futures:
                 self._shard_futures[key] = self._executor.submit(wait_and_download)
+
+    def _promote_successor_prefetch(
+        self,
+        current: FrontierShard,
+        successor: FrontierShard,
+    ) -> Future[Path] | None:
+        """Reuse the existing next-shard transfer as the successor's canonical future."""
+
+        key = self._prefetch_key(current)
+        with self._lock:
+            prefetched = self._shard_futures.get(key)
+        if prefetched is None:
+            return None
+        # By the boundary this work has had the whole current shard to overlap.
+        # If it is still running, waiting here is the correct backpressure point.
+        prefetched.result()
+        with self._lock:
+            existing = self._shard_futures.get(successor.filename)
+            if existing is None:
+                self._shard_futures[successor.filename] = prefetched
+                existing = prefetched
+        return existing
 
     def ensure_block(self, block_id: int) -> None:
         shard = self._wait_for_shard(block_id)
@@ -123,13 +149,18 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         shard = self._wait_for_shard(block_id)
         if block_id != shard.last_block_id:
             return
+        next_block = block_id + 1
+        successor: FrontierShard | None = None
+        if next_block < self.planned_block_count:
+            successor = self._wait_for_shard(next_block)
+            if self._promote_successor_prefetch(shard, successor) is None:
+                self._shard_future(successor).result()
+        # Evict only after the successor is locally verified whenever one exists.
+        # This keeps the steady-state disk invariant at current+next and avoids
+        # a transient zero-train-shard cache if the boundary transfer is slow.
         path = self.root / shard.filename
         if path.is_file() and not path.is_symlink():
             path.unlink()
-        next_block = block_id + 1
-        if next_block < self.planned_block_count:
-            successor = self._wait_for_shard(next_block)
-            self._shard_future(successor)
 
     def restore_after_acknowledged(self, block_id: int) -> None:
         next_block = block_id + 1
