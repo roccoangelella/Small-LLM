@@ -5,23 +5,30 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
+from concurrent.futures import Future
+from pathlib import Path
 
 from dataset.incremental_frontier import (
     SHARD_FRONTIER_FILENAME,
     FrontierShard,
     IncrementalRollingShardCache as _BaseIncrementalRollingShardCache,
+    _download_verified,
     _frontier_shards,
     _train_index_for_block,
 )
 
 
 class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
-    """Poll HF only when a requested block is beyond the locally known READY prefix."""
+    """Poll HF only at frontier boundaries and keep async work per shard."""
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._cached_train: list[FrontierShard] = []
         self._cached_producer_complete = False
+        self._shard_futures: dict[str, Future[Path]] = {}
+        # Disable the base per-block future table. Dynamic production should
+        # allocate O(shards), not O(optimizer updates), bookkeeping.
+        self._futures.clear()
         local = self.root / SHARD_FRONTIER_FILENAME
         if local.is_file():
             try:
@@ -72,6 +79,65 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
             if self._cached_producer_complete:
                 raise RuntimeError(f"producer completed without required train block {block_id}")
             time.sleep(self.poll_seconds)
+
+    def _shard_future(self, shard: FrontierShard) -> Future[Path]:
+        with self._lock:
+            future = self._shard_futures.get(shard.filename)
+            if future is None:
+                future = self._executor.submit(
+                    _download_verified,
+                    self.store,
+                    run_id=self.run_id,
+                    root=self.root,
+                    shard=shard,
+                )
+                self._shard_futures[shard.filename] = future
+            return future
+
+    def _prefetch_successor(self, shard: FrontierShard) -> None:
+        next_block = shard.last_block_id + 1
+        if next_block >= self.planned_block_count:
+            return
+
+        def wait_and_download() -> Path:
+            successor = self._wait_for_shard(next_block)
+            return _download_verified(
+                self.store,
+                run_id=self.run_id,
+                root=self.root,
+                shard=successor,
+            )
+
+        key = f"next-after:{shard.filename}"
+        with self._lock:
+            if key not in self._shard_futures:
+                self._shard_futures[key] = self._executor.submit(wait_and_download)
+
+    def ensure_block(self, block_id: int) -> None:
+        shard = self._wait_for_shard(block_id)
+        self._shard_future(shard).result()
+        # Start one-shard-ahead fetch as soon as the current shard is first used.
+        self._prefetch_successor(shard)
+
+    def acknowledge(self, block_id: int) -> None:
+        shard = self._wait_for_shard(block_id)
+        if block_id != shard.last_block_id:
+            return
+        path = self.root / shard.filename
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+        next_block = block_id + 1
+        if next_block < self.planned_block_count:
+            successor = self._wait_for_shard(next_block)
+            self._shard_future(successor)
+
+    def restore_after_acknowledged(self, block_id: int) -> None:
+        next_block = block_id + 1
+        if next_block >= self.planned_block_count:
+            return
+        shard = self._wait_for_shard(next_block)
+        self._shard_future(shard).result()
+        self._prefetch_successor(shard)
 
 
 __all__ = ["IncrementalRollingShardCache"]
