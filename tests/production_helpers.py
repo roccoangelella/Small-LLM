@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataset.production import builder as production_builder
-from dataset.src.remote import InMemoryDriveStore
+from dataset.src.remote import InMemoryShardStore
 from dataset.src.streaming import SourceDocument, StreamCacheConfig, synthetic_test_weights
 from dataset.src.workplan import WorkItem, WorkPlan
 
@@ -55,7 +55,7 @@ class ReaderPatchMixin:
         production_builder.parallel_read_documents = lambda *args, **kwargs: iter(values)
 
 
-class CountingDriveStore(InMemoryDriveStore):
+class CountingShardStore(InMemoryShardStore):
     def __init__(self) -> None:
         super().__init__()
         self.uploads = 0
@@ -70,7 +70,7 @@ class CountingDriveStore(InMemoryDriveStore):
         return super().verify_remote_shard(**kwargs)
 
 
-class FlakyDriveStore(CountingDriveStore):
+class FlakyShardStore(CountingShardStore):
     def __init__(self) -> None:
         super().__init__()
         self.failed_once = False
