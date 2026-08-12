@@ -22,7 +22,8 @@ from .policy import (
     reader_configuration,
     schema_hash,
 )
-from .remote import mirror_shards
+from .remote import DRIVE_MANIFEST_FILENAME, mirror_shards
+from .remote_resume import restore_remote_evicted_producer, verified_remote_entries
 from .safety import (
     PROGRESS_BACKUP_FILENAME,
     RunLock,
@@ -93,6 +94,105 @@ def _decorate_state(
     state["complete"] = complete
 
 
+def _durability_manifest(output_dir: Path) -> dict[str, object]:
+    path = output_dir / DRIVE_MANIFEST_FILENAME
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        raise RuntimeError("remote shard durability manifest is missing or invalid")
+    return payload
+
+
+def _validate_remote_inventory(
+    store: RemoteShardStore,
+    *,
+    run_id: str,
+    durability_manifest: Mapping[str, object],
+) -> None:
+    """Confirm previously read-back-verified immutable objects still exist by name/size."""
+
+    verified = verified_remote_entries(durability_manifest)
+    inventory = store.list_manifest_entries(run_id)
+    by_name: dict[str, Mapping[str, object]] = {}
+    for row in inventory:
+        if not isinstance(row, Mapping):
+            raise RuntimeError("remote shard inventory contains a non-object entry")
+        name = row.get("logical_name")
+        if not isinstance(name, str) or name in by_name:
+            raise RuntimeError("remote shard inventory has an invalid or duplicate logical name")
+        by_name[name] = row
+    for name, durable in verified.items():
+        observed = by_name.get(name)
+        if observed is None:
+            raise RuntimeError(f"previously durable remote shard is now missing: {name}")
+        if int(observed.get("size", -1)) != int(durable.get("byte_size", -2)):
+            raise RuntimeError(f"previously durable remote shard changed size: {name}")
+        file_id = durable.get("drive_file_id")
+        observed_id = observed.get("file_id")
+        if file_id is not None and observed_id is not None and observed_id != file_id:
+            raise RuntimeError(f"previously durable remote shard changed identity: {name}")
+        observed_sha = observed.get("sha256")
+        if observed_sha is not None and observed_sha != durable.get("local_sha256"):
+            raise RuntimeError(f"previously durable remote shard changed checksum identity: {name}")
+
+
+def _validate_manifest_remote_coverage(
+    manifest: Mapping[str, object],
+    durability_manifest: Mapping[str, object],
+) -> None:
+    verified = verified_remote_entries(durability_manifest)
+    raw = manifest.get("shards")
+    if not isinstance(raw, list) or not raw:
+        raise RuntimeError("completed dataset manifest has no shard inventory")
+    expected: set[str] = set()
+    for row in raw:
+        if not isinstance(row, Mapping) or not isinstance(row.get("filename"), str):
+            raise RuntimeError("completed dataset manifest has invalid shard metadata")
+        name = str(row["filename"])
+        expected.add(name)
+        remote = verified.get(name)
+        if remote is None:
+            raise RuntimeError(f"completed dataset shard is not remotely durable: {name}")
+        for field in (
+            "filename", "split", "byte_size", "token_count", "sequence_count", "checksum",
+            "first_block_id", "last_block_id", "context_length", "int_type", "byte_order",
+            "cumulative_cluster_source_tokens", "shard_cluster_source_tokens",
+        ):
+            if remote.get(field) != row.get(field):
+                raise RuntimeError(f"remote durability metadata disagrees with completed manifest: {name} {field}")
+        if remote.get("local_sha256") != row.get("checksum"):
+            raise RuntimeError(f"remote durability checksum disagrees with completed manifest: {name}")
+    if set(verified) != expected:
+        raise RuntimeError(
+            "remote durability manifest contains a different shard set from completed dataset manifest"
+        )
+
+
+def _evict_verified_local_shards(
+    output_dir: Path,
+    *,
+    state: Mapping[str, object],
+    durability_manifest: Mapping[str, object],
+) -> int:
+    verified = verified_remote_entries(durability_manifest)
+    raw = state.get("finalized_shards")
+    if not isinstance(raw, list):
+        raise RuntimeError("producer state has invalid finalized shard metadata")
+    removed = 0
+    for row in raw:
+        if not isinstance(row, Mapping) or not isinstance(row.get("filename"), str):
+            raise RuntimeError("producer state has invalid finalized shard entry")
+        name = str(row["filename"])
+        remote = verified.get(name)
+        if remote is None or remote.get("local_sha256") != row.get("checksum"):
+            raise RuntimeError(f"refusing to evict shard without exact verified remote copy: {name}")
+        path = output_dir / name
+        if not path.exists():
+            continue
+        unlink_durable(path)
+        removed += 1
+    return removed
+
+
 def build_production_cache(
     output_dir: Path | str,
     stream: StreamCacheConfig,
@@ -103,11 +203,14 @@ def build_production_cache(
     remote_store: RemoteShardStore | None,
     resume: bool = False,
     simulate_crash_after_documents: int | None = None,
+    evict_remote_shards: bool = False,
 ) -> dict[str, object]:
     """Build or resume a whole-document bounded and remotely durable cache."""
 
     if policy.remote_required and remote_store is None:
         raise RuntimeError("production policy requires a configured remote shard store")
+    if evict_remote_shards and remote_store is None:
+        raise RuntimeError("remote shard eviction requires a configured remote shard store")
     if simulate_crash_after_documents is not None and simulate_crash_after_documents <= 0:
         raise ValueError("simulate_crash_after_documents must be positive")
 
@@ -128,40 +231,58 @@ def build_production_cache(
             if state.get("production") != expected:
                 raise ValueError("production progress configuration does not match this invocation")
             cursor = _validate_cursor(state.get("source_reader"), plan=plan, stream=stream)
+            if evict_remote_shards:
+                assert remote_store is not None
+                durable = _durability_manifest(output_dir)
+                _validate_remote_inventory(remote_store, run_id=policy.run_id, durability_manifest=durable)
             if state.get("complete") is True:
                 manifest = read_json(manifest_path)
                 if not isinstance(manifest, dict):
                     raise ValueError("completed production cache has an invalid manifest")
-                report = verify(output_dir, full_scan=False)
-                if not report.passed:
-                    raise RuntimeError(
-                        "completed production cache failed local verification: "
-                        + "; ".join(report.problems)
-                    )
+                if evict_remote_shards:
+                    durable = _durability_manifest(output_dir)
+                    _validate_manifest_remote_coverage(manifest, durable)
+                    assert remote_store is not None
+                    _validate_remote_inventory(remote_store, run_id=policy.run_id, durability_manifest=durable)
+                else:
+                    report = verify(output_dir, full_scan=False)
+                    if not report.passed:
+                        raise RuntimeError(
+                            "completed production cache failed local verification: "
+                            + "; ".join(report.problems)
+                        )
+                    if remote_store is not None:
+                        mirror_shards(
+                            remote_store,
+                            output_dir=output_dir,
+                            run_id=policy.run_id,
+                            shard_entries=list(manifest.get("shards", [])),
+                            configuration_hash=cfg_hash,
+                            schema_hash=format_hash,
+                            verify_existing=True,
+                            prune_unreferenced=True,
+                        )
+                return manifest
+            discard_uncheckpointed_artifacts(output_dir, state)
+            if evict_remote_shards:
+                producer = restore_remote_evicted_producer(
+                    output_dir,
+                    stream,
+                    state,
+                    durability_manifest=_durability_manifest(output_dir),
+                )
+            else:
+                producer = StreamCacheProducer.from_state(output_dir, stream, state)
                 if remote_store is not None:
                     mirror_shards(
                         remote_store,
                         output_dir=output_dir,
                         run_id=policy.run_id,
-                        shard_entries=list(manifest.get("shards", [])),
+                        shard_entries=list(state.get("finalized_shards", [])),
                         configuration_hash=cfg_hash,
                         schema_hash=format_hash,
                         verify_existing=True,
-                        prune_unreferenced=True,
                     )
-                return manifest
-            discard_uncheckpointed_artifacts(output_dir, state)
-            producer = StreamCacheProducer.from_state(output_dir, stream, state)
-            if remote_store is not None:
-                mirror_shards(
-                    remote_store,
-                    output_dir=output_dir,
-                    run_id=policy.run_id,
-                    shard_entries=list(state.get("finalized_shards", [])),
-                    configuration_hash=cfg_hash,
-                    schema_hash=format_hash,
-                    verify_existing=True,
-                )
         else:
             if progress_path.exists() or manifest_path.exists():
                 raise FileExistsError(
@@ -194,8 +315,9 @@ def build_production_cache(
                 accepted=accepted,
                 complete=complete,
             )
+            durable: Mapping[str, object] | None = None
             if remote_store is not None:
-                mirror_shards(
+                durable = mirror_shards(
                     remote_store,
                     output_dir=output_dir,
                     run_id=policy.run_id,
@@ -203,11 +325,26 @@ def build_production_cache(
                     configuration_hash=cfg_hash,
                     schema_hash=format_hash,
                 )
+            # Progress becomes durable before local eviction.  A crash before
+            # this write simply replays local bytes; a crash after it may use
+            # the exact remotely verified metadata recorded above.
             write_json_atomic(progress_path, state)
+            removed = 0
+            if evict_remote_shards:
+                if durable is None:
+                    raise RuntimeError("remote eviction has no durability manifest")
+                removed = _evict_verified_local_shards(
+                    output_dir,
+                    state=state,
+                    durability_manifest=durable,
+                )
             last_checkpoint_tokens = accepted
             LOGGER.info(
-                "durable dataset checkpoint: documents=%d accepted=%d shards=%d",
-                documents_consumed, accepted, len(state.get("finalized_shards", [])),
+                "durable dataset checkpoint: documents=%d accepted=%d shards=%d evicted=%d",
+                documents_consumed,
+                accepted,
+                len(state.get("finalized_shards", [])),
+                removed,
             )
             return state
 
@@ -319,8 +456,9 @@ def build_production_cache(
                     accepted=accepted,
                     complete=True,
                 )
+                durable: Mapping[str, object] | None = None
                 if remote_store is not None:
-                    mirror_shards(
+                    durable = mirror_shards(
                         remote_store,
                         output_dir=output_dir,
                         run_id=policy.run_id,
@@ -330,13 +468,34 @@ def build_production_cache(
                         prune_unreferenced=True,
                     )
                 write_json_atomic(manifest_path, manifest)
-                report = verify(output_dir, full_scan=False)
-                if not report.passed:
-                    raise RuntimeError(
-                        "final production cache failed local verification: "
-                        + "; ".join(report.problems)
+                if evict_remote_shards:
+                    if durable is None:
+                        raise RuntimeError("completed remote dataset has no durability manifest")
+                    _validate_manifest_remote_coverage(manifest, durable)
+                    assert remote_store is not None
+                    _validate_remote_inventory(
+                        remote_store,
+                        run_id=policy.run_id,
+                        durability_manifest=durable,
                     )
+                else:
+                    report = verify(output_dir, full_scan=False)
+                    if not report.passed:
+                        raise RuntimeError(
+                            "final production cache failed local verification: "
+                            + "; ".join(report.problems)
+                        )
+                # Final progress is committed before any last local shard is
+                # removed; the manifest and remote durability inventory are now
+                # sufficient to reconstruct the completed dataset on demand.
                 write_json_atomic(progress_path, final_state)
+                if evict_remote_shards:
+                    assert durable is not None
+                    _evict_verified_local_shards(
+                        output_dir,
+                        state=final_state,
+                        durability_manifest=durable,
+                    )
                 unlink_durable(backup_path)
                 LOGGER.info(
                     "production dataset complete: accepted=%d shards=%d reason=%s",
