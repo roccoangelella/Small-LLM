@@ -98,14 +98,22 @@ def remote_import_preflight() -> dict[str, object]:
 
     profiles_path = Path("/root/profiles.py")
     runtime_path = REMOTE_MODAL / "runtime.py"
+    checkpoint_transport_path = REMOTE_MODAL / "model_repo_checkpoint.py"
     rolling_path = REMOTE_MODAL / "rolling_dataset.py"
     if not profiles_path.is_file():
         raise RuntimeError(f"Modal image is missing explicitly packaged profiles helper: {profiles_path}")
     if not runtime_path.is_file():
         raise RuntimeError(f"Modal image is missing repository runtime: {runtime_path}")
+    if not checkpoint_transport_path.is_file():
+        raise RuntimeError(
+            f"Modal image is missing model-repository checkpoint adapter: {checkpoint_transport_path}"
+        )
     if not rolling_path.is_file():
         raise RuntimeError(f"Modal image is missing rolling-dataset runtime: {rolling_path}")
     sys.path.insert(0, str(REMOTE_MODAL))
+    import model_repo_checkpoint as checkpoint_transport  # noqa: PLC0415
+
+    checkpoint_transport.install_model_repo_checkpoint_transport()
     import profiles as remote_profiles  # noqa: PLC0415
     import runtime as remote_runtime  # noqa: F401, PLC0415
     import rolling_dataset as remote_rolling  # noqa: F401, PLC0415
@@ -122,6 +130,7 @@ def remote_import_preflight() -> dict[str, object]:
         "status": "ok",
         "profiles": str(Path(remote_profiles.__file__).resolve()),
         "runtime": str(runtime_path),
+        "checkpoint_transport": str(checkpoint_transport_path),
         "rolling_runtime": str(rolling_path),
         "run_root": str(run_root),
     }
@@ -141,6 +150,9 @@ def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
     """CPU-only gate: checkpoint-align, download, hash, then commit the required shard."""
 
     sys.path.insert(0, str(REMOTE_MODAL))
+    from model_repo_checkpoint import install_model_repo_checkpoint_transport  # noqa: PLC0415
+
+    install_model_repo_checkpoint_transport()
     from rolling_dataset import stage_for_h100  # noqa: PLC0415
 
     result = stage_for_h100(
@@ -174,7 +186,7 @@ def train_remote(
     microbatch_size: int = 0,
     precision: str = DEFAULT_PRECISION,
 ) -> dict[str, object]:
-    """Existing Modal-volume dataset path; preserved unchanged for current runs."""
+    """Existing Modal-volume dataset path with unified HF model-repo checkpoints."""
 
     resolved_run_root = RUN_ROOT.resolve(strict=True)
     _stage(
@@ -185,8 +197,12 @@ def train_remote(
         run_root=str(resolved_run_root),
     )
     sys.path.insert(0, str(REMOTE_MODAL))
-    from runtime import run_training  # noqa: PLC0415
+    from model_repo_checkpoint import (  # noqa: PLC0415
+        install_model_repo_checkpoint_transport,
+        run_training,
+    )
 
+    install_model_repo_checkpoint_transport()
     result = run_training(
         model=model,
         tokens=tokens,
@@ -242,6 +258,9 @@ def train_rolling_remote(
         run_root=str(resolved_run_root),
     )
     sys.path.insert(0, str(REMOTE_MODAL))
+    from model_repo_checkpoint import install_model_repo_checkpoint_transport  # noqa: PLC0415
+
+    install_model_repo_checkpoint_transport()
     from rolling_dataset import run_staged_training  # noqa: PLC0415
 
     result = run_staged_training(
@@ -315,7 +334,7 @@ def main(
             else dataset_dir or "auto-discover unique matching dataset"
         ),
         "max_steps_this_session": max_steps_this_session or "remaining plan",
-        "resume": "automatic_verified_modal_volume_then_hf_bucket",
+        "resume": "automatic_verified_modal_volume_then_hf_model_repo",
     }
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
