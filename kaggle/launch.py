@@ -16,6 +16,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+import dual_t4_runtime
 import runtime
 
 _QUANTITY = re.compile(r"^(\d+(?:\.\d+)?)([KMBT]?)$", re.IGNORECASE)
@@ -176,6 +177,11 @@ def _dry_run_payload(
             if action == "qualify-dual-t4"
             else "kaggle/runtime.py"
         ),
+        "execution": (
+            "dual_t4_ddp"
+            if action == "train"
+            else ("disposable_dual_t4_qualification" if action == "qualify-dual-t4" else "single_process")
+        ),
         "profile": profile.dataset_profile,
         "launch_commit": profile.launch_commit,
         "dataset_run_id": profile.dataset_run_id,
@@ -283,11 +289,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(
         f"[launch] action={args.action} model={profile.model_label} "
-        f"tokens={profile.token_label} resume=automatic_verified",
+        f"tokens={profile.token_label} "
+        + ("execution=dual_t4_ddp " if args.action == "train" else "")
+        + "resume=automatic_verified",
         flush=True,
     )
 
     if args.action == "train":
+        dual_t4_runtime.install(runtime)
         return runtime.train(
             profile,
             dataset_dir=args.dataset_dir,
