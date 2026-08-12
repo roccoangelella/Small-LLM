@@ -2,8 +2,8 @@
 """Execute a pinned Kaggle trainer worktree as exact-batch two-T4 DDP.
 
 This file is deliberately a Kaggle execution shim rather than a generic trainer
-feature.  Model, optimizer, scheduler, dataset, checkpoint, and W&B semantics
-come from the experiment's pinned worktree.  The shim adds only the qualified
+feature. Model, optimizer, scheduler, dataset, checkpoint, and W&B semantics
+come from the experiment's pinned worktree. The shim adds only the qualified
 execution topology:
 
 * two replicated Tesla T4 ranks;
@@ -130,7 +130,6 @@ def _prewarm_raw_model(engine: Any, *, rank: int) -> None:
     if rank != 0:
         return
     import torch
-    from torch.nn import functional as F
     from trainer.precision import autocast_context
 
     raw_model = engine.model
@@ -151,9 +150,9 @@ def _prewarm_raw_model(engine: Any, *, rank: int) -> None:
     started = time.perf_counter()
     with autocast_context(engine.config.precision, engine.device):
         logits = raw_model(inputs)
-        # A bounded scalar objective is sufficient to compile the exact model
-        # backward kernels while avoiding any optimizer/scaler mutation.
-        objective = F.mse_loss(logits.float(), torch.zeros_like(logits, dtype=torch.float32))
+        # Backpropagating one vocabulary column reaches the entire decoder while
+        # avoiding an extra full-vocabulary FP32 allocation on a 16-GiB T4.
+        objective = logits[..., 0].float().mean()
     objective.backward()
     torch.cuda.synchronize(engine.device)
     engine.optimizer.zero_grad(set_to_none=True)
@@ -263,7 +262,7 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
         gradient_clipped = finite_gradient and grad_value > float(engine.config.max_grad_norm)
 
         # Fail/overflow is a global decision made before either optimizer can
-        # step.  This closes the asymmetric-overflow hole in the disposable
+        # step. This closes the asymmetric-overflow hole in the disposable
         # qualification harness.
         flags = torch.tensor(
             [int(not local_forward_finite), int(not finite_gradient)],
@@ -352,7 +351,6 @@ def _distributed_train_step(engine: Any, batch: Any) -> Any:
 
 
 def _install_pinned_trainer_ddp(*, rank: int, local_rank: int, world_size: int) -> Any:
-    import torch
     import torch.distributed as dist
     from torch.nn.parallel import DistributedDataParallel
     import trainer.cli as trainer_cli
