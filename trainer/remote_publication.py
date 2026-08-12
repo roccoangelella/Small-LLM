@@ -78,7 +78,7 @@ def configure_remote_publication(args: object) -> RemotePublication | None:
             create_bucket=bool(getattr(args, "remote_create_bucket", False)),
         )
     else:
-        repo_id = args.remote_checkpoint_repo or os.environ.get("SMALL_LLM_HF_REPO_ID")
+        repo_id = getattr(args, "remote_checkpoint_repo", None) or os.environ.get("SMALL_LLM_HF_REPO_ID")
         if not repo_id:
             raise SystemExit(
                 "set --remote-checkpoint-repo, --remote-checkpoint-bucket, or "
@@ -88,8 +88,8 @@ def configure_remote_publication(args: object) -> RemotePublication | None:
             str(repo_id),
             token=token,
             private=True,
-            revision=args.remote_checkpoint_revision,
-            create_repo=bool(args.remote_create_repo),
+            revision=getattr(args, "remote_checkpoint_revision", None),
+            create_repo=bool(getattr(args, "remote_create_repo", False)),
         )
     publisher = TwoPhaseCheckpointPublisher(
         store,
