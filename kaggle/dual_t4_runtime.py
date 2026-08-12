@@ -14,6 +14,10 @@ from typing import Any, Sequence
 REPO = Path(__file__).resolve().parents[1]
 DDP_ENTRYPOINT = REPO / "kaggle" / "dual_t4_train.py"
 WORLD_SIZE = 2
+TORCH_VERSION = "2.10.0"
+TRITON_VERSION = "3.6.0"
+FLA_VERSION = "0.5.2"
+CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
 
 
 def _trainer_module_index(command: Sequence[str]) -> int:
@@ -35,10 +39,33 @@ def _append_wandb_tag(command: list[str], tag: str) -> list[str]:
     return command
 
 
+def _pin_qualified_runtime(command: list[str], python_index: int) -> list[str]:
+    """Constrain the online subprocess to the runtime used by the T4 qualification."""
+
+    requirements = [
+        "--with",
+        f"torch=={TORCH_VERSION}",
+        "--with",
+        f"triton=={TRITON_VERSION}",
+        "--with",
+        f"fla-core=={FLA_VERSION}",
+        "--with",
+        "packaging>=24",
+        "--with",
+        "numpy>=2.1,<3",
+        "--extra-index-url",
+        CUDA_WHEEL_INDEX,
+    ]
+    command[python_index:python_index] = requirements
+    return command
+
+
 def distributed_trainer_command(command: Sequence[str], *, worktree: Path) -> list[str]:
     """Replace only the Python trainer entrypoint; preserve every trainer flag."""
 
     rewritten = list(command)
+    index = _trainer_module_index(rewritten)
+    rewritten = _pin_qualified_runtime(rewritten, index)
     index = _trainer_module_index(rewritten)
     replacement = [
         "python",
@@ -83,4 +110,13 @@ def install(runtime: Any) -> None:
     runtime._KAGGLE_DUAL_T4_INSTALLED = True
 
 
-__all__ = ["DDP_ENTRYPOINT", "WORLD_SIZE", "distributed_trainer_command", "install"]
+__all__ = [
+    "CUDA_WHEEL_INDEX",
+    "DDP_ENTRYPOINT",
+    "FLA_VERSION",
+    "TORCH_VERSION",
+    "TRITON_VERSION",
+    "WORLD_SIZE",
+    "distributed_trainer_command",
+    "install",
+]
