@@ -52,6 +52,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0049-make-modal-launch-logs-concise-and-unambiguous.md`](0049-make-modal-launch-logs-concise-and-unambiguous.md)
 - [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md)
 - [`0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md`](0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md)
+- [`0052-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md`](0052-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md)
 
 ## Superseded ADRs
 
