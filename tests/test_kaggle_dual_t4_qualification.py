@@ -12,12 +12,21 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "kaggle" / "qualify_dual_t4.py"
+KAGGLE = ROOT / "kaggle"
+if str(KAGGLE) not in sys.path:
+    sys.path.insert(0, str(KAGGLE))
+
+SCRIPT = KAGGLE / "qualify_dual_t4.py"
 SPEC = importlib.util.spec_from_file_location("qualify_dual_t4", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = qualification
 SPEC.loader.exec_module(qualification)
+
+LAUNCH_SPEC = importlib.util.spec_from_file_location("dual_t4_kaggle_launch", KAGGLE / "launch.py")
+assert LAUNCH_SPEC is not None and LAUNCH_SPEC.loader is not None
+kaggle_launch = importlib.util.module_from_spec(LAUNCH_SPEC)
+LAUNCH_SPEC.loader.exec_module(kaggle_launch)
 
 
 class DualT4QualificationContractTests(unittest.TestCase):
@@ -81,6 +90,20 @@ class DualT4QualificationContractTests(unittest.TestCase):
         self.assertTrue(any(item.startswith("fla-core==0.5.2") for item in model_extra))
         self.assertTrue(any(item.startswith("packaging>=") for item in model_extra))
         self.assertTrue(any(item.startswith("numpy>=") for item in model_extra))
+
+    def test_qualification_runtime_is_pinned_to_qualified_t4_stack(self) -> None:
+        args = kaggle_launch.build_parser().parse_args(
+            ["qualify-dual-t4", "--model", "20M", "--tokens", "2B"]
+        )
+        command = kaggle_launch._dual_t4_uv_command(args, "/usr/bin/uv")
+        self.assertIn("--no-project", command)
+        self.assertIn("torch==2.10.0", command)
+        self.assertIn("triton==3.6.0", command)
+        self.assertIn("fla-core==0.5.2", command)
+        self.assertIn("packaging>=24", command)
+        self.assertIn("numpy>=2.1,<3", command)
+        self.assertIn("https://download.pytorch.org/whl/cu128", command)
+        self.assertIn(str(KAGGLE / "qualify_dual_t4_watchdog.py"), command)
 
     def test_canonical_launcher_exposes_qualification_dry_run(self) -> None:
         result = subprocess.run(
