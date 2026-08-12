@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -16,7 +18,11 @@ from dataset.incremental_frontier import (
     publish_run_contract,
     stage_incremental_window,
 )
-from dataset.incremental_stage import verify_incremental_stage
+from dataset.incremental_stage import (
+    stage_incremental_window_when_ready,
+    verify_incremental_stage,
+)
+from dataset.production.incremental_builder import _durability_for_committed_state
 
 
 class FakeStore:
@@ -108,6 +114,35 @@ def _durability(entries: list[dict[str, object]]) -> dict[str, object]:
         "schema_hash": "b" * 64,
         "shards": entries,
     }
+
+
+def _ready_store() -> tuple[FakeStore, dict[str, object]]:
+    store = FakeStore()
+    contract = _contract()
+    publish_run_contract(store, run_id=str(contract["run_id"]), contract=contract)
+    entries: list[dict[str, object]] = []
+    for index, first in enumerate((0, 4094, 8188)):
+        payload = bytes([index + 1]) * 64
+        entry = _entry(
+            f"train/train-{index:06d}.bin",
+            "train",
+            first,
+            first + 4093,
+            payload,
+        )
+        entries.append(entry)
+        store.blobs[store.object_key(str(contract["run_id"]), str(entry["filename"]))] = payload
+    validation_payload = b"v" * 64
+    validation = _entry("validation/validation-000000.bin", "validation", 0, 15, validation_payload)
+    entries.append(validation)
+    store.blobs[store.object_key(str(contract["run_id"]), str(validation["filename"]))] = validation_payload
+    publish_frontier(
+        store,
+        run_id=str(contract["run_id"]),
+        contract=contract,
+        durability_manifest=_durability(entries),
+    )
+    return store, contract
 
 
 def test_10b_contract_freezes_exact_horizon_and_standard_wsd() -> None:
@@ -210,32 +245,7 @@ def test_consumer_manifest_identity_does_not_grow_with_frontier() -> None:
 
 
 def test_cpu_stage_downloads_current_plus_successor_not_complete_frontier(tmp_path: Path) -> None:
-    store = FakeStore()
-    contract = _contract()
-    publish_run_contract(store, run_id=str(contract["run_id"]), contract=contract)
-    entries: list[dict[str, object]] = []
-    for index, first in enumerate((0, 4094, 8188)):
-        payload = bytes([index + 1]) * 64
-        entry = _entry(
-            f"train/train-{index:06d}.bin",
-            "train",
-            first,
-            first + 4093,
-            payload,
-        )
-        entries.append(entry)
-        store.blobs[store.object_key(str(contract["run_id"]), str(entry["filename"]))] = payload
-    validation_payload = b"v" * 64
-    validation = _entry("validation/validation-000000.bin", "validation", 0, 15, validation_payload)
-    entries.append(validation)
-    store.blobs[store.object_key(str(contract["run_id"]), str(validation["filename"]))] = validation_payload
-    publish_frontier(
-        store,
-        run_id=str(contract["run_id"]),
-        contract=contract,
-        durability_manifest=_durability(entries),
-    )
-
+    store, contract = _ready_store()
     staged = stage_incremental_window(
         store=store,
         run_id=str(contract["run_id"]),
@@ -260,4 +270,57 @@ def test_cpu_stage_downloads_current_plus_successor_not_complete_frontier(tmp_pa
     assert verification["staged_train_shards"] == [
         "train/train-000000.bin",
         "train/train-000001.bin",
+    ]
+
+
+def test_cpu_stage_waits_for_producer_bootstrap_without_hiding_integrity_errors(tmp_path: Path) -> None:
+    ready, contract = _ready_store()
+    store = FakeStore()
+
+    def publish_later() -> None:
+        time.sleep(0.01)
+        store.json = copy.deepcopy(ready.json)
+        store.blobs = copy.deepcopy(ready.blobs)
+
+    thread = threading.Thread(target=publish_later)
+    thread.start()
+    try:
+        staged = stage_incremental_window_when_ready(
+            store=store,
+            run_id=str(contract["run_id"]),
+            destination=tmp_path,
+            start_block_id=0,
+            timeout_seconds=1.0,
+            poll_seconds=0.002,
+        )
+    finally:
+        thread.join()
+    assert staged["status"] == "ready"
+
+    corrupt = FakeStore()
+    bad_contract = copy.deepcopy(contract)
+    bad_contract["contract_sha256"] = "0" * 64
+    corrupt._write_json(corrupt.object_key(str(contract["run_id"]), "run_contract.json"), bad_contract)
+    with pytest.raises(RuntimeError, match="hash is invalid"):
+        stage_incremental_window_when_ready(
+            store=corrupt,
+            run_id=str(contract["run_id"]),
+            destination=tmp_path / "bad",
+            start_block_id=0,
+            timeout_seconds=0.1,
+            poll_seconds=0.001,
+        )
+
+
+def test_uncommitted_remote_shards_are_not_frontier_visible() -> None:
+    train0 = _entry("train/train-000000.bin", "train", 0, 4093, b"0" * 64)
+    train1 = _entry("train/train-000001.bin", "train", 4094, 8187, b"1" * 64)
+    validation = _entry("validation/validation-000000.bin", "validation", 0, 15, b"v" * 64)
+    durability = _durability([train0, train1, validation])
+    committed_state = {"finalized_shards": [train0, validation]}
+
+    filtered = _durability_for_committed_state(durability, committed_state)
+    assert [row["filename"] for row in filtered["shards"]] == [
+        "train/train-000000.bin",
+        "validation/validation-000000.bin",
     ]
