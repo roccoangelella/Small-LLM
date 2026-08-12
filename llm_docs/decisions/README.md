@@ -41,7 +41,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0034-make-sft-data-publication-machine-agnostic.md`](0034-make-sft-data-publication-machine-agnostic.md)
 - [`0035-retire-completed-fla-investigation-scripts-from-kaggle.md`](0035-retire-completed-fla-investigation-scripts-from-kaggle.md)
 - [`0036-add-local-completed-sft-chat-cli.md`](0036-add-local-completed-sft-chat-cli.md)
-- [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
+- [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile_tools-and_retire_one_off_qualification_code.md)
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
 - [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
 - [`0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md`](0041-use-block64-modal-corpus-and-probe-microbatch-16-32-48-64.md)
@@ -51,6 +51,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0048-verify-modal-dataset-in-active-workspace.md`](0048-verify-modal-dataset-in-active-workspace.md)
 - [`0049-make-modal-launch-logs-concise-and-unambiguous.md`](0049-make-modal-launch-logs-concise-and-unambiguous.md)
 - [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md)
+- [`0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md`](0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md)
 
 ## Superseded ADRs
 
