@@ -307,7 +307,18 @@ def _run_report(argv: Sequence[str]) -> int:
         )
         if args.output is not None:
             write_json_atomic(args.output, plan)
-        print(json.dumps(plan, indent=2, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "qualification_report": "written",
+                        "output": str(args.output),
+                        "profile": profile.key,
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(json.dumps(plan, indent=2, sort_keys=True))
         return 0
     except Exception as error:  # noqa: BLE001 - concise CLI failure boundary
         print(
