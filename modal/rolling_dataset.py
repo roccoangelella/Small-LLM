@@ -1,10 +1,10 @@
 """Modal-only orchestration for the HF rolling dataset transport.
 
-All dataset transport semantics live in :mod:`dataset`.  This module only binds
+All dataset transport semantics live in :mod:`dataset`. This module only binds
 those provider-neutral primitives to Modal checkpoint/cache Volumes and enforces
 the allocation order: resolve the next checkpoint block on CPU, download and
-verify that dataset shard on CPU, commit it to the cache Volume, and only then
-permit H100 dispatch.
+verify the required lead window on CPU, commit it, and only then permit H100
+dispatch.
 """
 
 from __future__ import annotations
@@ -53,9 +53,9 @@ def next_unconsumed_block(*, training_run_id: str, run_root: Path) -> dict[str, 
     if step == local_step and local_step > remote_step:
         source = "modal_volume"
     elif step == remote_step and remote_step > 0:
-        source = "hf_bucket"
+        source = "hf_remote"
     elif step > 0:
-        source = "modal_volume+hf_bucket"
+        source = "modal_volume+hf_remote"
     return {
         "completed_steps": step,
         "next_block_id": step,
@@ -73,10 +73,9 @@ def stage_for_h100(
     cache_root: Path,
     run_root: Path,
 ) -> dict[str, object]:
-    """Download+SHA256-verify the checkpoint-aligned shard before GPU allocation."""
+    """Download+SHA256-verify the checkpoint-aligned lead window before GPU allocation."""
 
     from dataset.qualification import get_profile
-    from dataset.rolling_cache import stage_dataset_window
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
 
     model_preset, token_preset = resolve_presets(model, tokens)
@@ -95,13 +94,25 @@ def stage_for_h100(
         create_bucket=False,
     )
     destination = cache_root / "datasets" / profile.run_id
-    staged = stage_dataset_window(
-        store=store,
-        run_id=profile.run_id,
-        destination=destination,
-        start_block_id=int(cursor["next_block_id"]),
-        train_shards=1,
-    )
+    if profile.incremental_frontier:
+        from dataset.incremental_frontier import stage_incremental_window
+
+        staged = stage_incremental_window(
+            store=store,
+            run_id=profile.run_id,
+            destination=destination,
+            start_block_id=int(cursor["next_block_id"]),
+        )
+    else:
+        from dataset.rolling_cache import stage_dataset_window
+
+        staged = stage_dataset_window(
+            store=store,
+            run_id=profile.run_id,
+            destination=destination,
+            start_block_id=int(cursor["next_block_id"]),
+            train_shards=1,
+        )
     result = {
         **staged,
         **cursor,
@@ -109,6 +120,7 @@ def stage_for_h100(
         "dataset_profile": token_preset.dataset_profile,
         "dataset_run_id": profile.run_id,
         "dataset_bucket_id": bucket_id,
+        "incremental_frontier": bool(profile.incremental_frontier),
         "h100_dispatch_allowed": staged.get("status") == "ready",
     }
     print(json.dumps({"modal_cpu_dataset_stage": result}, sort_keys=True), flush=True)
@@ -123,27 +135,32 @@ def _preauthorize_existing_runtime_verification(
     bucket_id: str,
     dataset_run_id: str,
 ) -> dict[str, object]:
-    """Recheck CPU staging and write the marker consumed by the legacy Modal runtime.
+    """Re-hash CPU staging and write the marker consumed by the base Modal runtime."""
 
-    The dataset verifier hashes the checkpoint-aligned train shard and all
-    validation shards again from the shared Modal cache Volume. No network fetch
-    happens here; the expensive first shard download was completed by CPU before
-    this H100 function was spawned.
-    """
+    marker = base_runtime._json(dataset / "rolling_cache_stage.json")
+    if marker.get("transport") == "hf-bucket-incremental-frontier-v1":
+        from dataset.incremental_stage import verify_incremental_stage
 
-    from dataset.rolling_cache import verify_staged_dataset
+        verification = verify_incremental_stage(
+            destination=dataset,
+            bucket_id=bucket_id,
+            run_id=dataset_run_id,
+            required_train_block=required_block,
+        )
+    else:
+        from dataset.rolling_cache import verify_staged_dataset
 
-    verification = verify_staged_dataset(
-        destination=dataset,
-        bucket_id=bucket_id,
-        run_id=dataset_run_id,
-        required_train_block=required_block,
-    )
+        verification = verify_staged_dataset(
+            destination=dataset,
+            bucket_id=bucket_id,
+            run_id=dataset_run_id,
+            required_train_block=required_block,
+        )
     identity = {
         "dataset": str(dataset),
         "manifest_sha256": base_runtime._sha256(dataset / "manifest.json"),
         # Match base runtime's local identity exactly so it does not attempt a
-        # whole-dataset full-scan that is intentionally impossible here.
+        # whole-dataset full scan that is intentionally impossible here.
         "transport": "modal_volume",
     }
     base_runtime._write_json(
@@ -153,7 +170,7 @@ def _preauthorize_existing_runtime_verification(
             "datasets_inspected": [
                 {
                     "root": str(dataset),
-                    "transport": "hf_rolling_shards",
+                    "transport": marker.get("transport"),
                     "cpu_staged": True,
                     "required_train_block": required_block,
                     "verification": verification,
@@ -162,6 +179,57 @@ def _preauthorize_existing_runtime_verification(
         },
     )
     return verification
+
+
+def _install_incremental_plan_adapter(dataset: Path, *, profile_key: str) -> None:
+    """Make the base Modal runtime use the frozen pre-production trainer horizon."""
+
+    contract_path = dataset / "run_contract.json"
+    if not contract_path.is_file():
+        return
+    contract = base_runtime._json(contract_path)
+    trainer = contract.get("trainer")
+    if not isinstance(trainer, Mapping):
+        raise RuntimeError("incremental dataset run contract has no trainer plan")
+    original = base_runtime._derive_plan
+    dataset_resolved = dataset.resolve()
+
+    def derive_incremental(
+        repo_root: Path,
+        dataset_arg: Path,
+        requested_profile: str,
+        output: Path,
+        log_path: Path,
+    ) -> dict[str, Any]:
+        if Path(dataset_arg).resolve() != dataset_resolved:
+            return original(repo_root, dataset_arg, requested_profile, output, log_path)
+        if requested_profile != profile_key:
+            raise RuntimeError("incremental dataset profile changed during Modal planning")
+        plan: dict[str, Any] = {
+            "version": 1,
+            "qualification_profile": profile_key,
+            "incremental_frontier": True,
+            "contract_sha256": contract.get("contract_sha256"),
+            "context_length": contract.get("context_length"),
+            "sequences_per_block": contract.get("sequences_per_block"),
+            "target_shard_bytes": contract.get("target_shard_bytes"),
+            "train": {
+                "block_count": contract.get("planned_train_blocks"),
+                "target_tokens": contract.get("planned_train_target_tokens"),
+            },
+            "validation": {"block_count": trainer.get("validation_blocks")},
+            "trainer": dict(trainer),
+            "identity": {
+                "manifest_path": str(dataset / "manifest.json"),
+                "run_contract_path": str(contract_path),
+            },
+        }
+        base_runtime._write_json(output, plan)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return plan
+
+    base_runtime._derive_plan = derive_incremental
 
 
 def run_staged_training(
@@ -226,6 +294,8 @@ def run_staged_training(
         bucket_id=bucket_id,
         dataset_run_id=profile.run_id,
     )
+    if profile.incremental_frontier:
+        _install_incremental_plan_adapter(dataset_resolved, profile_key=token_preset.dataset_profile)
 
     os.environ["SMALL_LLM_MODAL_ROLLING_DATASET"] = "1"
     os.environ["SMALL_LLM_DATASET_SHARD_BUCKET"] = bucket_id
@@ -251,20 +321,26 @@ def run_staged_training(
     if runtime_path.is_file():
         contract = base_runtime._json(runtime_path)
         contract.update(
-            dataset_transport="hf_rolling_shards",
+            dataset_transport=(
+                "hf_incremental_frontier"
+                if profile.incremental_frontier
+                else "hf_rolling_shards"
+            ),
             dataset_bucket_id=bucket_id,
             dataset_prefetch_shards=1,
             cpu_staged_required_block=required_block,
+            producer_may_run_concurrently=bool(profile.incremental_frontier),
         )
         base_runtime._write_json(runtime_path, contract)
         getattr(run_volume, "commit")()
     result = dict(result)
     result["dataset_transport"] = {
-        "kind": "hf_rolling_shards",
+        "kind": "hf_incremental_frontier" if profile.incremental_frontier else "hf_rolling_shards",
         "bucket": bucket_id,
         "prefetch_shards": 1,
         "cpu_staged_required_block": required_block,
         "cpu_stage_verification": verification,
+        "producer_may_run_concurrently": bool(profile.incremental_frontier),
     }
     return result
 
