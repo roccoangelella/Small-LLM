@@ -107,7 +107,7 @@ class DualT4QualificationContractTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["action"], "qualify-dual-t4")
-        self.assertEqual(payload["runtime"], "kaggle/qualify_dual_t4.py")
+        self.assertEqual(payload["runtime"], "kaggle/qualify_dual_t4_watchdog.py")
         self.assertEqual(payload["dataset_run_id"], "20m-2b-dataset-001")
         self.assertEqual(payload["resume"], "not_applicable")
         self.assertEqual(payload["arguments"]["measure_blocks"], 3)
