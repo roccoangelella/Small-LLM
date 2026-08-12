@@ -71,7 +71,7 @@ _BASE = [
 
 
 class TrainerRemotePublicationTests(unittest.TestCase):
-    def _objects(self, *, fail: bool = False):
+    def _objects(self, *, fail: bool = False, rolling: bool = False):
         engine = _Engine()
         session = _Session(engine)
         coordinator = _Coordinator(session, fail=fail)
@@ -83,6 +83,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
             publisher=object(),
             drive_manifest={"version": 1, "run_id": "run", "shards": []},
             every_steps=2,
+            rolling_latest_only=rolling,
         )
         setup_result = (object(), trainer_config, engine, session, coordinator)
         return session, coordinator, remote, setup_result
@@ -114,6 +115,26 @@ class TrainerRemotePublicationTests(unittest.TestCase):
         self.assertEqual(session.saved, ["step-00000002"])
         self.assertEqual(coordinator.published, ["step-00000002"])
 
+    def test_rolling_mode_cleans_after_each_verified_publication(self) -> None:
+        session, coordinator, remote, setup_result = self._objects(rolling=True)
+        cleanup_calls: list[str] = []
+
+        def cleanup(_remote, *, checkpoint_id: str):
+            cleanup_calls.append(checkpoint_id)
+            return {"status": "pruned_and_squashed", "checkpoint_id": checkpoint_id}
+
+        with (
+            patch("trainer.cli.setup", return_value=setup_result),
+            patch("trainer.cli.configure_remote_publication", return_value=remote),
+            patch("trainer.cli.cleanup_remote_publication", side_effect=cleanup),
+            patch("trainer.cli.torch.cuda.is_available", return_value=False),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(main(list(_BASE) + ["--remote-rolling-latest-only"]), 0)
+
+        self.assertEqual(coordinator.published, ["step-00000002", "step-00000003"])
+        self.assertEqual(cleanup_calls, ["step-00000002", "step-00000003"])
+
     def test_configuration_uses_verified_manifest_and_environment_repo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             manifest_path = Path(tmp) / "drive_manifest.json"
@@ -130,6 +151,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
+                remote_rolling_latest_only=True,
             )
             store = object()
             publisher = object()
@@ -141,8 +163,10 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 configured = configure_remote_publication(args)
 
             self.assertIsNotNone(configured)
+            assert configured is not None
             self.assertEqual(configured.every_steps, 50)
             self.assertEqual(configured.drive_manifest, manifest)
+            self.assertTrue(configured.rolling_latest_only)
             store_type.assert_called_once_with(
                 "owner/private",
                 token=None,
@@ -172,6 +196,7 @@ class TrainerRemotePublicationTests(unittest.TestCase):
                 remote_token_env="SMALL_LLM_TEST_UNUSED_TOKEN",
                 remote_checkpoint_revision=None,
                 remote_create_repo=False,
+                remote_rolling_latest_only=False,
             )
             with self.assertRaisesRegex(SystemExit, "not verified remote_durable"):
                 configure_remote_publication(args)
