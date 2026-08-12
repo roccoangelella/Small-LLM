@@ -10,15 +10,18 @@ import sys
 from pathlib import Path
 
 from dataset import config
+from dataset.incremental_frontier import publish_frontier
 from dataset.src.bytesource import list_source_files, make_http_reader
 from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
-from dataset.src.remote import RemoteShardStore
-from dataset.src.storage import write_json_atomic
+from dataset.src.remote import RemoteShardStore, sha256_path
+from dataset.src.storage import read_json, write_json_atomic
 from dataset.src.streaming import StreamCacheConfig
 from dataset.src.workplan import build_work_plan, load_work_plan, save_work_plan
 
 from .builder import build_production_cache
+from .incremental_builder import build_incremental_production_cache
 from .policy import DEFAULT_CHECKPOINT_SOURCE_TOKENS, ProductionPolicy
+from .remote import DURABILITY_MANIFEST_FILENAME
 from .safety import preflight_disk, preflight_remote_shard_disk
 
 
@@ -49,7 +52,7 @@ def _builder_resume_mode(output_dir: Path) -> bool:
         raise RuntimeError(
             f"resume requested without {config.PROGRESS_FILENAME}, but a manifest exists in {output_dir}"
         )
-    allowed = {config.WORK_PLAN_FILENAME}
+    allowed = {config.WORK_PLAN_FILENAME, "run_contract.json"}
     present = {path.name for path in output_dir.iterdir()} if output_dir.is_dir() else set()
     unexpected = sorted(present - allowed)
     if unexpected:
@@ -78,6 +81,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--evict-remote-shards",
         action="store_true",
         help="Evict finalized local shards only after verified HF-bucket durability and progress commit.",
+    )
+    parser.add_argument(
+        "--incremental-frontier",
+        action="store_true",
+        help="Publish a monotonic READY-shard frontier so training may overlap dataset production.",
+    )
+    parser.add_argument(
+        "--nominal-training-tokens",
+        type=int,
+        default=None,
+        help="Frozen training-target horizon for incremental production.",
+    )
+    parser.add_argument(
+        "--training-validation-blocks",
+        type=int,
+        default=16,
+        help="Number of deterministic validation blocks frozen before incremental GPU dispatch.",
     )
     parser.add_argument(
         "--hf-bucket-id",
@@ -126,6 +146,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.allow_local_only and args.evict_remote_shards:
             raise RuntimeError("--evict-remote-shards requires HF bucket durability")
+        if args.incremental_frontier:
+            if args.allow_local_only or not args.evict_remote_shards:
+                raise RuntimeError(
+                    "--incremental-frontier requires HF durability plus --evict-remote-shards"
+                )
+            if args.nominal_training_tokens is None or args.nominal_training_tokens <= 0:
+                raise RuntimeError("--incremental-frontier requires positive --nominal-training-tokens")
+            if args.training_validation_blocks <= 0:
+                raise RuntimeError("--training-validation-blocks must be positive")
+        elif args.nominal_training_tokens is not None:
+            raise RuntimeError("--nominal-training-tokens requires --incremental-frontier")
 
         weights = _load_weights(args.weights_file)
         policy = ProductionPolicy(
@@ -214,27 +245,46 @@ def main(argv: list[str] | None = None) -> int:
             )
             remote_store = hf_store
 
-        manifest = build_production_cache(
-            output_dir,
-            stream,
-            policy,
-            plan,
-            lambda source: make_http_reader(
-                source,
-                config.DATASET_REPOSITORY,
-                config.DATASET_REVISION,
-            ),
-            remote_store=remote_store,
-            resume=builder_resume,
-            simulate_crash_after_documents=args.simulate_crash_after_documents,
-            evict_remote_shards=args.evict_remote_shards,
+        reader_factory = lambda source: make_http_reader(  # noqa: E731
+            source,
+            config.DATASET_REPOSITORY,
+            config.DATASET_REVISION,
         )
+        if args.incremental_frontier:
+            assert remote_store is not None and hf_store is not None
+            manifest = build_incremental_production_cache(
+                output_dir,
+                stream,
+                policy,
+                plan,
+                reader_factory,
+                remote_store=remote_store,
+                frontier_store=hf_store,
+                nominal_training_tokens=int(args.nominal_training_tokens),
+                training_validation_blocks=args.training_validation_blocks,
+                resume=builder_resume,
+                simulate_crash_after_documents=args.simulate_crash_after_documents,
+            )
+        else:
+            manifest = build_production_cache(
+                output_dir,
+                stream,
+                policy,
+                plan,
+                reader_factory,
+                remote_store=remote_store,
+                resume=builder_resume,
+                simulate_crash_after_documents=args.simulate_crash_after_documents,
+                evict_remote_shards=args.evict_remote_shards,
+            )
+
         manifest["sequences_per_block"] = stream.sequences_per_block
         manifest["target_shard_bytes"] = stream.target_shard_bytes
         manifest["remote_transport"] = {
             "backend": "hf_bucket" if not args.allow_local_only else "local_only",
             "evict_local_finalized_shards": bool(args.evict_remote_shards),
             "hf_bucket_id": args.hf_bucket_id if hf_store is not None else None,
+            "incremental_frontier": bool(args.incremental_frontier),
         }
         manifest_path = output_dir / config.MANIFEST_FILENAME
         write_json_atomic(manifest_path, manifest)
@@ -249,6 +299,19 @@ def main(argv: list[str] | None = None) -> int:
                 hf_store.bucket_id,
                 ready.get("target_reached"),
             )
+            if args.incremental_frontier:
+                contract = read_json(output_dir / "run_contract.json")
+                durable = read_json(output_dir / DURABILITY_MANIFEST_FILENAME)
+                if not isinstance(contract, dict) or not isinstance(durable, dict):
+                    raise RuntimeError("incremental finalization is missing contract or durability state")
+                publish_frontier(
+                    hf_store,
+                    run_id=policy.run_id,
+                    contract=contract,
+                    durability_manifest=durable,
+                    producer_complete=True,
+                    final_manifest_sha256=sha256_path(manifest_path),
+                )
         print(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as error:  # noqa: BLE001 - concise CLI failure boundary
