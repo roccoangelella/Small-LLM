@@ -13,8 +13,6 @@ REMOTE_REPO = Path("/root/small-llm")
 REMOTE_MODAL = REMOTE_REPO / "modal"
 _SOURCE_FILE = Path(__file__).resolve()
 if _SOURCE_FILE.parent == Path("/root") and (REMOTE_MODAL / "profiles.py").is_file():
-    # Modal re-imports this script as /root/launch.py inside the container.
-    # At that point the repository source mount already lives at REMOTE_REPO.
     LOCAL_REPO = REMOTE_REPO
     LOCAL_MODAL = REMOTE_MODAL
 else:
@@ -63,9 +61,6 @@ IMAGE = (
             "PYTHONUNBUFFERED": "1",
         }
     )
-    # Modal 1.x only auto-includes the defining launch.py module.  profiles.py
-    # is a sibling helper, so expose it explicitly at /root/profiles.py where
-    # the remotely re-imported /root/launch.py can resolve `from profiles ...`.
     .add_local_python_source("profiles")
     .add_local_dir(
         LOCAL_REPO,
@@ -106,20 +101,19 @@ def remote_import_preflight() -> dict[str, object]:
 
     profiles_path = Path("/root/profiles.py")
     runtime_path = REMOTE_MODAL / "runtime.py"
+    rolling_path = REMOTE_MODAL / "rolling_dataset.py"
     if not profiles_path.is_file():
         raise RuntimeError(f"Modal image is missing explicitly packaged profiles helper: {profiles_path}")
     if not runtime_path.is_file():
         raise RuntimeError(f"Modal image is missing repository runtime: {runtime_path}")
+    if not rolling_path.is_file():
+        raise RuntimeError(f"Modal image is missing rolling-dataset runtime: {rolling_path}")
     sys.path.insert(0, str(REMOTE_MODAL))
     import profiles as remote_profiles  # noqa: PLC0415
     import runtime as remote_runtime  # noqa: F401, PLC0415
+    import rolling_dataset as remote_rolling  # noqa: F401, PLC0415
     from dataset.src.remote import ensure_safe_directory  # noqa: PLC0415
 
-    # Modal may expose a Volume mount through a symlink-like facade at /runs.
-    # Resolve that trusted mount once, then verify the generic checkpoint path
-    # guard accepts a child under the canonical real directory.  The H100 path
-    # uses this same canonical root, so untrusted download helpers never need
-    # their global symlink protections weakened.
     run_root = RUN_ROOT.resolve(strict=True)
     if not run_root.is_dir() or run_root.is_symlink():
         raise RuntimeError(f"Modal run Volume did not resolve to a real directory: {run_root}")
@@ -131,8 +125,35 @@ def remote_import_preflight() -> dict[str, object]:
         "status": "ok",
         "profiles": str(Path(remote_profiles.__file__).resolve()),
         "runtime": str(runtime_path),
+        "rolling_runtime": str(rolling_path),
         "run_root": str(run_root),
     }
+
+
+@app.function(
+    timeout=2 * 60 * 60,
+    retries=modal.Retries(max_retries=3, initial_delay=1.0),
+    single_use_containers=True,
+    secrets=[TRAINING_SECRET],
+    volumes={
+        str(RUN_ROOT): RUN_VOLUME.with_mount_options(read_only=True),
+        str(CACHE_ROOT): CACHE_VOLUME,
+    },
+)
+def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
+    """CPU-only gate: checkpoint-align, download, hash, then commit the required shard."""
+
+    sys.path.insert(0, str(REMOTE_MODAL))
+    from rolling_dataset import stage_for_h100  # noqa: PLC0415
+
+    result = stage_for_h100(
+        model=model,
+        tokens=tokens,
+        cache_root=CACHE_ROOT,
+        run_root=RUN_ROOT,
+    )
+    getattr(CACHE_VOLUME, "commit")()
+    return result
 
 
 @app.function(
@@ -156,6 +177,8 @@ def train_remote(
     microbatch_size: int = 0,
     precision: str = DEFAULT_PRECISION,
 ) -> dict[str, object]:
+    """Existing Modal-volume dataset path; preserved unchanged for current runs."""
+
     resolved_run_root = RUN_ROOT.resolve(strict=True)
     _stage(
         "remote_runtime_start",
@@ -165,7 +188,7 @@ def train_remote(
         run_root=str(resolved_run_root),
     )
     sys.path.insert(0, str(REMOTE_MODAL))
-    from runtime import run_training
+    from runtime import run_training  # noqa: PLC0415
 
     result = run_training(
         model=model,
@@ -184,6 +207,64 @@ def train_remote(
     )
     _stage(
         "remote_runtime_complete",
+        status=result.get("status"),
+        run_id=result.get("run_id"),
+        completed_steps=result.get("completed_steps"),
+    )
+    return result
+
+
+@app.function(
+    gpu=DEFAULT_GPU,
+    timeout=24 * 60 * 60,
+    # Deliberately no automatic function retry. A new attempt must return to
+    # the CPU staging gate so the checkpoint-aligned shard is ready first.
+    single_use_containers=True,
+    secrets=[TRAINING_SECRET],
+    volumes={
+        str(RUN_ROOT): RUN_VOLUME,
+        str(CACHE_ROOT): CACHE_VOLUME,
+    },
+)
+def train_rolling_remote(
+    model: str,
+    tokens: str,
+    source_commit: str,
+    dataset_dir: str,
+    max_steps_this_session: int = 0,
+    microbatch_size: int = 0,
+    precision: str = DEFAULT_PRECISION,
+) -> dict[str, object]:
+    """H100 path entered only after the CPU rolling-dataset gate succeeded."""
+
+    resolved_run_root = RUN_ROOT.resolve(strict=True)
+    _stage(
+        "rolling_remote_runtime_start",
+        model=model,
+        tokens=tokens,
+        source_commit=source_commit,
+        dataset_dir=dataset_dir,
+        run_root=str(resolved_run_root),
+    )
+    sys.path.insert(0, str(REMOTE_MODAL))
+    from rolling_dataset import run_staged_training  # noqa: PLC0415
+
+    result = run_staged_training(
+        model=model,
+        tokens=tokens,
+        source_commit=source_commit,
+        dataset_dir=dataset_dir,
+        max_steps_this_session=max_steps_this_session,
+        microbatch_size=microbatch_size,
+        precision=precision,
+        repo_root=REMOTE_REPO,
+        run_root=resolved_run_root,
+        cache_root=CACHE_ROOT,
+        run_volume=RUN_VOLUME,
+        cache_volume=CACHE_VOLUME,
+    )
+    _stage(
+        "rolling_remote_runtime_complete",
         status=result.get("status"),
         run_id=result.get("run_id"),
         completed_steps=result.get("completed_steps"),
@@ -211,6 +292,10 @@ def main(
         raise ValueError("max-steps-this-session cannot be negative")
     if precision != "fp16":
         raise ValueError("the first Modal production migration is frozen to fp16")
+    if token_preset.dataset_transport == "hf_rolling_shards" and dataset_dir:
+        raise ValueError(
+            "rolling HF datasets use the CPU-managed Modal cache path; do not supply --dataset-dir"
+        )
     source_commit = _local_source_commit()
     payload = {
         "action": "train",
@@ -219,6 +304,7 @@ def main(
         "tokens": token_preset.label,
         "model_size": model_preset.trainer_size,
         "dataset_profile": token_preset.dataset_profile,
+        "dataset_transport": token_preset.dataset_transport,
         "run_id": canonical_run_id(model_preset, token_preset),
         "gpu": gpu,
         "microbatch_size": (
@@ -228,7 +314,11 @@ def main(
         ),
         "precision": precision,
         "source_commit": source_commit,
-        "dataset_dir": dataset_dir or "auto-discover unique matching dataset",
+        "dataset_dir": (
+            "CPU-stage checkpoint-aligned HF shard"
+            if token_preset.dataset_transport == "hf_rolling_shards"
+            else dataset_dir or "auto-discover unique matching dataset"
+        ),
         "max_steps_this_session": max_steps_this_session or "remaining plan",
         "resume": "automatic_verified_modal_volume_then_hf_bucket",
     }
@@ -243,24 +333,73 @@ def main(
         status=preflight.get("status"),
         profiles=preflight.get("profiles"),
         runtime=preflight.get("runtime"),
+        rolling_runtime=preflight.get("rolling_runtime"),
         run_root=preflight.get("run_root"),
     )
+
+    resolved_dataset_dir = dataset_dir
+    if token_preset.dataset_transport == "hf_rolling_shards":
+        _stage(
+            "cpu_dataset_stage_start",
+            run_id=payload["run_id"],
+            dataset_profile=token_preset.dataset_profile,
+        )
+        staged = stage_rolling_dataset_remote.remote(model_preset.label, token_preset.label)
+        _stage(
+            "cpu_dataset_stage_complete",
+            status=staged.get("status"),
+            next_block_id=staged.get("next_block_id"),
+            dataset_dir=staged.get("dataset_dir"),
+            h100_dispatch_allowed=staged.get("h100_dispatch_allowed"),
+        )
+        if staged.get("status") == "training_complete":
+            result = {
+                "status": "already_complete_cpu_gate",
+                "run_id": payload["run_id"],
+                "completed_steps": staged.get("completed_steps"),
+                "dataset_transport": token_preset.dataset_transport,
+                "h100_allocated": False,
+            }
+            print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+            return
+        if staged.get("status") != "ready" or staged.get("h100_dispatch_allowed") is not True:
+            raise RuntimeError("CPU rolling-dataset stage did not authorize H100 dispatch")
+        remote_dataset_dir = staged.get("dataset_dir")
+        if not isinstance(remote_dataset_dir, str) or not remote_dataset_dir:
+            raise RuntimeError("CPU rolling-dataset stage returned no dataset directory")
+        resolved_dataset_dir = remote_dataset_dir
+
     _stage(
         "dispatch_remote_training",
         run_id=payload["run_id"],
         gpu=gpu,
+        dataset_transport=token_preset.dataset_transport,
     )
-    result = train_remote.with_options(gpu=gpu).spawn(
-        model_preset.label,
-        token_preset.label,
-        source_commit,
-        dataset_dir,
-        max_steps_this_session,
-        microbatch_size,
-        precision,
-    ).get()
+    if token_preset.dataset_transport == "hf_rolling_shards":
+        result = train_rolling_remote.with_options(gpu=gpu).spawn(
+            model_preset.label,
+            token_preset.label,
+            source_commit,
+            resolved_dataset_dir,
+            max_steps_this_session,
+            microbatch_size,
+            precision,
+        ).get()
+    else:
+        result = train_remote.with_options(gpu=gpu).spawn(
+            model_preset.label,
+            token_preset.label,
+            source_commit,
+            resolved_dataset_dir,
+            max_steps_this_session,
+            microbatch_size,
+            precision,
+        ).get()
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use: modal run --detach modal/launch.py --model 100M --tokens 2B")
+    raise SystemExit(
+        "Use: modal run --detach modal/launch.py --model 100M --tokens 2B "
+        "or --model 100M --tokens 10B"
+    )
