@@ -1,7 +1,7 @@
 """Concurrent-capable production builder for the 10B incremental shard frontier.
 
 The legacy production builder remains unchanged for already-qualified finite
-runs.  This path extends the same deterministic producer with one additional
+runs. This path extends the same deterministic producer with one additional
 contract: every durable checkpoint publishes a monotonic READY shard frontier,
 and source ingestion continues until both the frozen training-block horizon and
 the source-token target are satisfied.
@@ -51,6 +51,40 @@ from .safety import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _durability_for_committed_state(
+    durability_manifest: Mapping[str, object],
+    state: Mapping[str, object],
+) -> dict[str, object]:
+    """Restrict remote durability to shards named by the committed producer cursor.
+
+    Uploading/verifying a shard is allowed to get ahead of ``progress.json``.
+    Trainer visibility is not. This filter prevents an interrupted upload phase
+    from exposing bytes that the durable source cursor cannot deterministically
+    reproduce yet.
+    """
+
+    raw_state = state.get("finalized_shards")
+    raw_remote = durability_manifest.get("shards")
+    if not isinstance(raw_state, list) or not isinstance(raw_remote, list):
+        raise RuntimeError("incremental durability state has no shard inventory")
+    committed_names: list[str] = []
+    for row in raw_state:
+        if not isinstance(row, Mapping) or not isinstance(row.get("filename"), str):
+            raise RuntimeError("committed producer state contains malformed shard metadata")
+        committed_names.append(str(row["filename"]))
+    remote_by_name: dict[str, Mapping[str, object]] = {}
+    for row in raw_remote:
+        if not isinstance(row, Mapping) or not isinstance(row.get("filename"), str):
+            raise RuntimeError("remote durability manifest contains malformed shard metadata")
+        remote_by_name[str(row["filename"])] = row
+    missing = [name for name in committed_names if name not in remote_by_name]
+    if missing:
+        raise RuntimeError(f"committed producer shards are missing remote durability: {missing}")
+    result = dict(durability_manifest)
+    result["shards"] = [dict(remote_by_name[name]) for name in committed_names]
+    return result
 
 
 def build_incremental_production_cache(
@@ -130,12 +164,14 @@ def build_incremental_production_cache(
                 state,
                 durability_manifest=durable,
             )
-            # Reassert the remote frontier from the exact durable resume state.
+            # Frontier visibility is reconstructed only from shards referenced
+            # by the committed producer cursor. A remote upload may safely be
+            # ahead of that cursor, but cannot become READY until the next commit.
             publish_frontier(
                 frontier_store,
                 run_id=policy.run_id,
                 contract=contract,
-                durability_manifest=durable,
+                durability_manifest=_durability_for_committed_state(durable, state),
             )
         else:
             if progress_path.exists() or manifest_path.exists():
@@ -183,15 +219,17 @@ def build_incremental_production_cache(
                 configuration_hash=cfg_hash,
                 schema_hash=format_hash,
             )
+            committed_durable = _durability_for_committed_state(durable, state)
+            # Crash-consistency order is deliberate:
+            #   remote bytes verified -> producer cursor committed -> READY -> local eviction.
+            # A crash may leave READY behind progress, never ahead of it.
+            write_json_atomic(progress_path, state)
             publish_frontier(
                 frontier_store,
                 run_id=policy.run_id,
                 contract=contract,
-                durability_manifest=durable,
+                durability_manifest=committed_durable,
             )
-            # Producer progress is committed before local eviction.  Therefore
-            # every READY frontier entry is reconstructable after a crash.
-            write_json_atomic(progress_path, state)
             removed = _evict_verified_local_shards(
                 output_dir,
                 state=state,
@@ -368,15 +406,7 @@ def build_incremental_production_cache(
                     schema_hash=format_hash,
                     prune_unreferenced=True,
                 )
-                # Publish the last active-shard bytes as READY, but leave the
-                # frontier active until the CLI writes and read-back verifies the
-                # final enriched manifest and can bind its exact SHA-256.
-                publish_frontier(
-                    frontier_store,
-                    run_id=policy.run_id,
-                    contract=contract,
-                    durability_manifest=durable,
-                )
+                committed_durable = _durability_for_committed_state(durable, final_state)
                 write_json_atomic(manifest_path, manifest)
                 _validate_manifest_remote_coverage(manifest, durable)
                 _validate_remote_inventory(
@@ -384,7 +414,16 @@ def build_incremental_production_cache(
                     run_id=policy.run_id,
                     durability_manifest=durable,
                 )
+                # Commit final producer cursor before exposing the last active
+                # shard(s) as READY. CLI publication subsequently flips the
+                # frontier's producer_complete bit with the exact final-manifest hash.
                 write_json_atomic(progress_path, final_state)
+                publish_frontier(
+                    frontier_store,
+                    run_id=policy.run_id,
+                    contract=contract,
+                    durability_manifest=committed_durable,
+                )
                 _evict_verified_local_shards(
                     output_dir,
                     state=final_state,
@@ -407,4 +446,4 @@ def build_incremental_production_cache(
             producer.close()
 
 
-__all__ = ["build_incremental_production_cache"]
+__all__ = ["_durability_for_committed_state", "build_incremental_production_cache"]
