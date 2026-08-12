@@ -63,6 +63,20 @@ def positive_int(value: str) -> int:
     return parsed
 
 
+def nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("value must be non-negative")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _add_profile_selector(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", required=True, type=parse_quantity, metavar="SIZE")
     parser.add_argument("--tokens", required=True, type=parse_quantity, metavar="SIZE")
@@ -92,6 +106,17 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--kaggle-dataset-handle")
     publish.add_argument("--force-upload", action="store_true")
     publish.add_argument("--remote-ready-timeout-seconds", type=positive_int)
+
+    qualify = subparsers.add_parser(
+        "qualify-dual-t4",
+        help="compare exact-batch two-T4 DDP with the single-T4 20M/2B path",
+    )
+    _add_profile_selector(qualify)
+    qualify.add_argument("--dataset-dir")
+    qualify.add_argument("--warmup-blocks", type=nonnegative_int)
+    qualify.add_argument("--measure-blocks", type=positive_int)
+    qualify.add_argument("--minimum-speedup", type=positive_float)
+    qualify.add_argument("--output")
 
     subparsers.add_parser("profiles", help="list registered profiles")
     return parser
@@ -125,6 +150,10 @@ def _dry_run_payload(
         "ops_dir",
         "kaggle_dataset_handle",
         "remote_ready_timeout_seconds",
+        "warmup_blocks",
+        "measure_blocks",
+        "minimum_speedup",
+        "output",
     ):
         if hasattr(args, name):
             value = getattr(args, name)
@@ -136,13 +165,17 @@ def _dry_run_payload(
         "action": action,
         "model": profile.model_label,
         "tokens": profile.token_label,
-        "runtime": "kaggle/runtime.py",
+        "runtime": (
+            "kaggle/qualify_dual_t4.py"
+            if action == "qualify-dual-t4"
+            else "kaggle/runtime.py"
+        ),
         "profile": profile.dataset_profile,
         "launch_commit": profile.launch_commit,
         "dataset_run_id": profile.dataset_run_id,
         "wandb_run_id": profile.wandb_run_id,
         "arguments": forwarded,
-        "resume": "automatic_verified",
+        "resume": "not_applicable" if action == "qualify-dual-t4" else "automatic_verified",
     }
 
 
@@ -153,6 +186,15 @@ def _print_profiles() -> None:
             f"  model={profile.model_label:<4} tokens={profile.token_label:<4} "
             f"profile={profile.dataset_profile}"
         )
+
+
+def _dual_t4_arguments(args: argparse.Namespace) -> list[str]:
+    forwarded: list[str] = []
+    for name in ("dataset_dir", "warmup_blocks", "measure_blocks", "minimum_speedup", "output"):
+        value = getattr(args, name, None)
+        if value is not None:
+            forwarded += ["--" + name.replace("_", "-"), str(value)]
+    return forwarded
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -172,6 +214,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         parser.error(str(error))
 
+    if args.action == "qualify-dual-t4" and (
+        profile.model_parameters != 20_000_000 or profile.training_tokens != 2_000_000_000
+    ):
+        parser.error("qualify-dual-t4 is currently qualified only for --model 20M --tokens 2B")
+
     if args.dry_run:
         print(
             json.dumps(
@@ -186,6 +233,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         runtime.ensure_publication_environment(
             sys.argv[1:] if argv is None else list(argv)
         )
+
+    if args.action == "qualify-dual-t4":
+        print(
+            f"[launch] action={args.action} model={profile.model_label} "
+            f"tokens={profile.token_label} qualification=disposable",
+            flush=True,
+        )
+        import qualify_dual_t4
+
+        return int(qualify_dual_t4.main(_dual_t4_arguments(args)))
 
     print(
         f"[launch] action={args.action} model={profile.model_label} "
