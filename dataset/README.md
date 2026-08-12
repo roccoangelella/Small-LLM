@@ -1,6 +1,6 @@
 # Nemotron-ClimbMix dataset pipeline
 
-This package owns deterministic source selection, structural validation, cluster filtering, context-plus-one packing, immutable shards, remote durability, resume, rolling-cache transport, and evaluation-set construction.
+This package owns deterministic source selection, structural validation, cluster filtering, context-plus-one packing, immutable shards, remote durability, resume, incremental production frontiers, rolling-cache transport, and evaluation-set construction.
 
 ## Frozen source contract
 
@@ -19,8 +19,11 @@ The explicit programming cluster is excluded; the resulting corpus is not guaran
 ## Active modules
 
 - `dataset.qualification`: experiment-facing finite-dataset CLI and single registry for frozen profiles, including the block-64 Modal profiles.
-- `dataset.production`: reusable schema-v2 producer with exact mixture accounting, verified Hugging Face Storage Bucket durability, bounded-disk shard eviction, locking, and resume.
-- `dataset.rolling_cache`: checkpoint-aligned CPU staging plus current/next verified local shard caching for remotely stored datasets.
+- `dataset.production`: reusable schema-v2 producer with exact mixture accounting, verified Hugging Face Storage Bucket durability, bounded-disk shard eviction, locking, resume, and the incremental 10B producer.
+- `dataset.incremental_frontier`: immutable prelaunch run contract plus monotonic READY-shard frontier for producer/consumer overlap.
+- `dataset.incremental_cache`: low-overhead dynamic current/next cache that polls the remote frontier only when the known READY prefix is exhausted.
+- `dataset.incremental_stage`: CPU bootstrap waiting and checkpoint-aligned current+successor+validation verification before GPU dispatch.
+- `dataset.rolling_cache`: completed-manifest checkpoint-aligned staging and current/next caching retained for non-incremental remotely stored datasets.
 - `dataset.qualification_report`: shared manifest validation and exact one-pass WSD plan engine. Its optional `drive_manifest` input is legacy compatibility for already-built historical datasets.
 - `dataset.eval_core`, `dataset.eval_core_accelerated`, `dataset.eval_core_cli`: reusable `eval_core_v1` construction and verification. Eval-core is intentionally separate from the training-cache producer.
 - `dataset.main`: shared schema-v2 verification plus the low-level stream-cache development surface still covered by streaming tests.
@@ -51,9 +54,58 @@ uv run --env-file .env python -m dataset.qualification build \
   --resume
 ```
 
-Remote builds require `HF_TOKEN` and either `SMALL_LLM_HF_DATASET_BUCKET_ID` or `SMALL_LLM_HF_REPO_ID`; the latter derives `<repo>-datasets`. The `modal-10b-b64` profile additionally freezes one-GiB shards and verified local eviction so the producer never needs enough disk for the complete derived corpus.
+Remote builds require `HF_TOKEN` and either `SMALL_LLM_HF_DATASET_BUCKET_ID` or `SMALL_LLM_HF_REPO_ID`; the latter derives `<repo>-datasets`.
 
-The profile fixes run ID, source-token envelope, checkpoint cadence, context length, sequences per block, shard size, and remote-durability requirement. Reader/queue tuning remains available through the underlying production CLI.
+### Incremental `modal-10b-b64`
+
+The 10B profile is different from the older completed-corpus workflow. It does **not** require a complete derived corpus before training can start.
+
+Its prelaunch run contract freezes:
+
+```text
+context: 2048
+optimizer block: 64 sequences
+nominal training budget: 10,000,000,000 target tokens
+exact whole-block horizon: 76,294 updates = 10,000,007,168 target tokens
+target shard size: 1 GiB
+WSD: 5% warmup / 75% stable / 20% decay
+frozen live validation: first 16 deterministic validation blocks
+minimum GPU lead: checkpoint-aligned current train shard + one successor
+```
+
+Production and consumption then overlap:
+
+```text
+pinned ClimbMix HF ranges
+  -> deterministic filter / mixture / pack on cheap CPU
+  -> finalize shard N
+  -> upload + full read-back SHA-256 verification in HF dataset bucket
+  -> commit durable producer cursor
+  -> publish shard N READY
+  -> evict producer-local shard N
+
+CPU Modal stage
+  -> wait for current + successor + frozen validation
+  -> download and SHA-256 verify
+  -> commit cache Volume
+  -> only then authorize H100
+
+H100
+  -> train current shard
+  -> asynchronously fetch READY successor
+  -> acknowledge final block and evict consumed shard
+  -> wait rather than skip/reorder if producer ever falls behind
+```
+
+The crash-order invariant is intentional: **remote shard verification → durable producer progress → READY publication → local eviction**. Remote bytes that exist but are not referenced by the committed producer cursor are not trainer-visible.
+
+The trainer-facing bootstrap manifest is immutable for the complete trajectory. Mutable producer completion and later READY entries live only in the frontier, so a producer finishing between training sessions cannot change checkpoint identity.
+
+When production eventually finishes, the normal complete schema-v2 manifest is published and its SHA-256 closes the frontier. That terminal manifest is the reusable corpus record, but it is not a prerequisite for optimizer update 1.
+
+The approved weights are vendored at `dataset/climbmix_code_free_weights.json`; Modal verifies the frozen SHA-256 before starting the CPU producer.
+
+## Completed-manifest qualification
 
 Derive the exact one-pass trainer plan from a completed current-format cache:
 
@@ -94,4 +146,4 @@ uv run --extra model --with-requirements dataset/requirements-remote.txt \
   python -m unittest discover -v
 ```
 
-Dataset production remains fail-closed: source revision, selection seed, split identity, profile identity, mixture weights, sequence geometry, shard hashes, and remote durability must match the recorded contract.
+Dataset production remains fail-closed: source revision, selection seed, split identity, profile identity, mixture weights, sequence geometry, shard hashes, producer cursor, READY-frontier monotonicity, and remote durability must match the recorded contract.
