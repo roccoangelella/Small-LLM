@@ -9,10 +9,17 @@ from pathlib import Path
 
 import modal
 
-LOCAL_REPO = Path(__file__).resolve().parents[1]
-LOCAL_MODAL = Path(__file__).resolve().parent
 REMOTE_REPO = Path("/root/small-llm")
 REMOTE_MODAL = REMOTE_REPO / "modal"
+_SOURCE_FILE = Path(__file__).resolve()
+if _SOURCE_FILE.parent == Path("/root") and (REMOTE_MODAL / "profiles.py").is_file():
+    # Modal re-imports this script as /root/launch.py inside the container.
+    # At that point the repository source mount already lives at REMOTE_REPO.
+    LOCAL_REPO = REMOTE_REPO
+    LOCAL_MODAL = REMOTE_MODAL
+else:
+    LOCAL_REPO = _SOURCE_FILE.parents[1]
+    LOCAL_MODAL = _SOURCE_FILE.parent
 DATA_ROOT, RUN_ROOT, CACHE_ROOT = Path("/data"), Path("/runs"), Path("/cache")
 APP_NAME = "small-llm-training"
 
