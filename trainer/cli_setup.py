@@ -67,7 +67,8 @@ def _rolling_cache(args: object) -> object | None:
     store = HuggingFaceBucketShardStore(bucket_id, token=token, create_bucket=False)
     incremental = payload.get("incremental_frontier")
     if isinstance(incremental, Mapping):
-        from dataset.incremental_frontier import IncrementalRollingShardCache, RUN_CONTRACT_FILENAME
+        from dataset.incremental_cache import IncrementalRollingShardCache
+        from dataset.incremental_frontier import RUN_CONTRACT_FILENAME
 
         contract_path = manifest_path.parent / RUN_CONTRACT_FILENAME
         try:
