@@ -60,7 +60,7 @@ Current contract: [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_bac
 
 ## 100M / 2B Modal trajectory and Hugging Face artifact transport
 
-ADR 0041 authorizes the approximately-100M-parameter / 2B-token Modal trajectory using the byte-preserving block-64 derivative of the verified 2B corpus. ADR 0043 keeps all Kaggle-to-Modal preparation and Modal operation on the VPS. **ADR 0055 now unifies Modal checkpoint durability and stable model artifacts on `SMALL_LLM_HF_REPO_ID`, superseding the separate checkpoint-Storage-Bucket decisions ADR 0047 and ADR 0052.**
+ADR 0041 authorizes the approximately-100M-parameter / 2B-token Modal trajectory using the byte-preserving block-64 derivative of the verified 2B corpus. ADR 0043 keeps all Kaggle-to-Modal preparation and Modal operation on the VPS. **ADR 0055 now unifies Modal checkpoint durability and stable model artifacts on `SMALL_LLM_HF_REPO_ID`, superseding the separate checkpoint-Storage-Bucket decisions ADR 0047 and ADR 0052.** ADR 0056 explicitly excludes Modal from the Kaggle dual-T4 execution change: Modal training remains **one H100 per training run**.
 
 By 2026-08-11 16:10 Europe/Rome, the user reported that the production training run had been started on an **H100 GPU**. On 2026-08-12 the original Modal account exhausted its credits and the user moved operational setup to a new Modal account/workspace. Modal Volumes do not carry across that account boundary, so cross-workspace continuity depends on a verified Hugging Face checkpoint or stable artifact.
 
@@ -75,6 +75,7 @@ full-block target tokens: ~131,072
 historical planned optimizer updates in the original status record: 15,259
 precision: FP16 autocast with FP32 master parameters
 microbatch qualification candidates: 16, 32, 48, 64
+execution topology: single H100; no DDP from ADR 0056
 GPU actually reported for original live run: H100
 same-workspace checkpoint cadence: Modal Volume every 250 successful updates + final
 cross-workspace checkpoint cadence for future Modal execution: HF model repository every 500 successful updates + final
@@ -110,7 +111,7 @@ This is a distinct trajectory from the historical/ongoing 20M / 2B Kaggle run. T
 
 ## Active experiment — fresh 20M / 2B
 
-ADR 0023 authorizes a new independent approximately-2B-token data-scaling trajectory. ADR 0027 adds the completed 500M qualitative result as justification for keeping model size fixed through this point.
+ADR 0023 authorizes a new independent approximately-2B-token data-scaling trajectory. ADR 0027 adds the completed 500M qualitative result as justification for keeping model size fixed through this point. ADR 0056 now makes exact-batch two-T4 DDP the standard Kaggle execution backend after the live qualification passed every numerical and throughput gate.
 
 ```text
 profile: 20m-2b-data-scaling-v1
@@ -122,8 +123,14 @@ maximum: 2,200,000,000
 producer durable checkpoint cadence: 80,000,000 source tokens
 fresh initialization seed: 17
 training microbatch: 4
+global optimizer block: 16 sequences
+Kaggle execution: 2 x Tesla T4 DDP, 8 sequences/rank, 2 local microbatches/rank
+DDP sync: no_sync on first local microbatch, synchronized second local backward
+DDP gradient normalization: world_size * local_loss_sum / global_target_tokens
 training durability / validation / remote publication cadence: 250 updates
 ```
+
+The accepted dual-T4 qualification measured 20,183.50 target tok/s median on one warmed T4 and 34,292.22 target tok/s under warmed two-T4 DDP, a 1.6990x speedup above the predeclared 1.60x gate. Maximum loss delta was 4.77e-6 and maximum gradient relative delta was 7.54e-6; final parameter and optimizer-state comparisons also passed. Production adds synchronized GradScaler/non-finite agreement before any optimizer mutation, rank-zero-only side effects, and raw-model checkpoint serialization. Canonical evidence: [`../evidence/20m/20m_2b_dual_t4_ddp_qualification_2026-08-12.md`](../evidence/20m/20m_2b_dual_t4_ddp_qualification_2026-08-12.md).
 
 The 2B trajectory is fresh relative to 500M and the superseded 1B setup. It starts from seed 17 and uses the qualified mixed FLA CUDA backend from optimizer update 1. The exact optimizer-update count and WSD boundaries come from the completed verified manifest rather than a nominal hard-coded count.
 
@@ -135,14 +142,14 @@ pinned Nemotron-ClimbMix source
   -> immutable uint16 shards + verified Google Drive mirror
   -> private Kaggle publication + round-trip byte verification
   -> attached Kaggle dataset
-  -> T4 training from Kaggle-local input
+  -> exact-batch 2 x T4 DDP training from Kaggle-local input
 ```
 
-Current operational state: **the 2B trajectory has been launched and user-observed W&B data on 2026-08-11 covered optimizer steps 23,438 through 28,438; the exact live step may be later.** The consolidated dataset identity/geometry remains centralized in `dataset.qualification` (`--profile 20m-2b`) under ADR 0037.
+Current operational state: **the 2B trajectory has been launched and user-observed W&B data on 2026-08-11 covered optimizer steps 23,438 through 28,438; the exact live step may be later.** The consolidated dataset identity/geometry remains centralized in `dataset.qualification` (`--profile 20m-2b`) under ADR 0037. Existing topology-neutral checkpoints are intended to resume through the Kaggle DDP adapter without changing model keys, TrainerConfig identity, optimizer batch geometry, or dataset cursor semantics.
 
 A fresh Kaggle clone after the dataset/Kaggle cleanup exposed a launcher-path regression: direct `python kaggle/launch.py ...` execution could not import the top-level `dataset` package because only the `kaggle/` script directory was guaranteed on `sys.path`. Commit `27406f4a12fa450902e6ead1d9f95fbe51da6fce` fixes the human-facing launcher by adding the repository root before runtime/profile resolution.
 
-The subsequent repository-wide dataset-layout audit found a second latent boundary bug: the pinned per-experiment training worktree predates the consolidated `dataset.qualification` module, while the shared training engine tried to run current dataset verification/plan commands from that historical worktree. Commit `356c924ee5f39f5365e6608c7a8b9f3a070fd0d0` now keeps model/trainer execution pinned but routes `dataset.main` and `dataset.qualification` control-plane subprocesses through the clean controlling checkout. The audit also removed retired flat `train.bin`/`validation.bin` path constants, refreshed active launcher documentation, and added repository-wide regression coverage for deleted dataset modules, the schema-v2 layout, packaging, active commands, and direct-launch import behavior.
+The subsequent repository-wide dataset-layout audit found a second latent boundary bug: the pinned per-experiment training worktree predates the consolidated `dataset.qualification` module, while the shared training engine tried to run current dataset verification/plan commands from that historical worktree. Commit `356c924ee5f39f5365e6608c7a8b9f3a070fd0d0` now keeps model/trainer execution pinned but routes `dataset.main` and `dataset.qualification` control-plane subprocesses through the clean controlling checkout. The dual-T4 production adapter preserves this split: model/trainer semantics remain sourced from the pinned experiment worktree while only the Kaggle execution topology is injected from the controlling checkout. The audit also removed retired flat `train.bin`/`validation.bin` path constants, refreshed active launcher documentation, and added repository-wide regression coverage for deleted dataset modules, the schema-v2 layout, packaging, active commands, and direct-launch import behavior.
 
 ## Frozen decisions still in force for the 2B probe
 
@@ -151,6 +158,8 @@ The subsequent repository-wide dataset-layout audit found a second latent bounda
 - Keep saved/model `gdn_chunk_size=32`; CUDA FLA executes internal chunk 64.
 - Keep adaptive PyTorch as correctness/reference fallback; do not change learned decay solely for runtime behavior.
 - Use microbatch 4 on the qualified T4 path.
+- Use exact-batch two-T4 DDP as the standard Kaggle training topology; preserve the 16-sequence global optimizer block.
+- Keep Modal training single-H100; ADR 0056 does not authorize Modal DDP.
 - Preserve fail-closed FP16 scaler/atomic-block behavior.
 - Preserve `eval_core_v1` plus free-generation and teacher-forced confidence/rank diagnostics.
 - New finite scaling trajectories start fresh unless a later ADR explicitly authorizes continuation.
@@ -188,6 +197,8 @@ Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11
 - VPS-only Modal preparation decision: [`../decisions/0043-prepare-modal-block64-corpus-on-vps.md`](../decisions/0043-prepare-modal-block64-corpus-on-vps.md)
 - Final HF artifact decision: [`../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md`](../decisions/0044-publish-100m-2b-final-model-to-hugging-face.md)
 - Unified Modal/HF model-repository checkpoint decision: [`../decisions/0055-unify-modal-checkpoints-on-hf-model-repository.md`](../decisions/0055-unify-modal-checkpoints-on-hf-model-repository.md)
+- Kaggle dual-T4 / Modal single-H100 execution decision: [`../decisions/0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md`](../decisions/0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md)
+- Dual-T4 qualification evidence: [`../evidence/20m/20m_2b_dual_t4_ddp_qualification_2026-08-12.md`](../evidence/20m/20m_2b_dual_t4_ddp_qualification_2026-08-12.md)
 - Modal dataset workspace-verification decision: [`../decisions/0048-verify-modal-dataset-in-active-workspace.md`](../decisions/0048-verify-modal-dataset-in-active-workspace.md)
 - Modal training runbook: [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - 2B decision: [`../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md`](../decisions/0023-run-2b-20m-probe-via-vps-kaggle-dataset.md)
