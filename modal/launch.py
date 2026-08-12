@@ -97,9 +97,12 @@ def _local_source_commit() -> str:
     return head
 
 
-@app.function(timeout=2 * 60)
+@app.function(
+    timeout=2 * 60,
+    volumes={str(RUN_ROOT): RUN_VOLUME},
+)
 def remote_import_preflight() -> dict[str, object]:
-    """Fail on CPU before requesting an H100 if packaged local imports are broken."""
+    """Fail on CPU before requesting an H100 if packaging or run-volume paths are broken."""
 
     profiles_path = Path("/root/profiles.py")
     runtime_path = REMOTE_MODAL / "runtime.py"
@@ -110,11 +113,25 @@ def remote_import_preflight() -> dict[str, object]:
     sys.path.insert(0, str(REMOTE_MODAL))
     import profiles as remote_profiles  # noqa: PLC0415
     import runtime as remote_runtime  # noqa: F401, PLC0415
+    from dataset.src.remote import ensure_safe_directory  # noqa: PLC0415
+
+    # Modal may expose a Volume mount through a symlink-like facade at /runs.
+    # Resolve that trusted mount once, then verify the generic checkpoint path
+    # guard accepts a child under the canonical real directory.  The H100 path
+    # uses this same canonical root, so untrusted download helpers never need
+    # their global symlink protections weakened.
+    run_root = RUN_ROOT.resolve(strict=True)
+    if not run_root.is_dir() or run_root.is_symlink():
+        raise RuntimeError(f"Modal run Volume did not resolve to a real directory: {run_root}")
+    probe = run_root / ".small-llm-safe-path-preflight"
+    ensure_safe_directory(probe)
+    probe.rmdir()
 
     return {
         "status": "ok",
         "profiles": str(Path(remote_profiles.__file__).resolve()),
         "runtime": str(runtime_path),
+        "run_root": str(run_root),
     }
 
 
@@ -139,11 +156,13 @@ def train_remote(
     microbatch_size: int = 0,
     precision: str = DEFAULT_PRECISION,
 ) -> dict[str, object]:
+    resolved_run_root = RUN_ROOT.resolve(strict=True)
     _stage(
         "remote_runtime_start",
         model=model,
         tokens=tokens,
         source_commit=source_commit,
+        run_root=str(resolved_run_root),
     )
     sys.path.insert(0, str(REMOTE_MODAL))
     from runtime import run_training
@@ -158,7 +177,7 @@ def train_remote(
         precision=precision,
         repo_root=REMOTE_REPO,
         data_root=DATA_ROOT,
-        run_root=RUN_ROOT,
+        run_root=resolved_run_root,
         cache_root=CACHE_ROOT,
         run_volume=RUN_VOLUME,
         cache_volume=CACHE_VOLUME,
@@ -224,6 +243,7 @@ def main(
         status=preflight.get("status"),
         profiles=preflight.get("profiles"),
         runtime=preflight.get("runtime"),
+        run_root=preflight.get("run_root"),
     )
     _stage(
         "dispatch_remote_training",
