@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -197,6 +199,24 @@ def _dual_t4_arguments(args: argparse.Namespace) -> list[str]:
     return forwarded
 
 
+def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
+    uv = shutil.which("uv")
+    if not uv:
+        raise RuntimeError("uv is required for dual-T4 qualification")
+    command = [
+        uv,
+        "run",
+        "--python",
+        "3.13",
+        "--extra",
+        "model",
+        "python",
+        str(REPO / "kaggle" / "qualify_dual_t4.py"),
+        *_dual_t4_arguments(args),
+    ]
+    return int(subprocess.call(command, cwd=REPO))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -240,9 +260,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"tokens={profile.token_label} qualification=disposable",
             flush=True,
         )
-        import qualify_dual_t4
-
-        return int(qualify_dual_t4.main(_dual_t4_arguments(args)))
+        return _run_dual_t4_qualification(args)
 
     print(
         f"[launch] action={args.action} model={profile.model_label} "
