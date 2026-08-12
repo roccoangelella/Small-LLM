@@ -21,11 +21,20 @@ def _rolling_cache(args: object) -> object | None:
     # Explicit trainer flags remain the generic provider-neutral interface.
     # Modal may inject the same values through environment variables so its
     # existing command builder does not acquire dataset-provider logic.
-    bucket_id = getattr(args, "dataset_shard_bucket", None) or os.environ.get(
-        "SMALL_LLM_DATASET_SHARD_BUCKET"
-    )
+    explicit_bucket = getattr(args, "dataset_shard_bucket", None)
+    bucket_id = explicit_bucket or os.environ.get("SMALL_LLM_DATASET_SHARD_BUCKET")
     if not bucket_id:
         return None
+    # Modal microbatch probes use only a handful of blocks from CPU-staged
+    # shard 0.  Do not start a 1-GiB successor download from a short-lived probe
+    # process; the real online subprocess enables rolling prefetch immediately.
+    if (
+        not explicit_bucket
+        and os.environ.get("SMALL_LLM_MODAL_ROLLING_DATASET") == "1"
+        and getattr(args, "wandb_mode", "disabled") == "disabled"
+    ):
+        return None
+
     run_id = getattr(args, "dataset_shard_run_id", None) or os.environ.get(
         "SMALL_LLM_DATASET_SHARD_RUN_ID"
     )
