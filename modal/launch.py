@@ -48,12 +48,6 @@ IMAGE = (
         "google-auth-oauthlib>=1.0.0,<2",
         "huggingface-hub>=1.5,<2",
     )
-    .add_local_dir(
-        LOCAL_REPO,
-        remote_path=str(REMOTE_REPO),
-        copy=False,
-        ignore=[".git/**", ".venv/**", ".pytest_cache/**", "**/__pycache__/**", "*.pyc"],
-    )
     .env(
         {
             "PYTHONPATH": str(REMOTE_REPO),
@@ -61,6 +55,14 @@ IMAGE = (
             "WANDB_INIT_TIMEOUT": "30",
             "PYTHONUNBUFFERED": "1",
         }
+    )
+    # copy=False mounts source at container startup, so Modal requires this to
+    # remain the final image mutation; later build steps would be invalid.
+    .add_local_dir(
+        LOCAL_REPO,
+        remote_path=str(REMOTE_REPO),
+        copy=False,
+        ignore=[".git/**", ".venv/**", ".pytest_cache/**", "**/__pycache__/**", "*.pyc"],
     )
 )
 app = modal.App(APP_NAME, image=IMAGE)
