@@ -29,6 +29,19 @@ jobs:
         run: |
           set -o pipefail
           python -m unittest discover -v 2>&1 | tee test-results.log
+      - name: Annotate unit test failure
+        if: failure()
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("test-results.log")
+          text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else "test-results.log is missing"
+          tail = "\n".join(text.splitlines()[-80:])
+          escaped = tail.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print(f"::error title=Unit test failure::{escaped[:12000]}")
+          PY
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
