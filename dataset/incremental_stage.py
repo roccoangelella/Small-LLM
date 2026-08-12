@@ -54,12 +54,18 @@ def stage_incremental_window_when_ready(
 ) -> dict[str, object]:
     """Wait on producer bootstrap metadata entirely on CPU, then stage the lead window.
 
-    Only the two expected not-yet-published conditions are retried. Identity,
+    Only expected not-yet-published conditions are retried. Identity,
     monotonicity, checksum, and all other integrity failures remain fail-closed.
     """
 
     if timeout_seconds <= 0 or poll_seconds <= 0:
         raise ValueError("incremental CPU-stage wait intervals must be positive")
+    # The stager and producer are intentionally concurrent. If the stager wins
+    # even the bucket-creation race, make that idempotently ready here rather
+    # than treating normal startup ordering as a dataset failure.
+    ensure_bucket = getattr(store, "ensure_bucket", None)
+    if callable(ensure_bucket):
+        ensure_bucket()
     deadline = time.monotonic() + timeout_seconds
     while True:
         remaining = deadline - time.monotonic()
