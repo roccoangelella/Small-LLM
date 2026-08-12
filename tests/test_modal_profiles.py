@@ -13,7 +13,18 @@ def test_modal_100m_2b_profile_uses_substantive_geometry_and_block64_dataset() -
 
     assert model.trainer_size == "substantive"
     assert tokens.dataset_profile == "modal-2b-b64"
+    assert tokens.dataset_transport == "modal_volume"
     assert PROFILES["canonical_run_id"](model, tokens) == "100m-2b-data-001"
+
+
+def test_modal_100m_10b_profile_uses_rolling_hf_dataset_transport() -> None:
+    model, tokens = PROFILES["resolve_presets"]("100M", "10B")
+
+    assert model.trainer_size == "substantive"
+    assert tokens.tokens == 10_000_000_000
+    assert tokens.dataset_profile == "modal-10b-b64"
+    assert tokens.dataset_transport == "hf_rolling_shards"
+    assert PROFILES["canonical_run_id"](model, tokens) == "100m-10b-data-001"
 
 
 def test_modal_microbatch_candidates_cover_h100_capacity_range() -> None:
