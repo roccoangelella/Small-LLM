@@ -13,7 +13,7 @@ import torch
 
 from .cli_args import parse_args
 from .cli_setup import setup, validation_reader
-from .remote_publication import configure_remote_publication
+from .remote_publication import cleanup_remote_publication, configure_remote_publication
 from .wandb_logging import configure_wandb
 
 
@@ -45,7 +45,7 @@ def _validation_metric(validation: Mapping[str, object] | None) -> float | None:
 def _existing_remote_best_metric(remote: object | None) -> float | None:
     """Read the persisted best metric so resumed runs cannot overwrite it blindly."""
 
-    if remote is None:
+    if remote is None or bool(getattr(remote, "rolling_latest_only", False)):
         return None
     publisher = getattr(remote, "publisher", None)
     store = getattr(publisher, "store", None)
@@ -152,7 +152,11 @@ def main(argv: list[str] | None = None) -> int:
             best_metric=None,
         )
         best_updated = False
-        if metric is not None and (best_remote_metric is None or metric > best_remote_metric):
+        if (
+            not remote.rolling_latest_only
+            and metric is not None
+            and (best_remote_metric is None or metric > best_remote_metric)
+        ):
             latest = result.get("latest")
             if not isinstance(latest, Mapping):
                 raise RuntimeError("remote publisher returned no verified latest pointer")
@@ -177,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             best_remote_metric = metric
             best_updated = True
+        cleanup = cleanup_remote_publication(remote, checkpoint_id=checkpoint_id)
         elapsed = time.perf_counter() - started
         event = {
             "checkpoint_id": checkpoint_id,
@@ -184,6 +189,7 @@ def main(argv: list[str] | None = None) -> int:
             "final": final,
             "best_updated": best_updated,
             "validation_loss": None if metric is None else -metric,
+            "rolling_cleanup": cleanup,
         }
         print(json.dumps({"remote_publication": event}, sort_keys=True), flush=True)
         if telemetry is not None:
