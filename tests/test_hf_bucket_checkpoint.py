@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,6 +72,21 @@ class HuggingFaceBucketCheckpointStoreTests(unittest.TestCase):
             api=api,
             create_bucket=True,
         )
+
+    def test_installed_hf_client_exposes_required_bucket_api(self) -> None:
+        from huggingface_hub import HfApi
+
+        required = {
+            "create_bucket": {"bucket_id", "private", "exist_ok", "token"},
+            "batch_bucket_files": {"bucket_id", "add", "delete", "token"},
+            "list_bucket_tree": {"bucket_id", "prefix", "recursive", "token"},
+            "download_bucket_files": {"bucket_id", "files", "raise_on_missing_files", "token"},
+        }
+        for name, parameters in required.items():
+            method = getattr(HfApi, name, None)
+            self.assertTrue(callable(method), name)
+            signature = inspect.signature(method)
+            self.assertTrue(parameters.issubset(signature.parameters), (name, signature))
 
     def test_create_upload_readback_and_download_tree(self) -> None:
         api = _FakeBucketApi()
