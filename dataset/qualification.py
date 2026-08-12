@@ -34,6 +34,18 @@ class DatasetProfile:
     plan: QualificationProfile
     production_enabled: bool = True
     evict_remote_shards: bool = False
+    incremental_frontier: bool = False
+    nominal_training_tokens: int | None = None
+    training_validation_blocks: int = 16
+
+    def __post_init__(self) -> None:
+        if self.incremental_frontier:
+            if self.nominal_training_tokens is None or self.nominal_training_tokens <= 0:
+                raise ValueError("incremental dataset profiles require nominal_training_tokens")
+            if self.training_validation_blocks <= 0:
+                raise ValueError("incremental dataset profiles require positive validation blocks")
+        elif self.nominal_training_tokens is not None:
+            raise ValueError("nominal_training_tokens is only valid for incremental profiles")
 
     @property
     def target_source_tokens(self) -> int:
@@ -148,6 +160,9 @@ PROFILES: dict[str, DatasetProfile] = {
         key="modal-10b-b64",
         run_id="modal-10b-b64-dataset-001",
         evict_remote_shards=True,
+        incremental_frontier=True,
+        nominal_training_tokens=10_000_000_000,
+        training_validation_blocks=16,
         plan=QualificationProfile(
             name="modal-10b-b64-v1",
             target_source_tokens=10_000_000_000,
@@ -181,6 +196,9 @@ _LOCKED_PRODUCTION_FLAGS = frozenset(
         "--target-shard-bytes",
         "--allow-local-only",
         "--evict-remote-shards",
+        "--incremental-frontier",
+        "--nominal-training-tokens",
+        "--training-validation-blocks",
     }
 )
 
@@ -237,6 +255,17 @@ def production_arguments(profile: DatasetProfile | str, argv: Sequence[str]) -> 
     ]
     if resolved.evict_remote_shards:
         result.append("--evict-remote-shards")
+    if resolved.incremental_frontier:
+        assert resolved.nominal_training_tokens is not None
+        result.extend(
+            [
+                "--incremental-frontier",
+                "--nominal-training-tokens",
+                str(resolved.nominal_training_tokens),
+                "--training-validation-blocks",
+                str(resolved.training_validation_blocks),
+            ]
+        )
     return result
 
 
@@ -268,6 +297,50 @@ def derive_plan(
 
     resolved = get_profile(profile) if isinstance(profile, str) else profile
     _validate_run_id(manifest, resolved)
+    if resolved.incremental_frontier and manifest_path is not None:
+        from dataset.incremental_frontier import RUN_CONTRACT_FILENAME
+
+        contract_path = manifest_path.parent / RUN_CONTRACT_FILENAME
+        if contract_path.is_file():
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            if not isinstance(contract, Mapping) or contract.get("run_id") != resolved.run_id:
+                raise ValueError("incremental qualification run contract is invalid")
+            trainer = contract.get("trainer")
+            if not isinstance(trainer, Mapping):
+                raise ValueError("incremental qualification run contract has no trainer plan")
+            planned_blocks = int(contract["planned_train_blocks"])
+            raw_shards = manifest.get("shards")
+            if not isinstance(raw_shards, list):
+                raise ValueError("incremental qualification manifest has no shard inventory")
+            train_last = max(
+                (
+                    int(row["last_block_id"])
+                    for row in raw_shards
+                    if isinstance(row, Mapping) and row.get("split") == "train"
+                ),
+                default=-1,
+            )
+            if train_last + 1 < planned_blocks:
+                raise ValueError("incremental completed manifest does not cover the frozen train horizon")
+            return {
+                "version": 1,
+                "qualification_profile": resolved.plan.name,
+                "incremental_frontier": True,
+                "contract_sha256": contract.get("contract_sha256"),
+                "context_length": resolved.context_length,
+                "sequences_per_block": resolved.sequences_per_block,
+                "target_shard_bytes": resolved.target_shard_bytes,
+                "train": {
+                    "block_count": planned_blocks,
+                    "target_tokens": int(trainer["planned_target_tokens"]),
+                },
+                "validation": {"block_count": int(trainer["validation_blocks"])},
+                "trainer": dict(trainer),
+                "identity": {
+                    "manifest_path": str(manifest_path),
+                    "run_contract_path": str(contract_path),
+                },
+            }
     return derive_qualification_plan(
         manifest,
         profile=resolved.plan,
@@ -283,6 +356,9 @@ def profile_payload(profile: DatasetProfile) -> dict[str, object]:
         "run_id": profile.run_id,
         "production_enabled": profile.production_enabled,
         "evict_remote_shards": profile.evict_remote_shards,
+        "incremental_frontier": profile.incremental_frontier,
+        "nominal_training_tokens": profile.nominal_training_tokens,
+        "training_validation_blocks": profile.training_validation_blocks,
         "remote_backend": "hf_bucket",
         **payload,
     }
