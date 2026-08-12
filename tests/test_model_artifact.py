@@ -44,26 +44,30 @@ class ModelArtifactTests(unittest.TestCase):
         self.assertEqual(prefix, "models/100m-2b-data-001/step-00015267")
         self.assertTrue(metadata["pointer_discovered"])
 
-    @patch("trainer.model_artifact._verify_published_checkpoint_manifest")
     @patch("trainer.model_artifact.verify_local_manifest")
     @patch("trainer.model_artifact.HuggingFaceCheckpointStore")
-    def test_download_verifies_manually_moved_model(
+    def test_download_accepts_native_stable_checkpoint_without_publisher_manifest(
         self,
         store_type,
         verify_local,
-        verify_published,
     ) -> None:
+        """Stable models/... snapshots require local_manifest, not checkpoint_manifest."""
+
         store = store_type.return_value
-        store.read_json.return_value = None
-        store.api.list_repo_files.return_value = [
-            "models/100m-2b-data-001/step-00015267/checkpoint.json",
-        ]
-        store._hub_kwargs.return_value = {"repo_id": "owner/models"}
+        store.read_json.return_value = {
+            "run_id": "100m-2b-data-001",
+            "checkpoint_id": "step-00015267",
+            "huggingface_path": "models/100m-2b-data-001/step-00015267",
+            "is_final": True,
+        }
 
         def materialize(_prefix: str, destination: Path) -> None:
-            (destination / "checkpoint_manifest.json").write_text(
-                '{"version": 1, "files": []}', encoding="utf-8"
-            )
+            # Match the normalized completed checkpoint shape seen on HF. There
+            # is intentionally no checkpoint_manifest.json: that file belongs to
+            # the two-phase live run/... publication protocol.
+            (destination / "checkpoint.json").write_text("{}", encoding="utf-8")
+            (destination / "local_manifest.json").write_text('{"files": []}', encoding="utf-8")
+            (destination / "trainer_state.pkl").write_bytes(b"native-checkpoint")
 
         store.download_tree.side_effect = materialize
         with tempfile.TemporaryDirectory() as temporary:
@@ -80,7 +84,7 @@ class ModelArtifactTests(unittest.TestCase):
             root,
         )
         verify_local.assert_called_once_with(root)
-        verify_published.assert_called_once_with(root, {"version": 1, "files": []})
+        self.assertFalse((root / "checkpoint_manifest.json").exists())
         self.assertEqual(info["checkpoint_source"], "hf_model_artifact")
         self.assertEqual(info["checkpoint_id"], "step-00015267")
 
