@@ -10,11 +10,11 @@ from .shard_state import load_pipeline_state, load_reader_state, pipeline_state,
 from .types import TokenBatch
 
 class SchemaV2ShardReader:
-    """Read local or restored Drive-backed shards in exact block order."""
+    """Read immutable shards in exact block order, optionally through a rolling cache."""
     def __init__(self, root: Path | str, *, split: str = "train",
                  sequences_per_block: int | None = None, semantic_vocab_size: int = 50_257,
                  verify_checksums: bool = True, manifest_path: Path | str | None = None,
-                 context_length: int | None = None) -> None:
+                 context_length: int | None = None, cache_manager: object | None = None) -> None:
         self.root = Path(root)
         path = Path(manifest_path) if manifest_path is not None else self.root / "manifest.json"
         manifest = load_manifest(path)
@@ -24,6 +24,7 @@ class SchemaV2ShardReader:
             context_length=context_length, sequences_per_block=sequences_per_block)
         self.split, self.context_length = split, context_length
         self.sequences_per_block, self.verify_checksums = block_size, verify_checksums
+        self.cache_manager = cache_manager
         self.decoder = PreparedBlockDecoder(context_length=context_length,
             semantic_vocab_size=semantic_vocab_size, expected_split=split)
         self.manifest_identity = manifest_identity(manifest, context_length, block_size)
@@ -49,6 +50,11 @@ class SchemaV2ShardReader:
         return len(self._locations)
 
     def _read(self, item: BlockLocation) -> TokenBatch:
+        if self.cache_manager is not None:
+            ensure = getattr(self.cache_manager, "ensure_block", None)
+            if not callable(ensure):
+                raise RuntimeError("configured shard cache manager has no ensure_block method")
+            ensure(item.block_id)
         return read_location(self, item)
 
     def next_batch(self, timeout: float | None = None) -> TokenBatch:
@@ -65,18 +71,33 @@ class SchemaV2ShardReader:
         if self._outstanding is None or block_id != self._outstanding.block_id:
             raise ValueError("only the current trained block may be acknowledged")
         self.last_acknowledged_block_id, self._outstanding = block_id, None
+        if self.cache_manager is not None:
+            acknowledge = getattr(self.cache_manager, "acknowledge", None)
+            if not callable(acknowledge):
+                raise RuntimeError("configured shard cache manager has no acknowledge method")
+            acknowledge(block_id)
 
     def state_dict(self) -> dict[str, object]:
         return reader_state(self)
 
     def load_state_dict(self, state: Mapping[str, object]) -> None:
         load_reader_state(self, state)
+        if self.cache_manager is not None:
+            restore = getattr(self.cache_manager, "restore_after_acknowledged", None)
+            if not callable(restore):
+                raise RuntimeError("configured shard cache manager has no restore_after_acknowledged method")
+            restore(self.last_acknowledged_block_id)
 
     def pipeline_state(self) -> dict[str, object]:
         return pipeline_state(self)
 
     def load_pipeline_state(self, state: Mapping[str, object]) -> None:
         load_pipeline_state(self, state)
+        if self.cache_manager is not None:
+            restore = getattr(self.cache_manager, "restore_after_acknowledged", None)
+            if not callable(restore):
+                raise RuntimeError("configured shard cache manager has no restore_after_acknowledged method")
+            restore(self.last_acknowledged_block_id)
 
     def iter_from_start(self, maximum_blocks: int | None = None) -> Iterator[TokenBatch]:
         if maximum_blocks is not None and maximum_blocks < 0:
