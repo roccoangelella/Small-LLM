@@ -107,7 +107,7 @@ def cleanup_remote_publication(
     continue.
     """
 
-    if not remote.rolling_latest_only:
+    if not bool(getattr(remote, "rolling_latest_only", False)):
         return None
 
     run_id = remote.drive_manifest.get("run_id")
