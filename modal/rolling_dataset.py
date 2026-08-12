@@ -95,9 +95,9 @@ def stage_for_h100(
     )
     destination = cache_root / "datasets" / profile.run_id
     if profile.incremental_frontier:
-        from dataset.incremental_frontier import stage_incremental_window
+        from dataset.incremental_stage import stage_incremental_window_when_ready
 
-        staged = stage_incremental_window(
+        staged = stage_incremental_window_when_ready(
             store=store,
             run_id=profile.run_id,
             destination=destination,
@@ -159,8 +159,6 @@ def _preauthorize_existing_runtime_verification(
     identity = {
         "dataset": str(dataset),
         "manifest_sha256": base_runtime._sha256(dataset / "manifest.json"),
-        # Match base runtime's local identity exactly so it does not attempt a
-        # whole-dataset full scan that is intentionally impossible here.
         "transport": "modal_volume",
     }
     base_runtime._write_json(
@@ -278,8 +276,6 @@ def run_staged_training(
     if staged.get("training_complete") is True:
         raise RuntimeError("H100 was allocated even though CPU staging marked training complete")
 
-    # Fail rather than silently downloading a different resume shard on the H100
-    # if the checkpoint pointer changed between CPU staging and GPU dispatch.
     current = next_unconsumed_block(training_run_id=training_run_id, run_root=run_root)
     if int(current["next_block_id"]) != required_block:
         raise RuntimeError(
