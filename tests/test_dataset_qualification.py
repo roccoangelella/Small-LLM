@@ -75,7 +75,7 @@ def _manifest(
     }
 
 
-def _drive_manifest(manifest: dict[str, object]) -> dict[str, object]:
+def _legacy_durability_manifest(manifest: dict[str, object]) -> dict[str, object]:
     production = manifest["production"]
     assert isinstance(production, dict)
     shards = manifest["shards"]
@@ -88,7 +88,7 @@ def _drive_manifest(manifest: dict[str, object]) -> dict[str, object]:
         "shards": [
             {
                 "filename": shard["filename"],
-                "drive_file_id": f"drive-{index}",
+                "drive_file_id": f"legacy-object-{index}",
                 "byte_size": shard["byte_size"],
                 "local_sha256": shard["checksum"],
                 "remote_durable": True,
@@ -132,7 +132,6 @@ class DatasetQualificationTests(unittest.TestCase):
             elif key == "modal-10b-b64":
                 self.assertEqual(profile.sequences_per_block, 64)
                 self.assertEqual(profile.target_shard_bytes, 1024**3)
-                self.assertEqual(profile.remote_backend, "hf_bucket")
                 self.assertTrue(profile.evict_remote_shards)
             else:
                 self.assertEqual(profile.sequences_per_block, 16)
@@ -169,15 +168,22 @@ class DatasetQualificationTests(unittest.TestCase):
                     "--context-length": str(profile.context_length),
                     "--sequences-per-block": str(profile.sequences_per_block),
                     "--target-shard-bytes": str(profile.target_shard_bytes),
-                    "--remote-backend": profile.remote_backend,
                 }
                 for flag, value in expected.items():
                     index = args.index(flag)
                     self.assertEqual(args[index + 1], value)
+                self.assertNotIn("--remote-backend", args)
                 self.assertEqual("--evict-remote-shards" in args, profile.evict_remote_shards)
 
     def test_identity_and_geometry_overrides_are_rejected(self) -> None:
-        for flag in ("--run-id", "--target-tokens", "--checkpoint-source-tokens", "--sequences-per-block", "--allow-local-only", "--remote-backend", "--evict-remote-shards"):
+        for flag in (
+            "--run-id",
+            "--target-tokens",
+            "--checkpoint-source-tokens",
+            "--sequences-per-block",
+            "--allow-local-only",
+            "--evict-remote-shards",
+        ):
             with self.subTest(flag=flag), self.assertRaisesRegex(SystemExit, "fixes these arguments"):
                 production_arguments(
                     "20m-2b",
@@ -188,7 +194,7 @@ class DatasetQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "historical"):
             production_arguments("20m-10m", ["--weights-file", "weights.json"])
 
-    def test_build_cli_delegates_to_shared_producer(self) -> None:
+    def test_build_cli_delegates_to_shared_hf_producer(self) -> None:
         with patch("dataset.qualification.production_main", return_value=7) as producer:
             result = main(
                 [
@@ -208,7 +214,7 @@ class DatasetQualificationTests(unittest.TestCase):
         self.assertIn("--reader-workers", delegated)
         self.assertIn("--run-id", delegated)
         self.assertIn("20m-2b-dataset-001", delegated)
-        self.assertIn("--remote-backend", delegated)
+        self.assertNotIn("--remote-backend", delegated)
 
     def test_exact_wsd_schedules_are_preserved(self) -> None:
         expected = {
@@ -253,11 +259,11 @@ class DatasetQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "run_id mismatch"):
             derive_plan(manifest, profile="20m-2b")
 
-    def test_drive_manifest_is_bound_into_identity(self) -> None:
+    def test_legacy_drive_manifest_is_still_bound_into_historical_identity(self) -> None:
         manifest = _manifest("20m-100m", 3_052)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "drive_manifest.json"
-            path.write_text(json.dumps(_drive_manifest(manifest)), encoding="utf-8")
+            path.write_text(json.dumps(_legacy_durability_manifest(manifest)), encoding="utf-8")
             plan = derive_plan(manifest, profile="20m-100m", drive_manifest_path=path)
         self.assertEqual(plan["identity"]["drive_run_id"], "20m-100m-dataset-001")
         self.assertEqual(plan["identity"]["drive_shard_count"], 2)
