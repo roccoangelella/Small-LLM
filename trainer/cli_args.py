@@ -105,6 +105,15 @@ def parser() -> argparse.ArgumentParser:
         help="Create the configured private Hugging Face repository if missing.",
     )
     p.add_argument(
+        "--remote-rolling-latest-only",
+        action="store_true",
+        help=(
+            "After each verified remote publication, retain only the latest run checkpoint "
+            "and squash Hub branch history. This disables remote best-checkpoint retention "
+            "and is intended for bounded cross-provider resume storage."
+        ),
+    )
+    p.add_argument(
         "--wandb-mode",
         choices=("disabled", "online", "offline"),
         default="disabled",
@@ -131,7 +140,7 @@ def parser() -> argparse.ArgumentParser:
         "--wandb-tags",
         nargs="*",
         default=(),
-        help="Optional W&B tags for grouping qualification segments.",
+        help="Optional W&B tags for grouping qualification runs.",
     )
     p.add_argument(
         "--wandb-dir",
@@ -153,6 +162,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.remote_publish_every_steps and args.remote_drive_manifest is None:
         raise SystemExit(
             "--remote-drive-manifest is required when remote publication is enabled"
+        )
+    if args.remote_rolling_latest_only and args.remote_publish_every_steps == 0:
+        raise SystemExit(
+            "--remote-rolling-latest-only requires --remote-publish-every-steps"
         )
     if args.wandb_mode == "disabled" and args.wandb_resume != "never":
         raise SystemExit("--wandb-resume requires W&B telemetry to be enabled")
