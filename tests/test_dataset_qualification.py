@@ -109,6 +109,7 @@ class DatasetQualificationTests(unittest.TestCase):
             "20m-500m": ("20m-500m-dataset-001", 500_000_000, 450_000_000, 550_000_000, 20_000_000, True),
             "20m-2b": ("20m-2b-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
             "modal-2b-b64": ("modal-2b-b64-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
+            "modal-10b-b64": ("modal-10b-b64-dataset-001", 10_000_000_000, 9_000_000_000, 11_000_000_000, 500_000_000, True),
         }
         self.assertEqual(set(PROFILES), set(expected))
         for key, values in expected.items():
@@ -128,6 +129,11 @@ class DatasetQualificationTests(unittest.TestCase):
             if key == "modal-2b-b64":
                 self.assertEqual(profile.sequences_per_block, 64)
                 self.assertEqual(profile.target_shard_bytes, 32 * 1024 * 1024)
+            elif key == "modal-10b-b64":
+                self.assertEqual(profile.sequences_per_block, 64)
+                self.assertEqual(profile.target_shard_bytes, 1024**3)
+                self.assertEqual(profile.remote_backend, "hf_bucket")
+                self.assertTrue(profile.evict_remote_shards)
             else:
                 self.assertEqual(profile.sequences_per_block, 16)
                 self.assertEqual(profile.target_shard_bytes, 8_388_608)
@@ -139,13 +145,15 @@ class DatasetQualificationTests(unittest.TestCase):
             ("500m", "20m-500m"),
             ("2b", "20m-2b"),
             ("modal-2b", "modal-2b-b64"),
+            ("10b", "modal-10b-b64"),
+            ("modal-10b", "modal-10b-b64"),
         )
         for alias, canonical in aliases:
             with self.subTest(alias=alias):
                 self.assertIs(get_profile(alias), get_profile(canonical))
 
     def test_active_profiles_append_exact_locked_production_identity(self) -> None:
-        for key in ("20m-100m", "20m-500m", "20m-2b", "modal-2b-b64"):
+        for key in ("20m-100m", "20m-500m", "20m-2b", "modal-2b-b64", "modal-10b-b64"):
             with self.subTest(profile=key):
                 profile = get_profile(key)
                 args = production_arguments(
@@ -161,15 +169,20 @@ class DatasetQualificationTests(unittest.TestCase):
                     "--context-length": str(profile.context_length),
                     "--sequences-per-block": str(profile.sequences_per_block),
                     "--target-shard-bytes": str(profile.target_shard_bytes),
+                    "--remote-backend": profile.remote_backend,
                 }
                 for flag, value in expected.items():
                     index = args.index(flag)
                     self.assertEqual(args[index + 1], value)
+                self.assertEqual("--evict-remote-shards" in args, profile.evict_remote_shards)
 
     def test_identity_and_geometry_overrides_are_rejected(self) -> None:
-        for flag in ("--run-id", "--target-tokens", "--checkpoint-source-tokens", "--sequences-per-block", "--allow-local-only"):
+        for flag in ("--run-id", "--target-tokens", "--checkpoint-source-tokens", "--sequences-per-block", "--allow-local-only", "--remote-backend", "--evict-remote-shards"):
             with self.subTest(flag=flag), self.assertRaisesRegex(SystemExit, "fixes these arguments"):
-                production_arguments("20m-2b", [flag, "wrong"] if flag != "--allow-local-only" else [flag])
+                production_arguments(
+                    "20m-2b",
+                    [flag, "wrong"] if flag not in {"--allow-local-only", "--evict-remote-shards"} else [flag],
+                )
 
     def test_historical_10m_profile_cannot_be_produced_again(self) -> None:
         with self.assertRaisesRegex(SystemExit, "historical"):
@@ -195,6 +208,7 @@ class DatasetQualificationTests(unittest.TestCase):
         self.assertIn("--reader-workers", delegated)
         self.assertIn("--run-id", delegated)
         self.assertIn("20m-2b-dataset-001", delegated)
+        self.assertIn("--remote-backend", delegated)
 
     def test_exact_wsd_schedules_are_preserved(self) -> None:
         expected = {
