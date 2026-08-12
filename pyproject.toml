@@ -26,7 +26,7 @@ fla = [
 ]
 post-training = [
     "torch>=2.7.0",
-    "huggingface-hub>=0.34.0",
+    "huggingface-hub>=1.5,<2",
     "tiktoken>=0.9.0",
 ]
 
