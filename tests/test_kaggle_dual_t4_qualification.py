@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -73,6 +74,13 @@ class DualT4QualificationContractTests(unittest.TestCase):
         self.assertIn("--nproc-per-node=2", command)
         self.assertIn("--worker", command)
         self.assertIn("ddp", command)
+
+    def test_model_extra_contains_fla_runtime_dependencies(self) -> None:
+        pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        model_extra = pyproject["project"]["optional-dependencies"]["model"]
+        self.assertTrue(any(item.startswith("fla-core==0.5.2") for item in model_extra))
+        self.assertTrue(any(item.startswith("packaging>=") for item in model_extra))
+        self.assertTrue(any(item.startswith("numpy>=") for item in model_extra))
 
     def test_canonical_launcher_exposes_qualification_dry_run(self) -> None:
         result = subprocess.run(
