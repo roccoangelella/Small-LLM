@@ -1,4 +1,4 @@
-"""Offline tests for the one-command 100M Kaggle publication suite."""
+"""Offline tests for the one-command finite-data Kaggle publication suite."""
 
 from __future__ import annotations
 
@@ -46,6 +46,14 @@ class BuildAndPush100MTests(unittest.TestCase):
         self.assertEqual(resumed[:-1], fresh)
         self.assertEqual(resumed[-1], "--resume")
 
+    def test_wrapper_has_no_google_drive_credentials_or_client_dependency(self) -> None:
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("SMALL_LLM_GOOGLE_OAUTH_TOKEN", source)
+        self.assertNotIn("SMALL_LLM_DRIVE_FOLDER_ID", source)
+        self.assertNotIn("googleapiclient", source)
+        self.assertNotIn("google_auth", source)
+        self.assertIn("HF_TOKEN", source)
+
     def test_training_shape_and_tree_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -66,13 +74,13 @@ class BuildAndPush100MTests(unittest.TestCase):
                 "production": suite.production_identity(),
                 "shards": [],
             }
-            drive = {
+            durability = {
                 "version": 1,
                 "run_id": suite.RUN_ID,
                 "shards": [{"remote_durable": True}],
             }
             write_json(root / "manifest.json", manifest)
-            write_json(root / "drive_manifest.json", drive)
+            write_json(root / "drive_manifest.json", durability)
             write_json(
                 root / "qualification_plan.json",
                 {
