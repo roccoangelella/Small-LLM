@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dataset import production
 from tests.production_helpers import (
-    FlakyDriveStore,
+    FlakyShardStore,
     ReaderPatchMixin,
     documents,
     stream_config,
@@ -19,7 +19,7 @@ class ProductionRemoteTest(ReaderPatchMixin, unittest.TestCase):
     def test_transient_remote_failure_is_retried(self) -> None:
         self.use_documents(documents((3, 3, 4)))
         with tempfile.TemporaryDirectory() as tmp:
-            store = FlakyDriveStore()
+            store = FlakyShardStore()
             policy = production.ProductionPolicy(
                 "run",
                 target_source_tokens=10,
@@ -46,11 +46,11 @@ class ProductionRemoteTest(ReaderPatchMixin, unittest.TestCase):
                     with production.RunLock(root):
                         pass
 
-    def test_corrupt_drive_manifest_fails_closed(self) -> None:
+    def test_corrupt_legacy_durability_manifest_fails_closed(self) -> None:
         self.use_documents(documents((3, 3, 4)))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            store = FlakyDriveStore()
+            store = FlakyShardStore()
             policy = production.ProductionPolicy(
                 "run",
                 target_source_tokens=10,
