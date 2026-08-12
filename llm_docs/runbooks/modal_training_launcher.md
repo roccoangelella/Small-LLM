@@ -1,11 +1,11 @@
 ---
 status: current
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-12
 ---
 
 # Modal training launcher
 
-The canonical new-training entry point is `modal/launch.py`. It is a provider adapter around the existing `dataset`, `model`, and `trainer` packages; it does not define a second scientific trainer. All operator commands for the Modal lane run from the VPS.
+The canonical new-training and resume entry point is `modal/launch.py`. It is a provider adapter around the existing `dataset`, `model`, and `trainer` packages; it does not define a second scientific trainer. All operator commands for the Modal lane run from the VPS.
 
 ## VPS setup
 
@@ -23,6 +23,18 @@ modal secret create small-llm-training \
   HF_TOKEN="$HF_TOKEN" \
   SMALL_LLM_HF_REPO_ID="$SMALL_LLM_HF_REPO_ID"
 ```
+
+The secret can be created from an existing root environment file without copying values manually:
+
+```bash
+set -a && source /root/.env && set +a && \
+modal secret create small-llm-training \
+  WANDB_API_KEY="$WANDB_API_KEY" \
+  HF_TOKEN="$HF_TOKEN" \
+  SMALL_LLM_HF_REPO_ID="$SMALL_LLM_HF_REPO_ID"
+```
+
+`SMALL_LLM_HF_REPO_ID` must identify the private model repository dedicated to this checkpoint/artifact workflow. ADR 0046 uses rolling cleanup plus Hugging Face branch-history squashing to keep resume storage bounded, so do not point it at a repository whose historical Git commit graph must be preserved.
 
 Kaggle is only the remote source for the already-published 2B finite dataset. Authenticate the VPS Kaggle CLI with `KAGGLE_API_TOKEN` or an official token file. No Kaggle notebook participates in the Modal workflow.
 
@@ -51,6 +63,8 @@ Fixed Modal destination:
 
 The helper is stage-idempotent. Rerunning normally skips a verified download, a verified reblock, and a matching completed upload. Repair flags are `--force-download`, `--force-reblock`, and `--force-upload`; `--no-upload` stops after VPS preparation.
 
+When changing Modal accounts/workspaces while keeping the same VPS cache, use `--force-upload` until the upload-marker workspace-identity bug is removed: the current local marker can otherwise describe an upload performed against the previous workspace.
+
 The original Kaggle dataset remains unchanged. The derived profile is:
 
 ```text
@@ -72,7 +86,7 @@ modal run modal/launch.py --model 100M --tokens 2B --dry-run
 
 Dry-run resolution does not rent a GPU. It should resolve the dataset profile to `modal-2b-b64` and the automatic microbatch set to `16,32,48,64`.
 
-## Production shape
+## Production and resume command
 
 ```bash
 modal run --detach modal/launch.py \
@@ -81,7 +95,9 @@ modal run --detach modal/launch.py \
   --gpu H100
 ```
 
-`H100` is the default and permits the compatible H200 automatic upgrade. The default microbatch value is `0`, meaning benchmark 16, 32, 48, and 64 on the first GPU and freeze the fastest candidate that is finite and stays at or below 90% reserved VRAM.
+The same command starts a fresh trajectory, resumes from the current workspace's verified Modal checkpoint, or restores from the configured Hugging Face checkpoint transport when the new workspace has no verified local checkpoint.
+
+`H100` is the default and permits the compatible H200 automatic upgrade. On a genuinely fresh trajectory the default microbatch value is `0`, meaning benchmark 16, 32, 48, and 64 and freeze the fastest candidate that is finite and stays at or below 90% reserved VRAM. On a restored trajectory the frozen microbatch is recovered from durable run metadata rather than reprobed.
 
 Use an explicit microbatch only when reproducing a qualified run:
 
@@ -94,7 +110,7 @@ The prepared optimizer block contains 64 sequences. A full block is approximatel
 
 For the exact existing 2B training stream the reblocked plan has 15,259 optimizer updates, with a final 48-sequence block. Token-space WSD boundaries remain 100,007,936 warmup tokens, 1,499,987,968 stable tokens, and 399,998,976 decay tokens.
 
-## First-run gates
+## Startup and resume gates
 
 The launcher:
 
@@ -102,65 +118,79 @@ The launcher:
 2. discovers exactly one matching finite dataset on the read-only data Volume;
 3. performs a full schema-v2 verification once per manifest identity;
 4. derives the one-pass WSD plan from the dataset manifest;
-5. records GPU name, memory, compute capability, PyTorch, and CUDA runtime;
-6. uses a compute-capability-specific persistent Triton cache;
-7. runs a short real trainer forward/backward qualification at microbatch 16, 32, 48, and 64 unless one value was explicitly requested;
-8. rejects failed/OOM/non-finite candidates and freezes the fastest safe measured result;
-9. freezes source commit, model/data identity, precision, block geometry, and selected microbatch;
-10. starts online W&B training with 250-update validation/checkpoint cadence.
+5. looks for the newest verified local `small-llm-runs/<run-id>/checkpoints/step-XXXXXXXX` checkpoint;
+6. if no verified local checkpoint exists, reads `run/<run-id>/latest.json` from the configured private Hugging Face repository and restores that checkpoint only after both local and published manifests verify;
+7. for migration of the pre-ADR-0046 100M / 2B run only, falls back to `models/<run-id>/artifact.json` plus its referenced checkpoint and verifies that legacy checkpoint before installing it locally;
+8. recovers the frozen execution microbatch from restored metadata, or runs the 16/32/48/64 qualification only for a genuinely fresh trajectory;
+9. freezes model/data identity, precision, block geometry, microbatch and checkpoint transport metadata;
+10. starts or resumes the stable W&B run identity.
 
-A 48 or 64 failure on an 80 GB H100 is an expected capacity measurement, not a launcher failure as long as at least one candidate passes. An H200 may admit a larger candidate.
+A 48 or 64 failure on an 80 GB H100 is an expected capacity measurement only for a fresh qualification, not a launcher failure as long as at least one candidate passes. An H200 may admit a larger candidate.
 
-## Checkpointing and W&B
+## Checkpoint durability and Hugging Face transport
 
-Every 250 successful optimizer updates the trainer writes a verified joint checkpoint under `small-llm-runs/<run-id>/checkpoints/`; the final update is checkpointed as well. The Modal run Volume is the canonical exact-resume checkpoint transport for this trajectory. Legacy Hugging Face dataset-keyed checkpoint publication remains disabled inside the live trainer because that namespace can collide when the same finite corpus is reused by different model sizes.
-
-W&B runs online in project `Small-LLM` with stable run ID `100m-2b-data-001`. Resumes use the same W&B identity and `must` resume semantics after a local durable checkpoint exists.
-
-## Hugging Face checkpoint/model publication
-
-ADR 0044 requires the 100M / 2B artifact to exist on Hugging Face as well as the Modal run Volume. Publication is handled by `modal/publish_hf.py`, which verifies the checkpoint first and stores it under a model/run-specific namespace rather than the legacy dataset-only namespace.
-
-To copy the latest currently verified checkpoint to the configured private Hugging Face model repository while training is still running:
-
-```bash
-git pull --ff-only
-modal run modal/publish_hf.py --model 100M --tokens 2B
-```
-
-The checkpoint is uploaded under:
+ADR 0046 defines two durability layers:
 
 ```text
-models/100m-2b-data-001/step-XXXXXXXX/
+same-workspace durability:
+  Modal Volume small-llm-runs
+  every 250 successful optimizer updates + final
+
+cross-workspace durability:
+  private Hugging Face model repository
+  every 500 successful optimizer updates + final
+  namespace: run/100m-2b-data-001/
+  retention: latest resumable checkpoint only, with history squash
 ```
 
-and the pointer/identity metadata is written to:
+At an HF boundary the trainer first creates a normal verified joint checkpoint. The two-phase publisher uploads its complete checkpoint tree, reads the uploaded bytes back for SHA-256 verification, writes the checkpoint manifest, and moves `run/100m-2b-data-001/latest.json` only after the snapshot is valid. Rolling cleanup then removes superseded run checkpoint folders, squashes branch history, and reads the current latest pointer back before training continues.
+
+This replaces the former external ten-minute `modal/publish_hf.py` backup loop. Do **not** run that loop for live checkpoint durability.
+
+A same-workspace retry can therefore lose at most the work after the newest 250-update Modal boundary. A different Modal account/workspace can restore from the newest 500-update HF boundary. The exact trainer checkpoint contains model, optimizer, WSD scheduler, FP16 scaler, RNG state, counters, and data cursor.
+
+W&B runs online in project `Small-LLM` with stable run ID `100m-2b-data-001`. Any actual checkpoint resume uses the same W&B identity with `must` resume semantics.
+
+## Migrating the already-running 100M / 2B trajectory to a new Modal account
+
+The first new-workspace launch can bootstrap from the old Hugging Face publication layout created by `modal/publish_hf.py`:
 
 ```text
 models/100m-2b-data-001/artifact.json
+models/100m-2b-data-001/step-XXXXXXXX/
 ```
 
-The command is safe to rerun. It publishes the latest verified checkpoint available in `small-llm-runs`; it never reads a partially written checkpoint.
+If those objects still exist, the new launcher verifies and installs that checkpoint, reuses the recorded microbatch, resumes the same W&B run, and establishes the new rolling `run/100m-2b-data-001/...` transport at the next remote boundary. The infrastructure-only source-commit migration is recorded; subsequent rolling-HF restores again require the launcher checkout to match the transport checkpoint's source commit.
 
-After training completes, require and publish the exact final checkpoint with:
+If the old HF checkpoint was deleted and the old Modal workspace is also inaccessible, no launcher can reconstruct the missing trainer state. One surviving verified copy must be republished or migrated first.
+
+## Final human-facing Hugging Face artifact
+
+ADR 0044 remains in force independently of the rolling resume transport. After training completes, materialize the exact final model/checkpoint under the human-facing `models/...` namespace with:
 
 ```bash
 git pull --ff-only
 modal run modal/publish_hf.py --model 100M --tokens 2B --require-complete
 ```
 
-The final publication command fails closed unless the latest verified checkpoint step equals the qualification plan's full 15,259-step target. This post-run publication does not change, restart, or resume the frozen training trajectory.
+The final publication command fails closed unless the latest verified local checkpoint step equals the qualification plan's full 15,259-step target. It writes the final checkpoint under:
 
-## Resume
+```text
+models/100m-2b-data-001/step-XXXXXXXX/
+```
 
-The run Volume stores `step-XXXXXXXX` joint checkpoints. On every fresh Modal container the launcher verifies candidate `local_manifest.json` files and chooses the newest checkpoint whose block cursor agrees with its step number. The existing trainer then restores model, optimizer, WSD scheduler, FP16 scaler, RNG, counters, and data cursor.
+and identity metadata under:
 
-Modal automatic retries use this same path. Manual recovery is the identical launch command from the frozen source commit. The historical Kaggle 20M trajectory has a different W&B identity; do not create a second concurrent Modal invocation of the same 100M run identity.
+```text
+models/100m-2b-data-001/artifact.json
+```
+
+Do not use this command in an external periodic loop; live cross-workspace durability is now integrated in `modal/launch.py`.
 
 ## Hardware migration policy
 
-The historical FLA acceptance is T4/SM75 evidence. H100/H200 uses a different target architecture, so the first bounded probe is required even though recurrence semantics are unchanged. Keep FP16 for the first platform migration. Treat BF16 or Blackwell as separate follow-up qualifications rather than combining them with this run.
+The historical FLA acceptance is T4/SM75 evidence. H100/H200 uses a different target architecture, so the first bounded probe was required even though recurrence semantics are unchanged. Keep FP16 for this platform trajectory. Treat BF16 or Blackwell as separate follow-up qualifications rather than combining them with this run.
 
 ## Adding a future model
 
-Add the accepted geometry to the shared model/trainer preset surface, then register its nominal parameter label in `modal/profiles.py::MODEL_PRESETS`. Token budgets map to finite dataset profiles independently of model size. The block-64 profile is specifically authorized by ADR 0041 for the new Modal 100M / 2B trajectory; later batch changes require their own qualification/decision.
+Add the accepted geometry to the shared model/trainer preset surface, then register its nominal parameter label in `modal/profiles.py::MODEL_PRESETS`. Token budgets map to finite dataset profiles independently of model size. The block-64 profile is specifically authorized by ADR 0041 for the 100M / 2B trajectory; later batch changes require their own qualification/decision. Future Modal trajectories should keep model/run-specific HF checkpoint identities rather than returning to dataset-only checkpoint namespaces.
