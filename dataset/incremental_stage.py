@@ -14,6 +14,7 @@ from dataset.incremental_frontier import (
     stage_incremental_window,
 )
 from dataset.src.remote import sha256_path
+from dataset.src.storage import write_json_atomic
 
 
 def _load(path: Path, *, label: str) -> dict[str, object]:
@@ -24,6 +25,22 @@ def _load(path: Path, *, label: str) -> dict[str, object]:
     if not isinstance(payload, Mapping):
         raise RuntimeError(f"{label} must contain an object")
     return dict(payload)
+
+
+def _stable_consumer_manifest(
+    contract: Mapping[str, object],
+    frontier: Mapping[str, object],
+) -> dict[str, object]:
+    """Return trainer-facing metadata that does not change when production completes."""
+
+    manifest = build_consumer_manifest(contract=contract, frontier=frontier)
+    production = manifest.get("production")
+    if not isinstance(production, dict):
+        raise RuntimeError("incremental consumer manifest has no production identity")
+    # Completion is mutable control-plane state and therefore cannot participate
+    # in the trainer/checkpoint identity. The live value remains in shard_frontier.json.
+    production["incremental_producer_complete"] = False
+    return manifest
 
 
 def stage_incremental_window_when_ready(
@@ -49,7 +66,7 @@ def stage_incremental_window_when_ready(
         if remaining <= 0:
             raise TimeoutError("timed out waiting for incremental producer bootstrap metadata")
         try:
-            return stage_incremental_window(
+            result = stage_incremental_window(
                 store=store,
                 run_id=run_id,
                 destination=destination,
@@ -57,6 +74,14 @@ def stage_incremental_window_when_ready(
                 timeout_seconds=remaining,
                 poll_seconds=poll_seconds,
             )
+            if result.get("status") == "ready":
+                contract = _load(destination / RUN_CONTRACT_FILENAME, label="incremental run contract")
+                frontier = _load(destination / SHARD_FRONTIER_FILENAME, label="incremental shard frontier")
+                write_json_atomic(
+                    destination / "manifest.json",
+                    _stable_consumer_manifest(contract, frontier),
+                )
+            return result
         except RuntimeError as error:
             message = str(error)
             retryable = (
@@ -117,7 +142,7 @@ def verify_incremental_stage(
         raise RuntimeError("incremental stage marker/contract identity mismatch")
     if frontier.get("contract_sha256") != contract.get("contract_sha256"):
         raise RuntimeError("incremental frontier/contract identity mismatch")
-    expected_manifest = build_consumer_manifest(contract=contract, frontier=frontier)
+    expected_manifest = _stable_consumer_manifest(contract, frontier)
     if manifest != expected_manifest:
         raise RuntimeError("incremental consumer manifest changed after CPU staging")
 
@@ -158,4 +183,8 @@ def verify_incremental_stage(
     }
 
 
-__all__ = ["stage_incremental_window_when_ready", "verify_incremental_stage"]
+__all__ = [
+    "_stable_consumer_manifest",
+    "stage_incremental_window_when_ready",
+    "verify_incremental_stage",
+]
