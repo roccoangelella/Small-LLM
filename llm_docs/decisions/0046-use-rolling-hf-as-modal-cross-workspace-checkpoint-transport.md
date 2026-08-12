@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-12
 supersedes: 0045
+superseded_by: 0047
 ---
 
 # 0046 — Use rolling Hugging Face as the Modal cross-workspace checkpoint transport
@@ -23,54 +24,32 @@ The user wants Modal to use Hugging Face for checkpoint continuity in the same r
 
 ## Decision outcome
 
-Chosen option: **Modal training uses Hugging Face as an integrated cross-workspace checkpoint transport while retaining the Modal Volume as the faster same-workspace durability layer.**
+Chosen option at this stage: **integrate Hugging Face into Modal's exact-resume path and retain only the latest remote checkpoint.** The first implementation used a private Git-backed model repository, deleting superseded checkpoint folders and super-squashing branch history after a verified latest-pointer move.
 
-The operational contract is:
-
-- Local verified joint checkpoints remain every 250 successful optimizer updates on `small-llm-runs`.
-- A verified Hugging Face checkpoint is published every 500 successful optimizer updates and at the final trainer boundary.
-- The Hugging Face checkpoint namespace uses the model/run identity (for example `run/100m-2b-data-001/...`), not the dataset-only identity, so reusing the same finite corpus for another model cannot collide.
-- Publication remains two-phase: checkpoint bytes and their manifest are verified before `latest.json` moves.
-- Modal uses **rolling latest-only retention** for this transport. After the new latest pointer is durable, older checkpoint folders for that run are removed from the branch head and the Hub branch history is super-squashed. The current latest pointer is read back after the squash before training continues.
-- Rolling mode does not retain a remote best-checkpoint history. This transport exists for exact continuation; validation/best-model analysis remains separate.
-- On startup, if the local Modal checkpoint directory has no verified checkpoint, the runtime first tries the rolling `run/<run-id>/latest.json` transport and restores it with full local-manifest/published-manifest verification.
-- For migration of the already-running 100M / 2B trajectory only, the older `models/<run-id>/artifact.json` + `models/<run-id>/<step>/` layout written by `modal/publish_hf.py` is accepted as a legacy bootstrap source. Its frozen microbatch is reused instead of reprobed. A source-commit difference at this one legacy boundary is recorded as an infrastructure-only migration; once the rolling transport is established, later rolling restores again require the checkpoint source commit to match the launcher checkout.
-- The remote checkpoint contains transport metadata including dataset identity, dataset-manifest hash, frozen microbatch, and source commit. Dataset bytes remain independently reproducible from the frozen Kaggle source and are not duplicated inside the checkpoint repository.
-- `SMALL_LLM_HF_REPO_ID` must name a private repository intended for this run/checkpoint workflow because rolling cleanup super-squashes that repository branch history. Current file contents outside the old checkpoint folders are retained, but prior Git history is intentionally not preserved.
-
-ADR 0044 remains in force for the final Hugging Face model artifact. The integrated rolling checkpoint transport satisfies resumability; `modal/publish_hf.py --require-complete` may still be used after completion to materialize the human-facing final `models/...` artifact namespace.
+The high-level cross-workspace-resume decision remains valid, but the Git-backed storage mechanism was superseded before production use by ADR 0047 after the current Hugging Face platform was re-audited. Storage Buckets provide mutable, non-versioned object storage intended for training checkpoints and avoid the need to manipulate model-repository Git history.
 
 ## Consequences
 
 ### Positive
 
-- A new Modal account/workspace can resume directly from Hugging Face without access to the old `small-llm-runs` Volume.
-- The exact model/optimizer/scheduler/scaler/RNG/data-cursor checkpoint remains verified before restore.
-- Model/run-specific names eliminate the legacy cross-model dataset-key collision.
-- Rolling retention prevents the current Hub branch from containing dozens of full 100M optimizer checkpoints simultaneously.
-- History squashing removes superseded checkpoint commits from the active branch history rather than reproducing the unbounded ten-minute backup pattern.
-- The local 250-step Modal Volume cadence remains available for cheap same-workspace retries, while the 500-step Hub cadence bounds cross-workspace recomputation.
+- Established that a new Modal workspace should be able to resume from Hugging Face rather than depending exclusively on a workspace-local Volume.
+- Reused the existing two-phase checkpoint publication and manifest-verified restore protocol rather than inventing a second checkpoint format.
+- Established model/run-specific checkpoint identity and a bounded remote-retention requirement.
 
 ### Negative or limiting
 
-- Hugging Face publication is synchronous at the 500-step boundaries and therefore adds periodic wall-clock overhead.
-- A cross-workspace failure can require recomputing up to the work since the latest 500-step remote boundary; a same-workspace Modal retry can still use the newer 250-step local checkpoint.
-- `super_squash_history` is intentionally destructive to Git history. The configured repository should therefore be treated as an artifact/checkpoint store rather than a repository whose historical commit graph must be preserved.
-- If the Hugging Face repository has already been deleted and the old Modal workspace is no longer accessible, no software change can reconstruct a checkpoint that exists nowhere. One surviving copy is required for the initial migration.
+- The initial implementation forced mutable checkpoint traffic through a Git-backed model repository.
+- Keeping storage bounded required destructive branch-history squashing.
+- The normal Hugging Face model repository is a better fit for the final model artifact than for rapidly changing optimizer checkpoints.
 
-## Validation
+## Supersession
 
-The decision is satisfied when all of the following hold:
-
-1. A Modal trainer run publishes `run/<run-id>/latest.json` every 500 successful updates and at final completion.
-2. The latest pointer resolves to a checkpoint whose upload hashes and manifests verify.
-3. After a second remote publication, the prior checkpoint folder is absent from the branch head, the branch is squashed, and the current latest pointer still reads back to the new checkpoint.
-4. Starting the same run with an empty `small-llm-runs` Volume restores the rolling HF checkpoint, reuses its frozen microbatch, resumes the same W&B identity, and continues from the checkpoint block cursor.
-5. The pre-ADR-0046 `models/<run-id>/artifact.json` layout can bootstrap the already-running 100M / 2B run once when the new Modal workspace is empty.
+ADR 0047 keeps the 250-step local Modal checkpoint layer, the 500-step cross-workspace HF layer, the two-phase verified pointer protocol, and the legacy-bootstrap behavior, but moves the production remote checkpoint store to a private Hugging Face Storage Bucket. The final model remains in the normal Hugging Face model repository under ADR 0044.
 
 ## Links
 
 - [`0044-publish-100m-2b-final-model-to-hugging-face.md`](0044-publish-100m-2b-final-model-to-hugging-face.md)
 - [`0045-run-periodic-hf-backups-only-while-modal-training-is-live.md`](0045-run-periodic-hf-backups-only-while-modal-training-is-live.md)
+- [`0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md`](0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md)
 - [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - [`../current/status.md`](../current/status.md)
