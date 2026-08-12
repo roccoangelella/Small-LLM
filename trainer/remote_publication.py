@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from dataset.src.hf_bucket_checkpoint import HuggingFaceBucketCheckpointStore
 from dataset.src.remote import HuggingFaceCheckpointStore, TwoPhaseCheckpointPublisher
 
 
@@ -53,7 +54,7 @@ def _read_drive_manifest(path: Path) -> dict[str, object]:
 
 
 def configure_remote_publication(args: object) -> RemotePublication | None:
-    """Build the private-Hub publisher only when live publication is enabled."""
+    """Build the requested private-Hub checkpoint publisher."""
 
     every_steps = int(args.remote_publish_every_steps)
     if every_steps == 0:
@@ -66,21 +67,30 @@ def configure_remote_publication(args: object) -> RemotePublication | None:
         )
 
     drive_manifest = _read_drive_manifest(Path(args.remote_drive_manifest))
-    repo_id = args.remote_checkpoint_repo or os.environ.get("SMALL_LLM_HF_REPO_ID")
-    if not repo_id:
-        raise SystemExit(
-            "set --remote-checkpoint-repo or SMALL_LLM_HF_REPO_ID when remote publication is enabled"
-        )
-
     token_env = str(args.remote_token_env)
     token = os.environ.get(token_env)
-    store = HuggingFaceCheckpointStore(
-        str(repo_id),
-        token=token,
-        private=True,
-        revision=args.remote_checkpoint_revision,
-        create_repo=bool(args.remote_create_repo),
-    )
+    bucket_id = getattr(args, "remote_checkpoint_bucket", None)
+    if bucket_id:
+        store = HuggingFaceBucketCheckpointStore(
+            str(bucket_id),
+            token=token,
+            private=True,
+            create_bucket=bool(getattr(args, "remote_create_bucket", False)),
+        )
+    else:
+        repo_id = args.remote_checkpoint_repo or os.environ.get("SMALL_LLM_HF_REPO_ID")
+        if not repo_id:
+            raise SystemExit(
+                "set --remote-checkpoint-repo, --remote-checkpoint-bucket, or "
+                "SMALL_LLM_HF_REPO_ID when remote publication is enabled"
+            )
+        store = HuggingFaceCheckpointStore(
+            str(repo_id),
+            token=token,
+            private=True,
+            revision=args.remote_checkpoint_revision,
+            create_repo=bool(args.remote_create_repo),
+        )
     publisher = TwoPhaseCheckpointPublisher(
         store,
         run_id=str(drive_manifest["run_id"]),
@@ -98,14 +108,7 @@ def cleanup_remote_publication(
     *,
     checkpoint_id: str,
 ) -> dict[str, object] | None:
-    """Prune old Hub checkpoints only after the new latest pointer is durable.
-
-    This mode is deliberately Hugging-Face-specific. It removes older checkpoint
-    folders from the branch head and then super-squashes the branch so periodic
-    resume checkpoints do not accumulate unbounded Git/LFS/Xet history. The
-    current latest pointer is read back after the squash before training may
-    continue.
-    """
+    """Prune superseded objects only after the new latest pointer is durable."""
 
     if not bool(getattr(remote, "rolling_latest_only", False)):
         return None
@@ -115,13 +118,20 @@ def cleanup_remote_publication(
         raise RuntimeError("rolling remote publication has no valid run_id")
 
     store = getattr(remote.publisher, "store", None)
+    prune = getattr(store, "prune_run_checkpoints", None)
+    if callable(prune):
+        return dict(prune(run_id=run_id, checkpoint_id=checkpoint_id))
+
+    # Compatibility path for existing Git-backed checkpoint users. Modal uses a
+    # Storage Bucket under ADR 0047, so this destructive history-squash path is
+    # not part of the production Modal workflow.
     api = getattr(store, "api", None)
     repo_id = getattr(store, "repo_id", None)
     repo_type = getattr(store, "repo_type", "model")
     revision = getattr(store, "revision", None) or "main"
     token = getattr(store, "token", None)
     if api is None or not isinstance(repo_id, str) or not repo_id:
-        raise RuntimeError("rolling remote publication requires a Hugging Face checkpoint store")
+        raise RuntimeError("rolling remote publication requires a compatible Hugging Face checkpoint store")
 
     list_repo_files = getattr(api, "list_repo_files", None)
     delete_folder = getattr(api, "delete_folder", None)
