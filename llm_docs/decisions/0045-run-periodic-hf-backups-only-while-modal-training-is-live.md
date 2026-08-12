@@ -1,7 +1,7 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-11
-supersedes: null
+superseded_by: 0046
 ---
 
 # 0045 — Run periodic Hugging Face backups only while Modal training is live
@@ -24,6 +24,8 @@ Chosen option: **periodic Hugging Face publication must run only while the `smal
 
 The live-state check must not mutate, restart, or otherwise control the training App. The publication process remains separate from training and reads the persistent run Volume only. Modal execution state, rather than mere presence of a recently stopped App record, is the gate.
 
+This decision was superseded by ADR 0046 after a Modal-account migration exposed that the external publisher is not sufficient as a cross-workspace resume transport and that accumulating distinct checkpoint paths can exhaust private Hub storage.
+
 ## Consequences
 
 ### Positive
@@ -44,5 +46,6 @@ Start the publisher while `small-llm-training` is live and verify that new verif
 ## Links
 
 - [`0044-publish-100m-2b-final-model-to-hugging-face.md`](0044-publish-100m-2b-final-model-to-hugging-face.md)
+- [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md)
 - [`../runbooks/modal_training_launcher.md`](../runbooks/modal_training_launcher.md)
 - [`../current/status.md`](../current/status.md)
