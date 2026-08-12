@@ -119,6 +119,26 @@ def required_free_bytes(maximum_source_tokens: int) -> int:
     )
 
 
+def required_remote_shard_free_bytes(
+    target_shard_bytes: int,
+    *,
+    resident_shards: int = 3,
+) -> int:
+    """Bound local disk for upload-verified-and-evicted shard production.
+
+    ``resident_shards=3`` deliberately budgets an active writer, a just-finalized
+    upload/readback candidate, and one additional tail/checkpoint margin.  It is
+    independent of the total corpus horizon, so a 10B dataset never requires a
+    20+ GiB local preflight merely because its canonical copy is remote.
+    """
+
+    if isinstance(target_shard_bytes, bool) or target_shard_bytes <= 0:
+        raise ValueError("target_shard_bytes must be positive")
+    if isinstance(resident_shards, bool) or resident_shards <= 0:
+        raise ValueError("resident_shards must be positive")
+    return int(target_shard_bytes * resident_shards * config.DISK_SAFETY_MULTIPLIER)
+
+
 def preflight_disk(output_dir: Path, maximum_source_tokens: int, *, allow_unsafe: bool) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     if allow_unsafe:
@@ -128,5 +148,29 @@ def preflight_disk(output_dir: Path, maximum_source_tokens: int, *, allow_unsafe
     if free < required:
         raise RuntimeError(
             "insufficient free disk for production cache: "
+            f"free={free}, required={required}; use --allow-unsafe-low-disk only for bounded tests"
+        )
+
+
+def preflight_remote_shard_disk(
+    output_dir: Path,
+    target_shard_bytes: int,
+    *,
+    allow_unsafe: bool,
+    resident_shards: int = 3,
+) -> None:
+    """Preflight only the bounded rolling footprint for remotely durable shards."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if allow_unsafe:
+        return
+    free = shutil.disk_usage(output_dir).free
+    required = required_remote_shard_free_bytes(
+        target_shard_bytes,
+        resident_shards=resident_shards,
+    )
+    if free < required:
+        raise RuntimeError(
+            "insufficient free disk for rolling remote-shard production: "
             f"free={free}, required={required}; use --allow-unsafe-low-disk only for bounded tests"
         )
