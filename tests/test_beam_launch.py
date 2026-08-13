@@ -55,7 +55,7 @@ class BeamLaunchTest(unittest.TestCase):
         self.assertEqual(profiles.SUPPORTED_GPUS, frozenset({"RTX5090", "RTX4090", "A10G"}))
         self.assertNotIn("H100", profiles.SUPPORTED_GPUS)
         self.assertEqual(profiles.SEQUENCES_PER_BLOCK, 64)
-        self.assertEqual(profiles.MICROBATCH_CANDIDATES, (4, 8, 16, 32, 48, 64))
+        self.assertEqual(profiles.MICROBATCH_CANDIDATES, (8, 12, 16))
 
     def test_gpu_functions_are_explicitly_pinned(self) -> None:
         for function_name, gpu in (
