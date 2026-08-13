@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import sft_runtime as base
@@ -77,12 +78,67 @@ def publish(profile: base.SFTProfileSpec, **kwargs) -> int:
         parent_consumed_tokens=kwargs.get("parent_consumed_tokens"),
         revision=kwargs.get("revision"),
     )
-    # base.publish re-verifies the now-existing 10% bundle and then publishes it.
     return base.publish(profile, **kwargs)
+
+
+def train(
+    profile: base.SFTProfileSpec,
+    *,
+    dataset_dir: str | None,
+    parent_repo_id: str | None,
+    checkpoint_repo_id: str | None,
+    max_steps_this_session: int | None,
+    wandb_entity: str | None,
+) -> int:
+    worktree = base._prepare_worktree(profile)
+    bundle = base._find_bundle(dataset_dir)
+    parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_HF_REPO_ID")
+    checkpoint_repo = checkpoint_repo_id or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID", parent_repo)
+    if not parent_repo:
+        raise base.RuntimeFailure("pass --parent-repo-id or set SMALL_LLM_HF_REPO_ID")
+    if not checkpoint_repo:
+        raise base.RuntimeFailure("pass --checkpoint-repo-id or set SMALL_LLM_SFT_HF_REPO_ID")
+    entity = wandb_entity or os.environ.get("WANDB_ENTITY")
+    base._wandb_preflight(profile, worktree=worktree, entity=entity)
+
+    trainer_args = [
+        "--dataset-dir", str(bundle),
+        "--checkpoint-dir", str(profile.checkpoint_dir),
+        "--sft-run-id", profile.sft_run_id,
+        "--parent-repo-id", parent_repo,
+        "--parent-run-id", profile.parent_run_id,
+        "--parent-pointer", "best",
+        "--checkpoint-repo-id", checkpoint_repo,
+        "--device", "cuda",
+        "--precision", "fp16",
+        "--microbatch-size", str(profile.microbatch_size),
+        "--learning-rate", str(profile.learning_rate),
+        "--checkpoint-every-steps", str(profile.cadence_steps),
+        "--evaluation-every-steps", str(profile.cadence_steps),
+        "--remote-publish-every-steps", str(profile.cadence_steps),
+        "--wandb-mode", "online",
+        "--wandb-project", "Small-LLM",
+        "--wandb-run-id", profile.wandb_run_id,
+        "--wandb-run-name", profile.wandb_run_name,
+    ]
+    if entity:
+        trainer_args += ["--wandb-entity", entity]
+    if max_steps_this_session is not None:
+        trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
+
+    command = base._uv_prefix(wandb=True) + [
+        "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
+        str(worktree / "kaggle" / "dual_t4_sft.py"),
+        "--worktree", str(worktree),
+        "--sft-fraction-numerator", str(profile.sft_fraction_numerator),
+        "--sft-fraction-denominator", str(profile.sft_fraction_denominator),
+        *trainer_args,
+    ]
+    return base._run(command, cwd=worktree)
 
 
 def evaluate(profile: base.SFTProfileSpec, **kwargs) -> int:
     return base.evaluate(profile, **kwargs)
 
 
-__all__ = ["evaluate", "prepare", "publish"]
+__all__ = ["evaluate", "prepare", "publish", "train"]
