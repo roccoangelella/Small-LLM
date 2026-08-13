@@ -7,15 +7,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_incremental_producer_and_stage_precede_h100_spawn() -> None:
+def test_incremental_producer_and_supervised_stage_precede_h100_spawn() -> None:
     source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
 
     producer = source.index("producer_call = produce_rolling_dataset_remote.spawn")
-    stage = source.index("staged = stage_rolling_dataset_remote.remote")
+    stage = source.index("stage_call = stage_rolling_dataset_remote.spawn")
+    supervise = source.index("await_stage_with_producer(stage_call, producer_call)")
     authorize = source.index('staged.get("h100_dispatch_allowed") is not True')
     spawn = source.index("result = train_rolling_remote.with_options")
-    assert producer < stage < authorize < spawn
+    assert producer < stage < supervise < authorize < spawn
     assert '"h100_allocated": False' in source
+    assert "stage_rolling_dataset_remote.remote" not in source
 
 
 def test_dataset_producer_is_cpu_only_and_h100_has_no_automatic_retry() -> None:
