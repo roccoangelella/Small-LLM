@@ -80,6 +80,10 @@ Stable `models/...` artifacts are verified with their native `local_manifest.jso
 
 ADR 0058 defines the incremental producer/consumer path: approximately-1-GiB immutable HF dataset shards, monotonic READY frontier, frozen 16-block validation prefix, cheap CPU production/staging before H100 allocation, current+successor lead window, and exact ordered H100 consumption. The frozen whole-block training horizon is 76,294 updates / 10,000,007,168 target tokens with standard WSD 3,815 warmup / 57,220 stable / 15,259 decay updates.
 
+**Technical implementation is complete on `main`.** CI compilation and the focused HF checkpoint-transport regressions pass. In the full-suite CI log, all incremental-10B regressions pass: exact profile/horizon, monotonic READY publication, frozen validation, durability ordering, dynamic reader continuation beyond the bootstrap manifest, current+successor CPU staging, successor-prefetch promotion without duplicate download, producer/stager supervision before H100 dispatch, and checkpoint-aligned rolling-cache behavior. CPU producer, CPU stager, and their internal readiness wait are all bounded to a 24-hour CPU session; no H100 is allocated during bootstrap waiting.
+
+The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
+
 Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../reference/100m_10b_incremental_dataset.md). Operational procedure: [`../runbooks/100m_10b_incremental_modal.md`](../runbooks/100m_10b_incremental_modal.md).
 
 ## Post-training status
