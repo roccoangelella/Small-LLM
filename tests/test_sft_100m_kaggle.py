@@ -164,6 +164,22 @@ class SFT100M2BKaggleTests(unittest.TestCase):
             self.assertTrue(set(left).isdisjoint(right))
             self.assertLessEqual(abs(len(left) - len(right)), 1)
 
+    def test_long_rank_zero_side_effects_use_a_bounded_cpu_control_group(self) -> None:
+        distributed = mock.Mock()
+        group = object()
+        distributed.new_group.return_value = group
+
+        self.assertIs(dual_t4_sft._new_control_group(distributed), group)
+        kwargs = distributed.new_group.call_args.kwargs
+        self.assertEqual(kwargs["backend"], "gloo")
+        self.assertEqual(
+            kwargs["timeout"].total_seconds(),
+            dual_t4_sft.CONTROL_GROUP_TIMEOUT_SECONDS,
+        )
+
+        dual_t4_sft._control_barrier(distributed, group)
+        distributed.barrier.assert_called_once_with(group=group)
+
 
 if __name__ == "__main__":
     unittest.main()

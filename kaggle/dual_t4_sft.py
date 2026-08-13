@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from datetime import timedelta
 import json
 import math
 import os
@@ -14,6 +15,28 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 SUPPORTED_MICROBATCH_SIZES = (1, 2, 4)
+CONTROL_GROUP_TIMEOUT_SECONDS = 60 * 60
+
+
+def _new_control_group(distributed: Any) -> Any:
+    """Create the CPU group used while rank zero owns long side effects.
+
+    Rank one may reach a cadence boundary while rank zero is still validating,
+    generating behavior probes, saving, or publishing.  Waiting in NCCL there
+    starts the default ten-minute CUDA collective watchdog even though no GPU
+    collective is expected yet.  A bounded Gloo group keeps that wait entirely
+    on the control plane; both ranks return to NCCL together for the next DDP
+    optimizer block.
+    """
+
+    return distributed.new_group(
+        backend="gloo",
+        timeout=timedelta(seconds=CONTROL_GROUP_TIMEOUT_SECONDS),
+    )
+
+
+def _control_barrier(distributed: Any, group: Any) -> None:
+    distributed.barrier(group=group)
 
 
 def _arguments(argv: Sequence[str] | None) -> tuple[Path, int, int, list[str]]:
@@ -315,6 +338,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     torch.cuda.set_device(local_rank)
     dist.init_process_group(backend="nccl")
+    control_group = _new_control_group(dist)
     qualified._install_bounded_autotune()
 
     original_engine = sft_train.TrainerEngine
@@ -344,7 +368,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rank=rank,
                 microbatch_size=microbatch_size,
             )
-            dist.barrier()
+            _control_barrier(dist, control_group)
             raw_model = self.model
             self._small_llm_raw_model = raw_model
             self._small_llm_rank = rank
@@ -379,7 +403,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             qualified._with_raw_model(self, original_load_state, state)
 
     def synchronized_session_step(self: Any, timeout: float | None = None) -> Any:
-        dist.barrier()
+        _control_barrier(dist, control_group)
         return original_session_step(self, timeout=timeout)
 
     def profile_budget(parent_consumed_tokens: int, **_: Any) -> int:
@@ -506,7 +530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_code = int(sft_train.main(trainer_argv))
         if rank == 0 and exit_code == 0:
             _rewrite_summary_fraction(checkpoint_dir, fraction)
-        dist.barrier()
+        _control_barrier(dist, control_group)
         return exit_code
     finally:
         if rank != 0:
