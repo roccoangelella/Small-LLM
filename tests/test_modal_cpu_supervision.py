@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections import deque
+from pathlib import Path
 
-from modal.cpu_supervision import await_stage_with_producer
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "small_llm_modal_cpu_supervision",
+    ROOT / "modal" / "cpu_supervision.py",
+)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+await_stage_with_producer = MODULE.await_stage_with_producer
 
 
 class FakeCall:
