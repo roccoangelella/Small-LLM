@@ -2,14 +2,14 @@
 
 `beam/launch.py` is the Beam counterpart of `modal/launch.py`. It keeps the same Small-LLM scientific and checkpoint contract while binding execution to Beam Functions, GPUs, secrets, and distributed Volumes.
 
-Beam is a Python SDK plus CLI. Install `beam-client`, configure your Beam account, and run the launcher from the repository root so Beam syncs the complete checkout.
+Beam is a Python SDK plus CLI and is included by the project's canonical `uv sync` environment. Run the launcher from the repository root so Beam syncs the complete checkout.
 
 ## Setup
 
 ```bash
 cd ~/Projects/Small-LLM
+uv sync
 source .venv/bin/activate
-uv pip install --upgrade beam-client
 beam configure default --token YOUR_BEAM_TOKEN
 ```
 
@@ -42,9 +42,9 @@ Once the scientific gate is explicitly closed, launch the real trajectory with:
 python beam/launch.py --model 100M --tokens 10B --gpu RTX5090
 ```
 
-A fresh Beam trajectory probes real forward/backward execution at microbatch `4, 8, 16, 32, 48, 64`. OOM, non-finite, and >90%-reserved-memory candidates are rejected; the fastest safe candidate is frozen. The optimizer block remains exactly 64 sequences.
+A fresh Beam trajectory probes real forward/backward execution at microbatch `8, 12, 16`. OOM, non-finite, and >90%-reserved-memory candidates are rejected; the fastest safe candidate is frozen. The optimizer block remains exactly 64 sequences.
 
-The first paid RTX5090 compatibility qualification must therefore be either an isolated noncanonical smoke workflow or the already-authorized first segment of the real trajectory. Never create a disposable benchmark under `100m-10b-data-001`.
+Under ADR 0065, the first authorized real RTX5090 allocation is the compatibility qualification and continues into training when the startup probe succeeds. No separate paid GPU smoke is required solely for Beam compatibility.
 
 ## 10B CPU-first allocation order
 
