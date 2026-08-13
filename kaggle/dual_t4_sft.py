@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+SUPPORTED_MICROBATCH_SIZES = (1, 2, 4)
+
 
 def _arguments(argv: Sequence[str] | None) -> tuple[Path, int, int, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
@@ -63,8 +65,10 @@ def _distributed_sft_train_step(engine: Any, batch: Any) -> Any:
         raise ValueError("SFT DDP requires a non-empty train block")
     if world_size != 2:
         raise RuntimeError("SFT DDP requires world_size=2")
-    if engine.config.microbatch_size != 4:
-        raise RuntimeError("SFT DDP requires microbatch_size=4")
+    if engine.config.microbatch_size not in SUPPORTED_MICROBATCH_SIZES:
+        raise RuntimeError(
+            f"SFT DDP microbatch_size must be one of {SUPPORTED_MICROBATCH_SIZES}"
+        )
 
     ordered_inputs, ordered_labels = pinned_step._ordered_batch_tensors(batch)
     indices = _rank_row_indices(batch.sequence_count, rank, world_size)
@@ -323,12 +327,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_select_resume = sft_train._select_resume
     original_path_write_text = Path.write_text
     checkpoint_dir = Path(_argument_value(trainer_argv, "--checkpoint-dir")).resolve()
+    microbatch_size = int(_argument_value(trainer_argv, "--microbatch-size"))
+    if microbatch_size not in SUPPORTED_MICROBATCH_SIZES:
+        raise RuntimeError(
+            f"SFT DDP microbatch_size must be one of {SUPPORTED_MICROBATCH_SIZES}"
+        )
     fraction = numerator / denominator
 
     class DistributedSFTTrainerEngine(original_engine):
         def __init__(self, model: Any, config: Any, *, device: Any = None, optimizer: Any = None) -> None:
             super().__init__(model, config, device=f"cuda:{local_rank}", optimizer=optimizer)
-            qualified._prewarm_raw_model(self, rank=rank)
+            if config.microbatch_size != microbatch_size:
+                raise RuntimeError("SFT DDP profile and trainer microbatch sizes disagree")
+            qualified._prewarm_raw_model(
+                self,
+                rank=rank,
+                microbatch_size=microbatch_size,
+            )
             dist.barrier()
             raw_model = self.model
             self._small_llm_raw_model = raw_model
@@ -466,7 +481,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         sft_train.print = primary_print
         print(
             "[kaggle-sft-ddp] execution: 2x Tesla T4, variable SFT blocks, "
-            f"microbatch=4, exact global-token objective, sft_fraction={fraction:.2%}",
+            f"microbatch={microbatch_size}, exact global-token objective, "
+            f"sft_fraction={fraction:.2%}",
             flush=True,
         )
     else:

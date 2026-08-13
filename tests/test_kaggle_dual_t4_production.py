@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 import unittest
 from pathlib import Path
@@ -86,6 +87,15 @@ class KaggleDualT4ProductionTests(unittest.TestCase):
             production._representative_config_indices(36, 6),
             [0, 7, 14, 21, 28, 35],
         )
+
+    def test_prewarm_can_use_a_smaller_sft_execution_microbatch(self) -> None:
+        parameter = inspect.signature(production._prewarm_raw_model).parameters[
+            "microbatch_size"
+        ]
+        self.assertEqual(parameter.default, production.MICROBATCH_SIZE)
+
+        source = inspect.getsource(production._prewarm_raw_model)
+        self.assertIn("(microbatch_size, CONTEXT_LENGTH)", source)
 
     def test_overflow_collectives_precede_any_optimizer_step(self) -> None:
         source = (KAGGLE / "dual_t4_train.py").read_text(encoding="utf-8")

@@ -141,11 +141,18 @@ def _local_scaler_found_inf(engine: Any) -> bool:
     return any(float(value.detach().item()) != 0.0 for value in found.values())
 
 
-def _prewarm_raw_model(engine: Any, *, rank: int) -> None:
+def _prewarm_raw_model(
+    engine: Any,
+    *,
+    rank: int,
+    microbatch_size: int = MICROBATCH_SIZE,
+) -> None:
     """Populate Triton/FLA caches once without changing optimizer or token state."""
 
     if rank != 0:
         return
+    if microbatch_size <= 0:
+        raise ValueError("prewarm microbatch_size must be positive")
     import torch
     from trainer.precision import autocast_context
 
@@ -155,13 +162,13 @@ def _prewarm_raw_model(engine: Any, *, rank: int) -> None:
     before_scale = float(engine.scaler.get_scale())
     engine.optimizer.zero_grad(set_to_none=True)
     inputs = torch.zeros(
-        (MICROBATCH_SIZE, CONTEXT_LENGTH),
+        (microbatch_size, CONTEXT_LENGTH),
         dtype=torch.long,
         device=engine.device,
     )
     print(
         "[kaggle-ddp] cold FLA/Triton prewarm on rank 0 at local shape "
-        f"{MICROBATCH_SIZE}x{CONTEXT_LENGTH}; no optimizer step is executed",
+        f"{microbatch_size}x{CONTEXT_LENGTH}; no optimizer step is executed",
         flush=True,
     )
     started = time.perf_counter()

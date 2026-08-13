@@ -149,6 +149,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertIn("status=available", output.getvalue())
 
     def test_variable_sft_rows_partition_without_duplication(self) -> None:
+        self.assertEqual(dual_t4_sft.SUPPORTED_MICROBATCH_SIZES, (1, 2, 4))
         for count in range(1, 18):
             left = dual_t4_sft._rank_row_indices(count, 0, 2)
             right = dual_t4_sft._rank_row_indices(count, 1, 2)
