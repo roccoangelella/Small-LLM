@@ -5,6 +5,7 @@ Evidence records completed observations: measured results, verification reports,
 ## Current scaling comparison
 
 - [`scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md) — same-`eval_core_v1` comparison of 20M/500M, 20M/2B, and 100M/2B, including the sampled-vs-greedy Paris clarification and qualitative-protocol boundary.
+- [`scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md) — microbatch-2 live SFT evidence through update 250 and the rank-asymmetric cadence timeout before the first checkpoint.
 
 ## Approximately-20M evidence
 

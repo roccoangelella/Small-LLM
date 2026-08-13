@@ -36,6 +36,12 @@ It provides profile-driven `prepare`, `publish`, `train`, and `eval` actions. Th
 
 The registered 100M/2B profile is `100m-2b-sft-s0-001`. Its Kaggle training path launches two NCCL processes across exactly two Tesla T4 GPUs. Variable-size SFT blocks are split between ranks without duplicating loss-bearing examples; an all-ignored graph-carrying row is used only when needed to equalize DDP synchronization points. W&B, evaluation, checkpoint saving, and remote publication remain rank-zero side effects. Resume selection is synchronized so both ranks load the exact checkpoint chosen by rank zero.
 
+Rank-zero-only cadence work can take longer than NCCL's ten-minute collective
+watchdog. The dual-T4 SFT shim therefore uses a separate bounded CPU/Gloo
+control group while rank zero validates, generates behavior probes, saves, or
+publishes. NCCL is used again only when both ranks are ready for the next DDP
+optimizer block.
+
 ## S0 data contract
 
 The implemented S0 source pins `HuggingFaceTB/smol-smoltalk` revision:

@@ -361,8 +361,17 @@ any optimizer step. The 100M/2B profile therefore uses per-rank execution
 microbatch 2. This changes only the number of gradient-accumulation slices;
 the global SFT block, full-block target normalization, DDP-average
 compensation, clipping boundary, and single optimizer update are unchanged.
-Treat microbatch 2 as pending the next bounded live smoke, not as passed T4
-evidence in advance.
+
+Microbatch 2 subsequently passed prewarm and completed 250 finite optimizer
+updates. The first cadence boundary exposed a separate synchronization bug:
+rank 1 entered the next NCCL barrier while rank 0 was still running the real
+validation and behavior suites, then hit NCCL's 600-second watchdog. No
+step-250 checkpoint was saved, so that attempt is not resumable. The pinned
+runtime now waits for rank-zero cadence work through a one-hour CPU/Gloo
+control group and returns both ranks to NCCL together. Restart the same command
+from the parent; automatic resume must report no SFT checkpoint, and the next
+acceptance boundary is successful step-250 evaluation, local save, and verified
+remote publication.
 
 The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest and trainer gate use the exact verified completed parent counter rather than the nominal `2B` label.
 
