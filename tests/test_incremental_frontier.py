@@ -61,9 +61,12 @@ class FakeStore:
 
 
 def _contract(*, validation_blocks: int = 1) -> dict[str, object]:
+    # 4 context tokens * 2 sequences = 8 target tokens/update. 800 tokens gives
+    # 100 updates, comfortably above the 16-update minimum warmup used by the
+    # production WSD contract while keeping this fixture tiny.
     return build_run_contract(
         run_id="dataset-001",
-        nominal_training_tokens=32,
+        nominal_training_tokens=800,
         target_source_tokens=100,
         minimum_source_tokens=90,
         maximum_source_tokens=110,
@@ -209,7 +212,7 @@ class IncrementalFrontierTests(unittest.TestCase):
         validation = [row for row in manifest["shards"] if row["split"] == "validation"]
         self.assertEqual(len(train), 2)
         self.assertEqual(len(validation), 1)
-        self.assertEqual(manifest["incremental_frontier"]["planned_train_blocks"], 4)
+        self.assertEqual(manifest["incremental_frontier"]["planned_train_blocks"], 100)
 
     def test_cpu_stage_downloads_current_and_successor_before_gpu(self) -> None:
         store, _, rows = _ready_store()
