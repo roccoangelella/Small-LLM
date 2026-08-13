@@ -9,3 +9,17 @@ In the meanwhile, i'm wiring the next test, staying consistent with the "scale d
 
 
 Speaking about GPUs, we wired Kaggle training to use both T4. We can forget 60k tokens/second that our Modal's H100 achieves on the 100M model, but it's gonna be a nice plan b. 
+
+---
+Good news! The temp=1 test went pretty well and proved two important points:
+1. No more repetition loop, but rather "senseful gibberish"*. Of course, higher temperature and top k mean more possible tokens to choose from, and less probability of falling into producing the same trigrams.
+2. Unexpectedly, more correct answers! 4 (or 5 if we consider that a french word followed by "paris" accounts as a correct answer to "what's the capital of France") versus the 2 of the deterministic test. 100% profit!
+
+
+***PROMPT**:"The rain had stopped before dawn, leaving the streets covered in "
+**CONTINUATION**:"iced coffee.\n\nSo, what did the kids get out and eat, the parents didn't know, did?\n\nAnd the parents did not know how much to do. So, the parents had no clue how they got out and had a problem.\n\nThey didn't know, but the children was a little sick. They did not know how to handle them and didn't know if this was going to happen.\n\nThe parents knew that, right now, the kids have been in the area for around three weeks and there has been a significant increase in kids. They said that when kids get out and eat,",
+
+I mean, it doesn't make much sense, but the deterministic test's answer was ""ices. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet, and the sun was shining. The rain was still wet,"
+
+If i had to choose, i'd say the first one makes much more sense, doesn't it? I mean, it tells you a story at least :)
+
