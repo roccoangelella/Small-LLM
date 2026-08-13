@@ -136,9 +136,9 @@ def _remove_kagglehub_transport_artifacts(root: Path) -> tuple[str, ...]:
     """Remove downloader-owned root artifacts before byte-for-byte dataset comparison.
 
     KaggleHub's direct ``output_dir`` resolver may leave the downloaded version archive
-    (for example ``1.archive``) beside the extracted dataset files. That archive is a
-    transport implementation detail, not a dataset file, and must not participate in
-    the immutable bundle tree identity.
+    (for example ``1.archive``) and a zero-byte completion marker tree beside the
+    extracted dataset files. Those are transport implementation details, not dataset
+    files, and must not participate in the immutable bundle tree identity.
     """
 
     removed: list[str] = []
@@ -147,6 +147,23 @@ def _remove_kagglehub_transport_artifacts(root: Path) -> tuple[str, ...]:
             continue
         path.unlink()
         removed.append(path.name)
+
+    marker_root = root / ".complete"
+    if marker_root.exists():
+        if marker_root.is_symlink() or not marker_root.is_dir():
+            raise PublishFailure(f"unsafe KaggleHub completion-marker root: {marker_root}")
+        marker_files: list[Path] = []
+        for path in sorted(marker_root.rglob("*")):
+            if path.is_symlink():
+                raise PublishFailure(f"unsafe KaggleHub completion-marker symlink: {path}")
+            if path.is_file():
+                if path.suffix != ".complete" or path.stat().st_size != 0:
+                    raise PublishFailure(f"unexpected KaggleHub completion-marker content: {path}")
+                marker_files.append(path)
+            elif not path.is_dir():
+                raise PublishFailure(f"unexpected KaggleHub completion-marker entry: {path}")
+        removed.extend(path.relative_to(root).as_posix() for path in marker_files)
+        shutil.rmtree(marker_root)
     return tuple(removed)
 
 
