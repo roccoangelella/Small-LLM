@@ -6,15 +6,23 @@ supersedes: null
 
 # 0058 — Produce 10B shards concurrently with Modal training
 
-## Context
+## Context and problem statement
 
 The rolling 10B dataset implementation already avoids materializing the complete approximately-20-GB derived corpus in Modal and keeps only a bounded current-plus-next training-shard cache. However, the first implementation still assumed a completed schema-v2 manifest before H100 training could begin. That stopped one step short of the intended architecture: derived shards should be produced directly from the pinned ClimbMix source while earlier READY shards are already being consumed by Modal.
 
 True producer/consumer overlap also means the training horizon and validation set cannot depend on a terminal manifest that does not exist at update 1. Those scientific contracts therefore have to be frozen before H100 allocation.
 
-## Decision
+## Considered options
 
-Adopt an incremental producer-consumer dataset contract for the 100M / 10B trajectory.
+- Build the complete approximately-10B derived corpus before any H100 allocation, then use the existing static rolling-shard reader.
+- Stream directly from mutable producer-local files into the H100 process without an independently durable READY boundary.
+- Adopt an immutable prelaunch run contract plus a monotonic remotely verified READY frontier, allowing CPU dataset production and H100 consumption to overlap while preserving deterministic block identity and a final completed manifest.
+
+The first option preserves the old reader assumption but wastes the opportunity to overlap production and training. The second can expose data that is not reconstructable after a producer crash. The third preserves deterministic scientific identity and fail-closed durability while eliminating the completed-corpus prerequisite.
+
+## Decision outcome
+
+Chosen option: **adopt an incremental producer-consumer dataset contract for the 100M / 10B trajectory**, with immutable prelaunch identity, a remotely durable READY frontier, CPU-before-H100 staging, and a terminal immutable schema-v2 manifest.
 
 ### Immutable prelaunch run contract
 
@@ -85,8 +93,40 @@ Hugging Face remains the durable per-shard source of truth. A later second epoch
 
 ## Consequences
 
-The complete derived 10B corpus does not have to exist before H100 training starts, and no machine has to hold the complete corpus locally. The first useful GPU update can begin once the CPU producer has established a verified two-shard lead plus frozen validation, while later dataset production overlaps training.
+### Positive
 
-This design adds a mutable control-plane frontier, so monotonicity and crash ordering become part of correctness. The final immutable manifest is still required before the dataset can be called a completed reusable corpus.
+- The complete derived 10B corpus does not have to exist before H100 training starts.
+- No machine has to hold the complete corpus locally.
+- The first useful GPU update can begin once the CPU producer has established a verified two-shard lead plus frozen validation, while later dataset production overlaps training.
+- Checkpoint-aligned resume remains deterministic because every READY shard has immutable remote identity and the trainer consumes one frozen block prefix.
+- The final immutable manifest remains available as the canonical completed-corpus record for later reuse.
 
-This decision does not waive ADR 0050's behavioral/capability gate for launching the fresh 100M / 10B experiment.
+### Negative or limiting
+
+- A mutable control-plane frontier becomes part of correctness, so monotonicity and crash ordering require explicit verification and regression coverage.
+- If the producer falls behind, the H100 training process waits rather than violating block order.
+- The frozen validation prefix must become available before H100 dispatch, which can delay startup beyond the first two train shards.
+- The final immutable manifest is still required before the dataset can be called a completed reusable corpus.
+- This decision does not waive ADR 0050's behavioral/capability gate for launching the fresh 100M / 10B experiment.
+
+## Validation
+
+Treat the implementation as qualified only if repository tests demonstrate at least:
+
+- exact prelaunch 76,294-update / 10,000,007,168-target-token horizon and standard WSD boundaries;
+- immutable run-contract read-back identity;
+- monotonic READY train-prefix publication and frozen validation metadata;
+- crash ordering in which durable producer progress/Modal Volume visibility precedes READY publication and local eviction;
+- CPU checkpoint-aligned current-plus-successor staging before H100 dispatch;
+- SHA-256/byte-size failure never exposing a shard to the trainer;
+- dynamic trainer reads continuing beyond the immutable bootstrap manifest without changing checkpoint identity;
+- one-shard-ahead prefetch promotion without duplicate boundary download;
+- producer or stager failure surfacing before H100 allocation;
+- terminal frontier completion binding the completed manifest SHA-256.
+
+## Links
+
+- [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md)
+- [`0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md`](0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md)
+- [`0057-use-standard-wsd-for-100m-10b.md`](0057-use-standard-wsd-for-100m-10b.md)
+- [`../runbooks/100m_10b_incremental_modal.md`](../runbooks/100m_10b_incremental_modal.md)
