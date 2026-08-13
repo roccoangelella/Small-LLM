@@ -26,23 +26,25 @@ beam machine list
 
 The adapter deliberately allows only the Beam serverless lane recorded by the current project decision: `RTX5090`, `RTX4090`, and `A10G`. `RTX5090` is the default. `H100` is intentionally rejected by the Beam launcher so Beam credits cannot accidentally spill into an on-demand H100; use the existing Modal lane when H100 is the intended comparison.
 
-## Dry run and launch
+## Dry run and scientific launch gate
+
+The Beam adapter can be resolved without allocating a GPU:
 
 ```bash
 python beam/launch.py --model 100M --tokens 10B --gpu RTX5090 --dry-run
-python beam/launch.py --model 100M --tokens 10B --gpu RTX5090
-python beam/launch.py --model 100M --tokens 10B --gpu RTX4090
 ```
 
-For the first live qualification, use a bounded fresh segment:
+The canonical `100m-10b-data-001` trajectory is still behind ADR 0050's behavioral launch gate. **Do not use `--max-steps-this-session` as a GPU smoke test before that gate closes**: even a short segment would create/resume the canonical checkpoint and W&B identity.
+
+Once the scientific gate is explicitly closed, launch the real trajectory with:
 
 ```bash
-python beam/launch.py --model 100M --tokens 10B --gpu RTX5090 --max-steps-this-session 20
+python beam/launch.py --model 100M --tokens 10B --gpu RTX5090
 ```
 
 A fresh Beam trajectory probes real forward/backward execution at microbatch `4, 8, 16, 32, 48, 64`. OOM, non-finite, and >90%-reserved-memory candidates are rejected; the fastest safe candidate is frozen. The optimizer block remains exactly 64 sequences.
 
-Do not switch an already-started trajectory to a GPU that cannot support its frozen microbatch. Use short fresh benchmark runs to choose the long-run GPU first.
+The first paid RTX5090 compatibility qualification must therefore be either an isolated noncanonical smoke workflow or the already-authorized first segment of the real trajectory. Never create a disposable benchmark under `100m-10b-data-001`.
 
 ## 10B CPU-first allocation order
 
