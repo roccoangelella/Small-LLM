@@ -68,4 +68,21 @@ def prepare(
     )
 
 
-__all__ = ["prepare"]
+def publish(profile: base.SFTProfileSpec, **kwargs) -> int:
+    prepare(
+        profile,
+        replay_root=kwargs["replay_root"],
+        prepared_dir=kwargs.get("prepared_dir"),
+        output_dir=kwargs.get("output_dir"),
+        parent_consumed_tokens=kwargs.get("parent_consumed_tokens"),
+        revision=kwargs.get("revision"),
+    )
+    # base.publish re-verifies the now-existing 10% bundle and then publishes it.
+    return base.publish(profile, **kwargs)
+
+
+def evaluate(profile: base.SFTProfileSpec, **kwargs) -> int:
+    return base.evaluate(profile, **kwargs)
+
+
+__all__ = ["evaluate", "prepare", "publish"]
