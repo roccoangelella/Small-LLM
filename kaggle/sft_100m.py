@@ -5,7 +5,7 @@ from pathlib import Path
 
 import sft_runtime
 
-IMPLEMENTATION_COMMIT = "f582e1f451568703214c04a5eda90cd90ef6626b"
+IMPLEMENTATION_COMMIT = "87ceaaeb43416cfe200499c968ba4f58b701b6d9"
 
 
 class Profile(sft_runtime.SFTProfileSpec):
@@ -33,7 +33,7 @@ PROFILE = Profile(
     launch_commit=IMPLEMENTATION_COMMIT,
     sft_fraction_numerator=4,
     sft_fraction_denominator=100,
-    microbatch_size=4,
+    microbatch_size=2,
     cadence_steps=250,
     learning_rate=3e-5,
 )

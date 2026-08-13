@@ -96,6 +96,14 @@ Evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md`](../e
 
 The 100M/2B S0 bundle is built and privately published at `roccoangelella/small-llm-100m-2b-sft-s0-001`. The authenticated Kaggle round-trip passed full bundle verification and exact tree identity: 15 files, 347,155,440 bytes, tree SHA-256 `aa1f4c2bb98c9218e390e9be5ebe5152e8d20fd1938b03f044667ced259f6818`; anonymous access is denied. This records dataset readiness only, not SFT training or behavioral qualification.
 
+The first live 100M/2B SFT hardware start verified the parent artifact and
+qualified CUDA stack, then OOMed during the no-step FLA/Triton backward prewarm
+at per-rank microbatch 4: 13.79 GiB was allocated on a 14.56-GiB T4 and the
+next 786-MiB allocation failed. No optimizer step or SFT checkpoint was
+created. The next bounded start uses execution microbatch 2 while preserving
+the same global-token objective and immutable SFT block. See
+[`../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md`](../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md).
+
 ## Source of truth
 
 - Immediate priorities and gates: [`roadmap.md`](roadmap.md)

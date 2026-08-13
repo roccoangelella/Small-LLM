@@ -29,6 +29,11 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(profile.known_parent_consumed_tokens, 2_001_000_448)
         self.assertEqual(profile.sft_fraction_numerator, 4)
         self.assertEqual(profile.sft_fraction_denominator, 100)
+        self.assertEqual(profile.microbatch_size, 2)
+        self.assertEqual(
+            profile.launch_commit,
+            "87ceaaeb43416cfe200499c968ba4f58b701b6d9",
+        )
         self.assertEqual(profile.requested_sft_targets, 80_040_017)
         self.assertEqual(
             sft_budget_from_parent(2_001_000_448, numerator=4, denominator=100),
@@ -62,7 +67,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(payload["sft_fraction"], 0.04)
         self.assertEqual(payload["requested_sft_targets"], 80_040_017)
         self.assertEqual(payload["kaggle_training_topology"], "2xT4-DDP")
-        self.assertEqual(payload["microbatch_size"], 4)
+        self.assertEqual(payload["microbatch_size"], 2)
 
     def test_train_pins_the_qualified_dual_t4_runtime(self) -> None:
         profile = sft_cli.resolve_profile(100_000_000, 2_000_000_000)
@@ -109,6 +114,8 @@ class SFT100M2BKaggleTests(unittest.TestCase):
             command.index("https://download.pytorch.org/whl/cu128"),
             python_index,
         )
+        microbatch_index = command.index("--microbatch-size")
+        self.assertEqual(command[microbatch_index + 1], "2")
         self.assertEqual(captured["cwd"], worktree)
         parent_preflight.assert_called_once_with(
             repo_id="owner/parent",

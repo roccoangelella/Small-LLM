@@ -356,6 +356,14 @@ python kaggle/launch_sft.py train \
   --parent-repo-id roccoangelella/small-llm-100m-qualification
 ```
 
+The live 100M backward prewarm exceeded one T4 at per-rank microbatch 4 before
+any optimizer step. The 100M/2B profile therefore uses per-rank execution
+microbatch 2. This changes only the number of gradient-accumulation slices;
+the global SFT block, full-block target normalization, DDP-average
+compensation, clipping boundary, and single optimizer update are unchanged.
+Treat microbatch 2 as pending the next bounded live smoke, not as passed T4
+evidence in advance.
+
 The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest and trainer gate use the exact verified completed parent counter rather than the nominal `2B` label.
 
 ## 9. Evidence required before calling the SFT lane qualified
@@ -365,7 +373,7 @@ The nominal SFT horizon is approximately 80M loss-bearing targets, but the immut
 - prepared-source and bundle identities verify;
 - private Kaggle bundle publication and byte-identical round trip pass;
 - anonymous bundle access is denied;
-- T4 microbatch-4 smoke is finite;
+- selected per-profile T4 microbatch smoke is finite (20M: 4; 100M: 2);
 - intentional exact local/remote resume passes;
 - 250-update durability/validation/publication boundaries behave correctly;
 - fast and full comprehensive reports are produced for parent and SFT checkpoints;
