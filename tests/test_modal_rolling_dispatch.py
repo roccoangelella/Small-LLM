@@ -5,6 +5,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from dataset.incremental_stage import CPU_STAGE_MAX_SECONDS
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -24,7 +26,7 @@ class ModalRollingDispatchTests(unittest.TestCase):
         self.assertIn('"h100_allocated": False', source)
         self.assertNotIn("stage_rolling_dataset_remote.remote", source)
 
-    def test_dataset_producer_is_cpu_only_and_h100_has_no_automatic_retry(self) -> None:
+    def test_dataset_producer_and_cpu_stage_share_24h_window_without_h100_retry(self) -> None:
         source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
 
         producer_decorator_start = source.rindex(
@@ -34,7 +36,17 @@ class ModalRollingDispatchTests(unittest.TestCase):
         producer_decorator = source[producer_decorator_start:producer_function_start]
         self.assertIn("cpu=4.0", producer_decorator)
         self.assertIn("memory=8192", producer_decorator)
+        self.assertIn("timeout=24 * 60 * 60", producer_decorator)
         self.assertNotIn("gpu=", producer_decorator)
+
+        stage_decorator_start = source.rindex(
+            "@app.function(", 0, source.index("def stage_rolling_dataset_remote")
+        )
+        stage_function_start = source.index("def stage_rolling_dataset_remote")
+        stage_decorator = source[stage_decorator_start:stage_function_start]
+        self.assertIn("timeout=24 * 60 * 60", stage_decorator)
+        self.assertNotIn("gpu=", stage_decorator)
+        self.assertEqual(CPU_STAGE_MAX_SECONDS, 24 * 60 * 60)
 
         h100_decorator_start = source.rindex(
             "@app.function(", 0, source.index("def train_rolling_remote")
