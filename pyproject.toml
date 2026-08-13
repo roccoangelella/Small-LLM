@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "Deterministic corpus pipeline, hybrid decoder, and training system for a sub-1B language model."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["beam-client==0.2.201"]
+dependencies = [
+    "beam-client==0.2.201",
+    "fla-core==0.5.2",
+    "numpy>=2.1,<3",
+    "packaging>=24",
+    "torch>=2.7.0",
+]
 
 [project.optional-dependencies]
 model = [
@@ -42,5 +48,4 @@ include = ["dataset*", "model*", "trainer*", "post_training*"]
 exclude = ["tests*"]
 
 [tool.uv]
-# Dataset production remains standard-library-only. Model and trainer code use
-# explicit extras so dataset-only installations stay lightweight.
+# Plain uv sync installs the complete supported runtime.
