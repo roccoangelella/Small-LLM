@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BEAM = ROOT / "beam"
 LAUNCH = BEAM / "launch.py"
+BEAMIGNORE = ROOT / ".beamignore"
 
 
 def _load_profiles():
@@ -48,6 +49,22 @@ class BeamLaunchTest(unittest.TestCase):
             "README.md",
         ):
             self.assertTrue((BEAM / name).is_file(), name)
+
+    def test_beam_sync_excludes_local_credentials(self) -> None:
+        from beta9.vendor.pathspec import PathSpec
+
+        patterns = [
+            line.strip()
+            for line in BEAMIGNORE.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        spec = PathSpec.from_lines("gitwildmatch", patterns)
+        for credential_path in (
+            ".env",
+            ".secrets/google-drive-authorized-user.json",
+            ".secrets/google-drive-oauth-client.json",
+        ):
+            self.assertTrue(spec.match_file(credential_path), credential_path)
 
     def test_current_beam_gpu_set_and_serverless_default(self) -> None:
         profiles = _load_profiles()

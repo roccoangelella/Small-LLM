@@ -15,6 +15,8 @@ beam configure default --token YOUR_BEAM_TOKEN
 
 Create Beam secrets named `WANDB_API_KEY`, `HF_TOKEN`, and `SMALL_LLM_HF_REPO_ID` using the values already used by the project. The launcher injects those three names into training containers.
 
+The repository `.beamignore` excludes `.env` and `.secrets/` from Beam source sync. Treat an `Added .../.env` or `Added .../.secrets/...` line during sync as a failed security preflight and stop before continuing.
+
 Volumes are created automatically when referenced. They may also be created explicitly:
 
 ```bash

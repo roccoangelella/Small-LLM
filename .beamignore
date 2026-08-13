@@ -4,3 +4,7 @@
 **/__pycache__/**
 *.pyc
 wandb/**
+
+# Local credentials must be supplied through Beam secrets, never source sync.
+.env
+.secrets/**
