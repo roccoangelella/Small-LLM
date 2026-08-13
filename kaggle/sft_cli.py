@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -107,10 +108,7 @@ def resolve_profile(model: int, tokens: int) -> sft_runtime.SFTProfileSpec:
 
 
 def runtime_for(profile: sft_runtime.SFTProfileSpec):
-    if (
-        profile.model_parameters == 100_000_000
-        and profile.parent_training_tokens == 2_000_000_000
-    ):
+    if profile is PROFILE_100M_2B:
         return sft_scaled_runtime
     return sft_runtime
 
@@ -123,7 +121,6 @@ def dry_run_payload(
         for key, value in vars(args).items()
         if key not in {"action", "model", "tokens", "dry_run"} and value is not None
     }
-    dual_t4 = profile is PROFILE_100M_2B
     return {
         "action": args.action,
         "model": profile.model_label,
@@ -136,16 +133,120 @@ def dry_run_payload(
         "microbatch_size": profile.microbatch_size,
         "cadence_steps": profile.cadence_steps,
         "learning_rate": profile.learning_rate,
-        "kaggle_training_topology": "2xT4-DDP" if dual_t4 else "single-cuda",
+        "kaggle_training_topology": "2xT4-DDP" if profile is PROFILE_100M_2B else "single-cuda",
         "launch_commit": profile.launch_commit,
         "resume": "automatic_verified",
         "arguments": forwarded,
     }
 
 
+def _profiles() -> int:
+    print("Supported SFT profiles:")
+    profiles = [
+        resolve_profile(20_000_000, 500_000_000),
+        resolve_profile(20_000_000, 2_000_000_000),
+        PROFILE_100M_2B,
+    ]
+    for profile in profiles:
+        fraction = profile.sft_fraction_numerator / profile.sft_fraction_denominator
+        print(
+            f"  model={profile.model_label:<4} parent_tokens={profile.token_label:<4} "
+            f"parent_run={profile.parent_run_id} sft_run={profile.sft_run_id} "
+            f"fraction={fraction:.0%} targets={profile.requested_sft_targets}"
+        )
+    return 0
+
+
+def _discover_eval_dir(explicit: str | None) -> str | None:
+    if explicit:
+        return str(Path(explicit).expanduser().resolve())
+    root = Path(os.environ.get("SMALL_LLM_INPUT_DIR", "/kaggle/input"))
+    if not root.is_dir():
+        return None
+    matches: set[Path] = set()
+    for manifest in root.rglob("manifest.json"):
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("name") == "eval_core_v1":
+            matches.add(manifest.parent.resolve())
+    if len(matches) > 1:
+        raise sft_runtime.RuntimeFailure(
+            f"expected at most one attached eval_core_v1 corpus; found {sorted(matches)}"
+        )
+    return str(next(iter(matches))) if matches else None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.action == "profiles":
+        return _profiles()
+    try:
+        profile = resolve_profile(args.model, args.tokens)
+    except sft_runtime.RuntimeFailure as error:
+        parser.error(str(error))
+    if args.dry_run:
+        print(json.dumps(dry_run_payload(args, profile), indent=2, sort_keys=True))
+        return 0
+
+    print(
+        f"[launch] action={args.action} model={profile.model_label} "
+        f"tokens={profile.token_label} resume=automatic_verified",
+        flush=True,
+    )
+    runtime = runtime_for(profile)
+    if args.action == "prepare":
+        return runtime.prepare(
+            profile,
+            replay_root=args.replay_root,
+            prepared_dir=args.prepared_dir,
+            output_dir=args.output_dir,
+            parent_consumed_tokens=args.parent_consumed_tokens,
+            revision=args.revision,
+        )
+    if args.action == "publish":
+        return runtime.publish(
+            profile,
+            replay_root=args.replay_root,
+            prepared_dir=args.prepared_dir,
+            output_dir=args.output_dir,
+            parent_consumed_tokens=args.parent_consumed_tokens,
+            revision=args.revision,
+            kaggle_dataset_handle=args.kaggle_dataset_handle,
+            ops_dir=args.ops_dir,
+            force_upload=args.force_upload,
+            remote_ready_timeout_seconds=args.remote_ready_timeout_seconds,
+        )
+    if args.action == "train":
+        return runtime.train(
+            profile,
+            dataset_dir=args.dataset_dir,
+            parent_repo_id=args.parent_repo_id,
+            checkpoint_repo_id=args.checkpoint_repo_id,
+            max_steps_this_session=args.max_steps_this_session,
+            wandb_entity=args.wandb_entity,
+        )
+    try:
+        eval_dir = _discover_eval_dir(args.eval_dir)
+    except sft_runtime.RuntimeFailure as error:
+        parser.error(str(error))
+    return runtime.evaluate(
+        profile,
+        dataset_dir=args.dataset_dir,
+        eval_dir=eval_dir,
+        parent_repo_id=args.parent_repo_id,
+        checkpoint_repo_id=args.checkpoint_repo_id,
+        output=args.output,
+        suite=args.suite,
+    )
+
+
 __all__ = [
     "build_parser",
     "dry_run_payload",
+    "main",
     "parse_quantity",
     "resolve_profile",
     "runtime_for",
