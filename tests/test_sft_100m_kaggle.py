@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 KAGGLE = ROOT / "kaggle"
@@ -15,6 +16,7 @@ if str(KAGGLE) not in sys.path:
 import dual_t4_sft  # noqa: E402
 import launch_sft  # noqa: E402
 import sft_cli  # noqa: E402
+import sft_scaled_runtime  # noqa: E402
 from post_training.sft.bundle import sft_budget_from_parent  # noqa: E402
 from post_training.sft.config import DEFAULT_INSTRUCTION_SOURCE_SHARES, SFTDataConfig  # noqa: E402
 
@@ -61,6 +63,51 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(payload["requested_sft_targets"], 80_040_017)
         self.assertEqual(payload["kaggle_training_topology"], "2xT4-DDP")
         self.assertEqual(payload["microbatch_size"], 4)
+
+    def test_train_pins_the_qualified_dual_t4_runtime(self) -> None:
+        profile = sft_cli.resolve_profile(100_000_000, 2_000_000_000)
+        worktree = Path("/tmp/small-llm-sft-worktree")
+        captured: dict[str, object] = {}
+
+        def capture_run(command: list[str], *, cwd: Path) -> int:
+            captured["command"] = command
+            captured["cwd"] = cwd
+            return 0
+
+        with (
+            mock.patch.object(sft_scaled_runtime.base, "_prepare_worktree", return_value=worktree),
+            mock.patch.object(
+                sft_scaled_runtime.base,
+                "_find_bundle",
+                return_value=Path("/tmp/small-llm-sft-bundle"),
+            ),
+            mock.patch.object(sft_scaled_runtime.base, "_wandb_preflight"),
+            mock.patch.object(sft_scaled_runtime.base, "_run", side_effect=capture_run),
+        ):
+            self.assertEqual(
+                sft_scaled_runtime.train(
+                    profile,
+                    dataset_dir=None,
+                    parent_repo_id="owner/parent",
+                    checkpoint_repo_id="owner/sft",
+                    max_steps_this_session=20,
+                    wandb_entity=None,
+                ),
+                0,
+            )
+
+        command = captured["command"]
+        self.assertIsInstance(command, list)
+        assert isinstance(command, list)
+        python_index = command.index("python")
+        self.assertLess(command.index("torch==2.10.0"), python_index)
+        self.assertLess(command.index("triton==3.6.0"), python_index)
+        self.assertLess(command.index("fla-core==0.5.2"), python_index)
+        self.assertLess(
+            command.index("https://download.pytorch.org/whl/cu128"),
+            python_index,
+        )
+        self.assertEqual(captured["cwd"], worktree)
 
     def test_variable_sft_rows_partition_without_duplication(self) -> None:
         for count in range(1, 18):

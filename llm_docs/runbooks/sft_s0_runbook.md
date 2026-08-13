@@ -1,6 +1,6 @@
 # SFT S0 qualification runbook
 
-_Last updated: 2026-08-10 Europe/Rome_
+_Last updated: 2026-08-13 Europe/Rome_
 
 This runbook is the canonical human procedure for the first operational supervised-fine-tuning lane. The completed 20M/500M checkpoint is the qualification parent. As soon as the fresh 20M/2B checkpoint is complete and post-pretraining-qualified, use the same lane with the 2B profile.
 
@@ -75,6 +75,12 @@ Source preparation also needs ordinary Internet access for the pinned instructio
 ### Kaggle T4 — preferred for train/eval
 
 Use an NVIDIA T4 notebook with Internet enabled for the actual SFT training and GPU qualification path.
+
+The launcher pins the already-qualified dual-T4 subprocess stack: PyTorch 2.10.0
+from the CUDA 12.8 wheel index, Triton 3.6.0, and `fla-core==0.5.2`. The
+runtime guard must fail closed if Kaggle or package resolution drifts from those
+versions. If it fires, update the launcher and start a fresh session; do not
+delete or loosen the guard to get a run moving.
 
 Required secrets/environment for live SFT training:
 

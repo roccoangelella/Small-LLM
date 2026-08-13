@@ -42,7 +42,14 @@ def _append_wandb_tag(command: list[str], tag: str) -> list[str]:
 def _pin_qualified_runtime(command: list[str], python_index: int) -> list[str]:
     """Constrain the online subprocess to the runtime used by the T4 qualification."""
 
-    requirements = [
+    command[python_index:python_index] = qualified_runtime_uv_args()
+    return command
+
+
+def qualified_runtime_uv_args() -> list[str]:
+    """Return the exact uv arguments for the qualified Kaggle dual-T4 stack."""
+
+    return [
         "--with",
         f"torch=={TORCH_VERSION}",
         "--with",
@@ -56,8 +63,6 @@ def _pin_qualified_runtime(command: list[str], python_index: int) -> list[str]:
         "--extra-index-url",
         CUDA_WHEEL_INDEX,
     ]
-    command[python_index:python_index] = requirements
-    return command
 
 
 def distributed_trainer_command(command: Sequence[str], *, worktree: Path) -> list[str]:
@@ -119,4 +124,5 @@ __all__ = [
     "WORLD_SIZE",
     "distributed_trainer_command",
     "install",
+    "qualified_runtime_uv_args",
 ]

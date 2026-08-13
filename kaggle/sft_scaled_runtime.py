@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 
+import dual_t4_runtime
 import sft_runtime as base
 
 
@@ -126,7 +127,7 @@ def train(
     if max_steps_this_session is not None:
         trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
 
-    command = base._uv_prefix(wandb=True) + [
+    command = base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
         "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
         str(worktree / "kaggle" / "dual_t4_sft.py"),
         "--worktree", str(worktree),
