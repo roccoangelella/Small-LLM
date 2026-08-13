@@ -9,6 +9,7 @@ import chat
 
 def test_parse_quantity_accepts_profile_spellings() -> None:
     assert chat._parse_quantity("20M") == 20_000_000
+    assert chat._parse_quantity("100M") == 100_000_000
     assert chat._parse_quantity("500m") == 500_000_000
     assert chat._parse_quantity("2B") == 2_000_000_000
     assert chat._parse_quantity("20_000_000") == 20_000_000
@@ -23,11 +24,21 @@ def test_parse_quantity_rejects_non_integral_sizes() -> None:
         chat._parse_quantity("20Q")
 
 
-def test_resolve_sft_run_id_is_fail_closed() -> None:
-    assert chat._resolve_sft_run_id(20_000_000, 500_000_000) == "20m-500m-sft-s0-001"
-    assert chat._resolve_sft_run_id(20_000_000, 2_000_000_000) == "20m-2b-sft-s0-001"
-    with pytest.raises(RuntimeError, match="no registered SFT profile"):
-        chat._resolve_sft_run_id(100_000_000, 2_000_000_000)
+def test_resolve_chat_run_is_fail_closed() -> None:
+    assert chat._resolve_chat_run(20_000_000, 500_000_000) == (
+        "20m-500m-sft-s0-001",
+        chat._SOURCE_SFT,
+    )
+    assert chat._resolve_chat_run(20_000_000, 2_000_000_000) == (
+        "20m-2b-sft-s0-001",
+        chat._SOURCE_SFT,
+    )
+    assert chat._resolve_chat_run(100_000_000, 2_000_000_000) == (
+        "100m-2b-data-001",
+        chat._SOURCE_STABLE_MODEL,
+    )
+    with pytest.raises(RuntimeError, match="no registered chat profile"):
+        chat._resolve_chat_run(100_000_000, 10_000_000_000)
 
 
 class _FakeTemplate:
