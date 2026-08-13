@@ -91,6 +91,11 @@ HF_TOKEN
 SMALL_LLM_HF_REPO_ID
 ```
 
+`SMALL_LLM_HF_REPO_ID` must name the repository containing the selected
+parent's stable `models/<parent-run-id>/...` artifact. It is not a generic
+pointer to whichever Small-LLM repository was used most recently. The launcher
+checks this on CPU before W&B setup or dual-GPU dispatch.
+
 Recommended separate private repository for SFT checkpoints:
 
 ```text
@@ -338,6 +343,18 @@ python kaggle/launch_sft.py publish \
 The `2000000000` value above is only an example of command shape. Replace it with the verified final parent consumed-target counter; do not use the nominal label if the completed counter differs.
 
 Then attach the published SFT bundle on Kaggle and use the same `train` and `eval` commands with `--tokens 2B`.
+
+For the current 100M/2B parent, the stable artifact is in
+`roccoangelella/small-llm-100m-qualification`, not the historical 20M
+qualification repository. Set the Kaggle secret accordingly, or make the
+parent repository explicit:
+
+```bash
+python kaggle/launch_sft.py train \
+  --model 100M \
+  --tokens 2B \
+  --parent-repo-id roccoangelella/small-llm-100m-qualification
+```
 
 The nominal SFT horizon is approximately 80M loss-bearing targets, but the immutable manifest and trainer gate use the exact verified completed parent counter rather than the nominal `2B` label.
 

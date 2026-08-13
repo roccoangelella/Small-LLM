@@ -18,10 +18,12 @@ This file is the high-freshness summary. Measurements live in `../evidence/`, du
 
 The approximately-20M geometry is 20,637,592 learned parameters (`d_model=256`, `d_ff=704`, 8 layers). The approximately-100M hybrid is 101,252,280 learned parameters (`d_model=512`, `d_ff=1408`, 20 layers). Both use context 2,048.
 
-The final 100M/2B artifact records microbatch 16. Its canonical stable path is:
+The final 100M/2B artifact records microbatch 16. Its canonical repository and
+stable path are:
 
 ```text
-models/100m-2b-data-001/step-00015267
+roccoangelella/small-llm-100m-qualification
+  models/100m-2b-data-001/step-00015267
 ```
 
 ## Frozen three-way intrinsic comparison

@@ -81,8 +81,10 @@ class SFT100M2BKaggleTests(unittest.TestCase):
                 "_find_bundle",
                 return_value=Path("/tmp/small-llm-sft-bundle"),
             ),
+            mock.patch.object(sft_scaled_runtime, "_require_stable_parent_artifact") as parent_preflight,
             mock.patch.object(sft_scaled_runtime.base, "_wandb_preflight"),
             mock.patch.object(sft_scaled_runtime.base, "_run", side_effect=capture_run),
+            mock.patch.dict("os.environ", {"HF_TOKEN": "test-token"}, clear=False),
         ):
             self.assertEqual(
                 sft_scaled_runtime.train(
@@ -108,6 +110,43 @@ class SFT100M2BKaggleTests(unittest.TestCase):
             python_index,
         )
         self.assertEqual(captured["cwd"], worktree)
+        parent_preflight.assert_called_once_with(
+            repo_id="owner/parent",
+            run_id="100m-2b-data-001",
+            token="test-token",
+        )
+
+    def test_parent_preflight_rejects_a_repository_for_another_model(self) -> None:
+        api = mock.Mock()
+        api.list_repo_files.return_value = [
+            "models/20m-500m-data-001/artifact.json",
+            "models/20m-500m-data-001/step-00015264/checkpoint.json",
+        ]
+        with self.assertRaisesRegex(
+            sft_scaled_runtime.base.RuntimeFailure,
+            "contains no stable artifact for run '100m-2b-data-001'",
+        ):
+            sft_scaled_runtime._require_stable_parent_artifact(
+                repo_id="owner/20m-models",
+                run_id="100m-2b-data-001",
+                token="test-token",
+                api=api,
+            )
+
+    def test_parent_preflight_accepts_the_stable_pointer(self) -> None:
+        api = mock.Mock()
+        api.list_repo_files.return_value = [
+            "models/100m-2b-data-001/artifact.json",
+        ]
+        output = io.StringIO()
+        with redirect_stdout(output):
+            sft_scaled_runtime._require_stable_parent_artifact(
+                repo_id="owner/100m-models",
+                run_id="100m-2b-data-001",
+                token="test-token",
+                api=api,
+            )
+        self.assertIn("status=available", output.getvalue())
 
     def test_variable_sft_rows_partition_without_duplication(self) -> None:
         for count in range(1, 18):

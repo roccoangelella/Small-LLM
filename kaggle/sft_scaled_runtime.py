@@ -5,9 +5,51 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
+from typing import Any
 
 import dual_t4_runtime
 import sft_runtime as base
+
+
+def _require_stable_parent_artifact(
+    *,
+    repo_id: str,
+    run_id: str,
+    token: str | None,
+    api: Any | None = None,
+) -> None:
+    """Fail on a wrong parent repository before W&B or GPU setup begins."""
+
+    if not token:
+        raise base.RuntimeFailure("HF_TOKEN is required for the private SFT parent artifact")
+    if api is None:
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=token)
+    try:
+        files = api.list_repo_files(repo_id=repo_id, repo_type="model")
+    except Exception as error:  # noqa: BLE001 - normalize the remote boundary for operators
+        raise base.RuntimeFailure(
+            f"cannot inspect Hugging Face parent repository {repo_id!r}"
+        ) from error
+
+    root = f"models/{run_id}/"
+    pointer = root + "artifact.json"
+    checkpoint = re.compile(rf"^{re.escape(root)}step-\d{{8}}/.+")
+    if pointer not in files and not any(
+        isinstance(path, str) and checkpoint.fullmatch(path) is not None for path in files
+    ):
+        raise base.RuntimeFailure(
+            f"Hugging Face parent repository {repo_id!r} contains no stable artifact for "
+            f"run {run_id!r}; expected {pointer} or {root}step-XXXXXXXX/. "
+            "Set SMALL_LLM_HF_REPO_ID to the repository for this parent model, or pass "
+            "--parent-repo-id explicitly."
+        )
+    print(
+        f"[sft-parent-preflight] repo={repo_id} run={run_id} status=available",
+        flush=True,
+    )
 
 
 def prepare(
@@ -100,6 +142,11 @@ def train(
     if not checkpoint_repo:
         raise base.RuntimeFailure("pass --checkpoint-repo-id or set SMALL_LLM_SFT_HF_REPO_ID")
     entity = wandb_entity or os.environ.get("WANDB_ENTITY")
+    _require_stable_parent_artifact(
+        repo_id=parent_repo,
+        run_id=profile.parent_run_id,
+        token=os.environ.get("HF_TOKEN"),
+    )
     base._wandb_preflight(profile, worktree=worktree, entity=entity)
 
     trainer_args = [
