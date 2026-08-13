@@ -58,6 +58,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0057-use-standard-wsd-for-100m-10b.md`](0057-use-standard-wsd-for-100m-10b.md)
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
 - [`0059-run-supplementary-sampled-three-way-full-evaluation.md`](0059-run-supplementary-sampled-three-way-full-evaluation.md)
+- [`0060-require-live-modal-hf-smoke-before-100m-10b.md`](0060-require-live-modal-hf-smoke-before-100m-10b.md)
 
 ## Superseded ADRs
 
@@ -68,7 +69,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0026-prune-superseded-one-off-kaggle-diagnostics.md`](0026-prune-superseded-one-off-kaggle-diagnostics.md) — superseded by ADR 0035 after the completed FLA investigation executables were re-audited and retired while active runtime/test dependencies were retained.
 - [`0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md`](0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md) — superseded by ADR 0030 after the user explicitly authorized consolidating profile wrappers/overlays before the 2B run.
 - [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md) — its Modal launch authorization is retained by ADR 0041, which replaces the 16-sequence dataset/optimizer block and 4/8/16 probe with byte-preserving block 64 and 16/32/48/64 qualification.
-- [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-kaggle.md) — superseded by ADR 0043, which keeps Kaggle only as the remote dataset source and moves download, verification, reblock, Modal upload, and launch control to the VPS.
+- [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-vps.md) — superseded by ADR 0043, which keeps Kaggle only as the remote dataset source and moves download, verification, reblock, Modal upload, and launch control to the VPS.
 - [`0045-run-periodic-hf-backups-only-while-modal-training-is-live.md`](0045-run-periodic-hf-backups-only-while-modal-training-is-live.md) — superseded by ADR 0046, which integrated Hugging Face publication and restore directly into the Modal training path.
 - [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md) — superseded before production use by ADR 0047, which keeps the integrated HF resume design but moves mutable checkpoints from a Git-backed model repository to a Hugging Face Storage Bucket.
 - [`0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md`](0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md) — superseded by ADR 0055, which returns Modal checkpoint durability to the unified Hugging Face model repository while keeping Storage Buckets for dataset object transport.
