@@ -33,12 +33,13 @@ The old decoded-text/Gemini curation pipeline, per-budget dataset qualification 
 
 ## Main commands
 
-Install model and post-training dependencies:
+Install the complete supported project runtime, including model execution, Hugging Face transport, W&B, post-training utilities, and the Beam SDK:
 
 ```bash
-uv sync --locked --extra model --extra post-training
-uv pip install -r dataset/requirements-remote.txt
+uv sync
 ```
+
+Use `uv sync --locked` when you want a fail-closed check that `pyproject.toml` and the committed `uv.lock` already agree.
 
 Inspect the frozen finite-dataset profiles:
 
@@ -69,7 +70,7 @@ small-llm-eval full --eval-dir /data/eval_core_v1 --output-json artifacts/eval-f
 Run the offline repository tests:
 
 ```bash
-uv run --extra model python -m unittest discover -v
+uv run python -m unittest discover -v
 ```
 
 ## Documentation
