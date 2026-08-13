@@ -62,6 +62,8 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0062-default-beam-training-to-serverless-rtx5090.md`](0062-default-beam-training-to-serverless-rtx5090.md)
 - [`0063-document-local-chat-cli-usage-in-source.md`](0063-document-local-chat-cli-usage-in-source.md)
 - [`0064-allow-stable-pretrained-artifacts-in-local-chat.md`](0064-allow-stable-pretrained-artifacts-in-local-chat.md)
+- [`0065-cap-beam-startup-probe-at-microbatch-16.md`](0065-cap-beam-startup-probe-at-microbatch-16.md)
+- [`0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md`](0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md)
 
 ## Superseded ADRs
 
