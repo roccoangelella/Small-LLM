@@ -55,13 +55,13 @@ On the mutually comparable greedy QA outputs, strict direct-answer counts are 0/
 
 A separate earlier sampled 100M/2B evaluation (`temperature=0.8`, `top_p=0.95`, `top_k=50`) did answer the France-capital prompt with **Paris**. The later greedy run answered `France`. Keep these as separate decoding outcomes.
 
-Because ADR 0050 requires material behavioral/capability improvement rather than loss/perplexity alone, the **fresh 100M/10B H100 scientific launch gate remains open** pending exact frozen behavioral qualification and an explicit gate decision. Dataset/CPU-staging engineering may proceed independently under ADR 0058.
+Because ADR 0050 requires material behavioral/capability improvement rather than loss/perplexity alone, the **fresh 100M/10B scientific launch gate remains open** pending exact frozen behavioral qualification and an explicit gate decision. Dataset/CPU-staging/provider engineering may proceed independently under ADR 0058/0061/0062; selecting Beam instead of Modal does not bypass the scientific gate.
 
 ## GDN-2 production execution
 
 Production CUDA GDN-2 execution is mixed FLA on `fla-core==0.5.2` with FP32 master parameters plus CUDA FP16 autocast. Saved/configured `gdn_chunk_size` is 32; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence remains the correctness/reference fallback. See [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md).
 
-Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal training remains one H100 per run.
+Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. Beam execution has repository-level coverage but still requires its first live GPU qualification before a long run.
 
 ## Dataset and checkpoint durability
 

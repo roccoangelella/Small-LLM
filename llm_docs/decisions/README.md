@@ -58,6 +58,10 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0057-use-standard-wsd-for-100m-10b.md`](0057-use-standard-wsd-for-100m-10b.md)
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
 - [`0059-run-supplementary-sampled-three-way-full-evaluation.md`](0059-run-supplementary-sampled-three-way-full-evaluation.md)
+- [`0060-require-live-modal-hf-smoke-before-100m-10b.md`](0060-require-live-modal-hf-smoke-before-100m-10b.md)
+- [`0061-add-beam-as-an-alternate-single-gpu-training-provider.md`](0061-add-beam-as-an-alternate-single-gpu-training-provider.md)
+- [`0062-default-beam-training-to-serverless-rtx5090.md`](0062-default-beam-training-to-serverless-rtx5090.md)
+- [`0063-document-local-chat-cli-usage-in-source.md`](0063-document-local-chat-cli-usage-in-source.md)
 
 ## Superseded ADRs
 
