@@ -22,7 +22,7 @@ base eval_core_v1: modest broad regression
 
 Canonical evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md`](../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md).
 
-ADR 0066 authorizes the next experiment on the completed 100M/2B parent. It keeps the S0 source stratification and 85/15 instruction/replay mixture unchanged, raises the requested SFT horizon to 10% of the verified parent target count, and uses Kaggle two-T4 DDP. For the exact 2,001,000,448-target parent, the requested SFT train horizon is 200,100,044 loss-bearing targets. This is an experiment after the failed 20M/500M S0 qualification, not a promotion of the recipe in advance.
+ADR 0067 authorizes the next experiment on the completed 100M/2B parent. It keeps the S0 source stratification and 85/15 instruction/replay mixture unchanged, keeps the requested SFT horizon at 4% of the verified parent target count, and uses Kaggle two-T4 DDP. For the exact 2,001,000,448-target parent, the requested SFT train horizon is 80,040,017 loss-bearing targets. This is an experiment after the failed 20M/500M S0 qualification, not a promotion of the recipe in advance.
 
 ## Operator surface
 
@@ -34,7 +34,7 @@ kaggle/launch_sft.py
 
 It provides profile-driven `prepare`, `publish`, `train`, and `eval` actions. The launcher verifies parent/bundle identities and exact resume state rather than relying on ad-hoc notebook commands.
 
-The registered 100M/2B profile is `100m-2b-sft-s0-10pct-001`. Its Kaggle training path launches two NCCL processes across exactly two Tesla T4 GPUs. Variable-size SFT blocks are split between ranks without duplicating loss-bearing examples; an all-ignored graph-carrying row is used only when needed to equalize DDP synchronization points. W&B, evaluation, checkpoint saving, and remote publication remain rank-zero side effects. Resume selection is synchronized so both ranks load the exact checkpoint chosen by rank zero.
+The registered 100M/2B profile is `100m-2b-sft-s0-001`. Its Kaggle training path launches two NCCL processes across exactly two Tesla T4 GPUs. Variable-size SFT blocks are split between ranks without duplicating loss-bearing examples; an all-ignored graph-carrying row is used only when needed to equalize DDP synchronization points. W&B, evaluation, checkpoint saving, and remote publication remain rank-zero side effects. Resume selection is synchronized so both ranks load the exact checkpoint chosen by rank zero.
 
 ## S0 data contract
 
@@ -74,9 +74,9 @@ Prompt derivatives are grouped by a source-independent normalized non-assistant 
 
 ADR 0032 historically defined requested SFT train loss-bearing targets as 4% of the verified completed parent pretraining target count. The completed 500M parent requested 20,006,256 and realized 20,006,234 complete-record targets.
 
-ADR 0066 adds a profile-specific override for the 100M/2B experiment: 10% of the verified parent target count. The completed 100M/2B parent has 2,001,000,448 targets, so the requested SFT horizon is exactly 200,100,044 targets by integer floor. The earlier 4% behavior remains unchanged for the existing 20M profiles.
+ADR 0067 keeps the 100M/2B experiment on the same 4% budget rule. The completed 100M/2B parent has 2,001,000,448 targets, so the requested SFT horizon is exactly 80,040,017 targets by integer floor.
 
-The SFT bundle builder remains finite and fail-closed: it verifies the requested target horizon and removes an incomplete output if the configured sources are exhausted before the permitted complete-record shortfall. No silent data repetition is introduced by the 10% profile.
+The SFT bundle builder remains finite and fail-closed: it verifies the requested target horizon and removes an incomplete output if the configured sources are exhausted before the permitted complete-record shortfall. No silent data repetition is introduced.
 
 ## Chat/loss contract
 
@@ -97,4 +97,4 @@ Do not select SFT by held-out SFT loss alone. Qualification must inspect both:
 - instruction/behavior acquisition (including EOS/runaway/repetition and task-category passes);
 - base-capability retention on unchanged `eval_core_v1`.
 
-The first S0 result demonstrates that masked SFT-distribution likelihood can improve strongly without producing usable deterministic instruction following. The 100M/2B 10% run must pass the same comprehensive parent-versus-SFT qualification before it is treated as a successful post-trained model.
+The first S0 result demonstrates that masked SFT-distribution likelihood can improve strongly without producing usable deterministic instruction following. The 100M/2B 4% run must pass the same comprehensive parent-versus-SFT qualification before it is treated as a successful post-trained model.
