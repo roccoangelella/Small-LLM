@@ -40,7 +40,6 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md`](0033-use-comprehensive-post-sft-qualification-and-pretraining-cadence.md)
 - [`0034-make-sft-data-publication-machine-agnostic.md`](0034-make-sft-data-publication-machine-agnostic.md)
 - [`0035-retire-completed-fla-investigation-scripts-from-kaggle.md`](0035-retire-completed-fla-investigation-scripts-from-kaggle.md)
-- [`0036-add-local-completed-sft-chat-cli.md`](0036-add-local-completed-sft-chat-cli.md)
 - [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - [`0038-stream-local-chat-tokens-as-generated.md`](0038-stream-local-chat-tokens-as-generated.md)
 - [`0039-use-modal-for-future-gpu-training.md`](0039-use-modal-for-future-gpu-training.md)
@@ -55,6 +54,16 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0054-retire-google-drive-for-new-dataset-durability.md`](0054-retire-google-drive-for-new-dataset-durability.md)
 - [`0055-unify-modal-checkpoints-on-hf-model-repository.md`](0055-unify-modal-checkpoints-on-hf-model-repository.md)
 - [`0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md`](0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md)
+- [`0057-use-standard-wsd-for-100m-10b.md`](0057-use-standard-wsd-for-100m-10b.md)
+- [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
+- [`0059-run-supplementary-sampled-three-way-full-evaluation.md`](0059-run-supplementary-sampled-three-way-full-evaluation.md)
+- [`0060-require-live-modal-hf-smoke-before-100m-10b.md`](0060-require-live-modal-hf-smoke-before-100m-10b.md)
+- [`0061-add-beam-as-an-alternate-single-gpu-training-provider.md`](0061-add-beam-as-an-alternate-single-gpu-training-provider.md)
+- [`0062-default-beam-training-to-serverless-rtx5090.md`](0062-default-beam-training-to-serverless-rtx5090.md)
+- [`0063-document-local-chat-cli-usage-in-source.md`](0063-document-local-chat-cli-usage-in-source.md)
+- [`0064-allow-stable-pretrained-artifacts-in-local-chat.md`](0064-allow-stable-pretrained-artifacts-in-local-chat.md)
+- [`0065-cap-beam-startup-probe-at-microbatch-16.md`](0065-cap-beam-startup-probe-at-microbatch-16.md)
+- [`0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md`](0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md)
 
 ## Superseded ADRs
 
@@ -64,6 +73,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0024-freeze-canonical-questions-only-prompt-test-settings.md`](0024-freeze-canonical-questions-only-prompt-test-settings.md) — superseded by ADR 0025 after the user clarified that the reusable canonical comparison should run the full qualitative prompt suite.
 - [`0026-prune-superseded-one-off-kaggle-diagnostics.md`](0026-prune-superseded-one-off-kaggle-diagnostics.md) — superseded by ADR 0035 after the completed FLA investigation executables were re-audited and retired while active runtime/test dependencies were retained.
 - [`0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md`](0029-limit-pre-2b-kaggle-cleanup-to-dead-wrappers-and-dispatch-fixes.md) — superseded by ADR 0030 after the user explicitly authorized consolidating profile wrappers/overlays before the 2B run.
+- [`0036-add-local-completed-sft-chat-cli.md`](0036-add-local-completed-sft-chat-cli.md) — superseded by ADR 0064, which retains strict completed-SFT validation but expands the CLI to explicitly registered stable pretrained artifacts, starting with 100M / 2B.
 - [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md) — its Modal launch authorization is retained by ADR 0041, which replaces the 16-sequence dataset/optimizer block and 4/8/16 probe with byte-preserving block 64 and 16/32/48/64 qualification.
 - [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-kaggle.md) — superseded by ADR 0043, which keeps Kaggle only as the remote dataset source and moves download, verification, reblock, Modal upload, and launch control to the VPS.
 - [`0045-run-periodic-hf-backups-only-while-modal-training-is-live.md`](0045-run-periodic-hf-backups-only-while-modal-training-is-live.md) — superseded by ADR 0046, which integrated Hugging Face publication and restore directly into the Modal training path.

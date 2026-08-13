@@ -2,43 +2,76 @@
 
 from __future__ import annotations
 
+import unittest
 from pathlib import Path
+
+from dataset.incremental_stage import CPU_STAGE_MAX_SECONDS
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_rolling_launcher_stages_and_authorizes_before_h100_spawn() -> None:
-    source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
+class ModalRollingDispatchTests(unittest.TestCase):
+    def test_incremental_producer_and_supervised_stage_precede_h100_spawn(self) -> None:
+        source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
 
-    stage = source.index("staged = stage_rolling_dataset_remote.remote")
-    authorize = source.index('staged.get("h100_dispatch_allowed") is not True')
-    spawn = source.index("result = train_rolling_remote.with_options")
-    assert stage < authorize < spawn
-    assert '"h100_allocated": False' in source
+        producer = source.index("producer_call = produce_rolling_dataset_remote.spawn")
+        stage = source.index("stage_call = stage_rolling_dataset_remote.spawn")
+        supervise = source.index("await_stage_with_producer(stage_call, producer_call)")
+        authorize = source.index('staged.get("h100_dispatch_allowed") is not True')
+        spawn = source.index("result = train_rolling_remote.with_options")
+        self.assertLess(producer, stage)
+        self.assertLess(stage, supervise)
+        self.assertLess(supervise, authorize)
+        self.assertLess(authorize, spawn)
+        self.assertIn('"h100_allocated": False', source)
+        self.assertNotIn("stage_rolling_dataset_remote.remote", source)
+
+    def test_dataset_producer_and_cpu_stage_share_24h_window_without_h100_retry(self) -> None:
+        source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
+
+        producer_decorator_start = source.rindex(
+            "@app.function(", 0, source.index("def produce_rolling_dataset_remote")
+        )
+        producer_function_start = source.index("def produce_rolling_dataset_remote")
+        producer_decorator = source[producer_decorator_start:producer_function_start]
+        self.assertIn("cpu=4.0", producer_decorator)
+        self.assertIn("memory=8192", producer_decorator)
+        self.assertIn("timeout=24 * 60 * 60", producer_decorator)
+        self.assertNotIn("gpu=", producer_decorator)
+
+        stage_decorator_start = source.rindex(
+            "@app.function(", 0, source.index("def stage_rolling_dataset_remote")
+        )
+        stage_function_start = source.index("def stage_rolling_dataset_remote")
+        stage_decorator = source[stage_decorator_start:stage_function_start]
+        self.assertIn("timeout=24 * 60 * 60", stage_decorator)
+        self.assertNotIn("gpu=", stage_decorator)
+        self.assertEqual(CPU_STAGE_MAX_SECONDS, 24 * 60 * 60)
+
+        h100_decorator_start = source.rindex(
+            "@app.function(", 0, source.index("def train_rolling_remote")
+        )
+        h100_function_start = source.index("def train_rolling_remote")
+        h100_decorator = source[h100_decorator_start:h100_function_start]
+        self.assertIn("gpu=DEFAULT_GPU", h100_decorator)
+        self.assertNotIn("retries=", h100_decorator)
+
+    def test_cpu_stage_uses_checkpoint_aligned_incremental_lead_window(self) -> None:
+        source = (ROOT / "modal" / "rolling_dataset.py").read_text(encoding="utf-8")
+
+        self.assertIn("next_unconsumed_block", source)
+        self.assertIn("stage_incremental_window", source)
+        self.assertIn('start_block_id=int(cursor["next_block_id"])', source)
+        self.assertIn("checkpoint advanced after CPU dataset staging", source)
+        self.assertIn("verify_incremental_stage", source)
+
+    def test_modal_microbatch_probe_does_not_start_one_gib_successor_prefetch(self) -> None:
+        source = (ROOT / "trainer" / "cli_setup.py").read_text(encoding="utf-8")
+
+        self.assertIn('os.environ.get("SMALL_LLM_MODAL_ROLLING_DATASET") == "1"', source)
+        self.assertIn('getattr(args, "wandb_mode", "disabled") == "disabled"', source)
+        self.assertIn("return None", source)
 
 
-def test_rolling_h100_function_has_no_automatic_retry_bypassing_cpu_restage() -> None:
-    source = (ROOT / "modal" / "launch.py").read_text(encoding="utf-8")
-    decorator_start = source.rindex("@app.function(", 0, source.index("def train_rolling_remote"))
-    function_start = source.index("def train_rolling_remote")
-    decorator = source[decorator_start:function_start]
-
-    assert "gpu=DEFAULT_GPU" in decorator
-    assert "retries=" not in decorator
-    assert "Deliberately no automatic function retry" in source
-
-
-def test_cpu_stage_uses_checkpoint_aligned_next_block_not_always_shard_zero() -> None:
-    source = (ROOT / "modal" / "rolling_dataset.py").read_text(encoding="utf-8")
-
-    assert "next_unconsumed_block" in source
-    assert 'start_block_id=int(cursor["next_block_id"])' in source
-    assert "checkpoint advanced after CPU dataset staging" in source
-
-
-def test_modal_microbatch_probe_does_not_start_one_gib_successor_prefetch() -> None:
-    source = (ROOT / "trainer" / "cli_setup.py").read_text(encoding="utf-8")
-
-    assert 'os.environ.get("SMALL_LLM_MODAL_ROLLING_DATASET") == "1"' in source
-    assert 'getattr(args, "wandb_mode", "disabled") == "disabled"' in source
-    assert "return None" in source
+if __name__ == "__main__":
+    unittest.main()

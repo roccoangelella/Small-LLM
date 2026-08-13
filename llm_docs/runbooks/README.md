@@ -1,26 +1,22 @@
 # Runbooks
 
-Runbooks contain executable or intentionally reproducible procedures, prerequisites, expected artifacts, checks, and recovery steps. A document that is only a superseded plan belongs in archive instead.
+Runbooks contain executable or intentionally reproducible procedures, prerequisites, expected artifacts, checks, and recovery steps. Completed-run runbooks are retained for reproduction and are not authorization to change finished experiments.
 
 ## Active
 
-- [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` publication/training command surface for registered finite-data profiles.
-- [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run.
-- [`sft_s0_runbook.md`](sft_s0_runbook.md) — canonical `kaggle/launch_sft.py` bundle publication, T4 SFT, exact resume, and parent-versus-SFT qualification procedure.
-- [`local_sft_chat.md`](local_sft_chat.md) — local interactive chat over a verified, completed Hugging Face SFT checkpoint.
-- [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — build, verify, fast, and full evaluation.
-- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — canonical post-pretraining qualitative prompt procedure.
-- [`100m_kagglehub_publication_suite.md`](100m_kagglehub_publication_suite.md) — reusable private finite-dataset publication procedure documented from the original 100M implementation.
+- [`100m_10b_incremental_modal.md`](100m_10b_incremental_modal.md) — ADR-0058 CPU producer/frontier/staging/H100 procedure for the conditional fresh 100M/10B trajectory; technical readiness is separate from ADR-0050 launch authorization.
+- [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical finite-profile Kaggle publication/training command surface.
+- [`sft_s0_runbook.md`](sft_s0_runbook.md) — SFT bundle publication/training/qualification procedure; the original S0 behavioral recipe is not promoted by its failed qualification.
+- [`local_sft_chat.md`](local_sft_chat.md) — local interactive chat over a verified completed SFT checkpoint.
+- [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — frozen intrinsic evaluation workflow and stable/live checkpoint transport.
+- [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — exact ADR-0025 qualitative comparison and teacher-forced confidence diagnostic.
+- [`modal_training_launcher.md`](modal_training_launcher.md) — current Modal launch/checkpoint operation.
+- [`100m_kagglehub_publication_suite.md`](100m_kagglehub_publication_suite.md) — reusable private finite-dataset Kaggle publication procedure.
 
 ## Completed-stage reproduction procedures
 
-These are retained because they still describe reproducible completed experiment profiles using the current unified launcher. They are not authorization to change those completed experiments.
+- [`20m_2b_runbook.md`](20m_2b_runbook.md) — completed 20M/2B data-scaling endpoint and reproduction/resume interpretation.
+- [`20m_500m_runbook.md`](20m_500m_runbook.md) — completed 20M/500M stage.
+- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 20M/100M stage.
 
-- [`20m_500m_runbook.md`](20m_500m_runbook.md) — completed 500M-stage reproduction/resume interpretation.
-- [`20m_100m_runbook.md`](20m_100m_runbook.md) — completed 100M-stage reproduction procedure.
-
-The obsolete 100M planning document moved to [`../archive/20m_100m/20m_100m_data_scaling_plan.md`](../archive/20m_100m/20m_100m_data_scaling_plan.md).
-
-The unrun 1B procedure was superseded by ADR 0023 and is not an active run target. Git history preserves its former contents.
-
-Completed 20M/10M qualification procedures live under `../archive/20m_qualification/`; their observed results are under `../evidence/20m/`.
+Completed 20M/10M qualification procedures live under `../archive/20m_qualification/`; observed results are under `../evidence/20m/`. The unrun 1B profile was superseded by ADR 0023 and is preserved only in history.

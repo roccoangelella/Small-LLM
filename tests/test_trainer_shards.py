@@ -1,5 +1,6 @@
 import hashlib, json, tempfile, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from trainer import SchemaV2ShardReader
 from tests.trainer_fixtures import payload
 
@@ -18,6 +19,19 @@ class RecordingCache:
 
     def restore_after_acknowledged(self, block_id):
         self.restore_calls.append(block_id)
+
+
+class DynamicCache(RecordingCache):
+    planned_block_count = 2
+
+    def __init__(self, shard):
+        super().__init__()
+        self.shard = shard
+
+    def shard_for_block(self, block_id):
+        if block_id != 1:
+            raise RuntimeError(f"unexpected dynamic block {block_id}")
+        return self.shard
 
 
 class ShardReaderTests(unittest.TestCase):
@@ -96,6 +110,43 @@ class ShardReaderTests(unittest.TestCase):
             self.assertEqual(restored_cache.restore_calls, [0])
             self.assertEqual(restored.next_batch().block_id, 1)
             self.assertEqual(restored_cache.ensure_calls, [1])
+
+    def test_incremental_reader_continues_past_bootstrap_manifest(self):
+        first_raw = payload([[1,2,3,4],[2,3,4,5]])
+        second_raw = payload([[5,6,7,8],[6,7,8,9]])
+        first_checksum = hashlib.sha256(first_raw).hexdigest()
+        second_checksum = hashlib.sha256(second_raw).hexdigest()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / "train").mkdir()
+            (root / "train/train-000000.bin").write_bytes(first_raw)
+            (root / "train/train-000001.bin").write_bytes(second_raw)
+            manifest = {"schema_version":2,"sequence_format":"context_plus_one",
+                "context_length":3,"stored_tokens_per_sequence":4,
+                "sequences_per_block":2,"shards":[{
+                    "filename":"train/train-000000.bin","split":"train",
+                    "byte_size":len(first_raw),"sequence_count":2,"checksum":first_checksum,
+                    "first_block_id":0,"last_block_id":0}]}
+            (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            dynamic_shard = SimpleNamespace(
+                filename="train/train-000001.bin", split="train",
+                byte_size=len(second_raw), checksum=second_checksum,
+                first_block_id=1, last_block_id=1, sequence_count=2,
+            )
+            cache = DynamicCache(dynamic_shard)
+            reader = SchemaV2ShardReader(root, semantic_vocab_size=16, cache_manager=cache)
+            self.assertEqual(reader.block_count, 2)
+            self.assertEqual(reader.next_batch().block_id, 0)
+            reader.acknowledge(0)
+            state = reader.pipeline_state()
+            self.assertEqual(reader.next_batch().block_id, 1)
+            reader.acknowledge(1)
+            self.assertEqual(cache.ensure_calls, [0, 1])
+
+            restored = SchemaV2ShardReader(
+                root, semantic_vocab_size=16, cache_manager=DynamicCache(dynamic_shard)
+            )
+            restored.load_pipeline_state(state)
+            self.assertEqual(restored.next_batch().block_id, 1)
 
 
 if __name__ == "__main__":

@@ -1,86 +1,74 @@
 # Project overview
 
-_Last reviewed: 2026-08-06_
+_Last reviewed: 2026-08-13_
 
 ## Goal
 
-Build a modern dense decoder-only English language model below 1B parameters from random initialization as a serious learning and research project.
+Build and study a modern dense decoder-only English language-model family below 1B parameters from random initialization, with reproducible data, training, checkpoint, and evaluation contracts. The long-term target is useful general language/knowledge after pretraining and conversational instruction following only after separate post-training.
 
-The intended system should eventually:
+Coding capability is not an initial target. The pinned source excludes Nemotron-ClimbMix cluster 11, the explicit software/programming cluster, but incidental code can remain because source clusters are not perfectly pure.
 
-- produce coherent English text;
-- acquire useful general knowledge and basic reasoning during pretraining;
-- become conversational and instruction-following after separate post-training;
-- use modern small-model architecture, optimization, evaluation, and serving ideas;
-- remain reproducible enough that architectural and scaling claims can be tested rather than guessed.
+## Current model family
 
-Coding capability is not an initial target. The explicit programming cluster is excluded, although incidental code can remain because source clusters are imperfect.
-
-## Development strategy
-
-The codebase defines a geometry-scalable model family rather than one final model:
-
-1. approximately 20M parameters for correctness, integration, and data-scaling experiments;
-2. a first larger model only after the 20M/100M result is evaluated;
-3. controlled intermediate sizes when evidence justifies them;
-4. a near-1B model as a long-term goal, not an immediate run.
-
-The initial context is 2,048 tokens. Longer context and additional architectures remain deferred until the base system is understood.
-
-## Current architecture
+The production hybrid macroarchitecture is:
 
 ```text
-[GDN-2, GDN-2, GDN-2, gated full attention] x N
+[GDN-2, GDN-2, GDN-2, gated full MHA] × N
 ```
 
-The approximately-20M geometry uses eight layers. The approximately-100M geometry is defined but not yet authorized for training. Detailed geometry and parameter accounting live in `model_geometry.md`.
+Completed primary geometries:
+
+| label | learned parameters | d_model | layers | d_ff | completed scaling endpoints |
+|---|---:|---:|---:|---:|---|
+| 20M | 20,637,592 | 256 | 8 | 704 | 100M, 500M, 2B-token campaigns |
+| 100M | 101,252,280 | 512 | 20 | 1,408 | completed 2B-token Modal campaign |
+
+Context remains 2,048. The 100M/2B result is the current strongest completed base-model endpoint by frozen intrinsic evaluation. The next authorized *conditional* lane is fresh 100M/10B with an approximately-5B continuation gate under ADR 0050; the scientific H100 launch still depends on the frozen behavioral gate.
+
+## Production execution
+
+GDN-2 CUDA execution uses `fla-core==0.5.2` under FP32 master parameters plus CUDA FP16 autocast. Checkpoints save `gdn_chunk_size=32`; FLA executes its internal chunk size 64. The adaptive PyTorch recurrence is retained as correctness/reference fallback.
+
+Kaggle production training uses exact-batch two-T4 DDP for qualified finite-data profiles. Modal training is single-H100. Those are execution-topology choices, not model-architecture changes.
 
 ## Dataset strategy
 
-The initial source is the pinned GPT-2-tokenized Nemotron-ClimbMix revision. The pipeline:
+The canonical source is pinned GPT-2-tokenized `nvidia/Nemotron-ClimbMix` revision `5eaa64b9c0c85b7f56af01d7dffdb0795816b12b`.
 
-- accepts clusters 1-10 and 12-20;
-- excludes cluster 11, the explicit software/programming cluster;
+The pipeline:
+
+- accepts clusters 1-10 and 12-20 and excludes cluster 11;
 - preserves the measured conditioned source-token mixture;
-- assigns validation documents by a stable identity hash;
-- packs context-plus-one sequences;
-- writes immutable verified shards;
-- supports interruption, resume, remote durability, and migration.
+- assigns validation documents deterministically;
+- packs context+1 schema-v2 sequences;
+- writes immutable verified little-endian `uint16` shards;
+- supports exact resume and dataset/model identity binding.
 
-Google Drive is the durable dataset mirror, not the random-access training filesystem. Private Hugging Face storage is used for verified model/checkpoint publication. Kaggle T4 is the current training venue.
+For new production, Hugging Face Storage Buckets are the only remote dataset durability backend. Google Drive belongs to historical completed artifacts only; legacy schema names containing `drive_` remain readable compatibility fields under ADR 0054.
 
-## High-level system
+The fresh 100M/10B path produces approximately-1-GiB HF shards incrementally and uses CPU production/staging before H100 allocation rather than requiring the complete corpus up front.
 
-```text
-pinned source corpus
-      -> deterministic dataset preparation
-      -> locally durable immutable shards
-      -> bounded trainer consumer
-      -> geometry-scalable hybrid decoder
-      -> versioned joint model/data checkpoints
-      -> frozen intrinsic and qualitative evaluation
-```
+## Model durability
 
-## Resource assumptions
-
-- Initial accelerator: one NVIDIA T4.
-- Local/VPS storage: enough for bounded live cache, checkpoints, and publication staging.
-- Durable dataset storage: personal Google Drive.
-- Long-run first-pass corpus envelope: approximately 80B-100B accepted source tokens, subject to later authorization.
-- Training must remain pausable and safely resumable across machines and Kaggle accounts.
-
-## Documentation policy
-
-`llm_docs/` is the project system of record, organized by purpose:
+Hugging Face model-repository storage is unified under ADR 0055:
 
 ```text
-current/    verified present state and roadmap
-decisions/  numbered ADRs
-reference/  detailed technical contracts
-runbooks/   operational procedures
-research/   investigations and external comparisons
-evidence/   completed measured results
-archive/    superseded plans and scaffolding
+run/<run_id>/...       live exact-resume checkpoints
+models/<run_id>/...    stable completed model artifacts
 ```
 
-Use `../current/status.md` for present facts and `../decisions/README.md` for durable choices. Do not silently rewrite accepted evidence or decision rationale. Update the relevant current, decision, reference, or runbook document in the same commit as the code or operational change it describes.
+Stable artifacts are native project checkpoints, not Transformers exports. Their integrity contract is `local_manifest.json`; live two-phase publication additionally uses its publication manifest/pointers.
+
+## Evaluation and current evidence
+
+`eval_core_v1` is frozen and provides full/fast intrinsic metrics, domain slices, calibration, context-position buckets, and bootstrap intervals. ADR 0025 separately freezes deterministic full qualitative generation at `temperature=0`, `top_p=1`, `top_k=0`, seed 17, one sample, and global 32-new-token cap.
+
+The completed three-way intrinsic comparison shows continued but uneven 20M data scaling from 500M→2B and a much larger uniform gain from 20M→100M at fixed 2B tokens. See [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md).
+
+## Post-training
+
+The first 20M/500M S0 SFT run learned its masked held-out objective but failed behavioral qualification (0/30 deterministic instruction cases, 100% runaway). Treat it as pipeline evidence, not a promoted SFT recipe.
+
+## Memory precedence
+
+Use `../current/status.md` for present facts, `../current/roadmap.md` for immediate gates, and `../decisions/README.md` for durable authorization. Historical evidence and archives do not override current accepted contracts.

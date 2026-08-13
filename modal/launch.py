@@ -22,6 +22,7 @@ DATA_ROOT, RUN_ROOT, CACHE_ROOT = Path("/data"), Path("/runs"), Path("/cache")
 APP_NAME = "small-llm-training"
 
 sys.path.insert(0, str(LOCAL_MODAL))
+from cpu_supervision import await_stage_with_producer  # noqa: E402
 from profiles import (  # noqa: E402
     DEFAULT_GPU,
     DEFAULT_PRECISION,
@@ -100,6 +101,7 @@ def remote_import_preflight() -> dict[str, object]:
     runtime_path = REMOTE_MODAL / "runtime.py"
     checkpoint_transport_path = REMOTE_MODAL / "model_repo_checkpoint.py"
     rolling_path = REMOTE_MODAL / "rolling_dataset.py"
+    producer_path = REMOTE_MODAL / "rolling_producer.py"
     if not profiles_path.is_file():
         raise RuntimeError(f"Modal image is missing explicitly packaged profiles helper: {profiles_path}")
     if not runtime_path.is_file():
@@ -110,6 +112,8 @@ def remote_import_preflight() -> dict[str, object]:
         )
     if not rolling_path.is_file():
         raise RuntimeError(f"Modal image is missing rolling-dataset runtime: {rolling_path}")
+    if not producer_path.is_file():
+        raise RuntimeError(f"Modal image is missing rolling-dataset producer adapter: {producer_path}")
     sys.path.insert(0, str(REMOTE_MODAL))
     import model_repo_checkpoint as checkpoint_transport  # noqa: PLC0415
 
@@ -117,6 +121,7 @@ def remote_import_preflight() -> dict[str, object]:
     import profiles as remote_profiles  # noqa: PLC0415
     import runtime as remote_runtime  # noqa: F401, PLC0415
     import rolling_dataset as remote_rolling  # noqa: F401, PLC0415
+    import rolling_producer as remote_producer  # noqa: F401, PLC0415
     from dataset.src.remote import ensure_safe_directory  # noqa: PLC0415
 
     run_root = RUN_ROOT.resolve(strict=True)
@@ -132,12 +137,37 @@ def remote_import_preflight() -> dict[str, object]:
         "runtime": str(runtime_path),
         "checkpoint_transport": str(checkpoint_transport_path),
         "rolling_runtime": str(rolling_path),
+        "rolling_producer": str(producer_path),
         "run_root": str(run_root),
     }
 
 
 @app.function(
-    timeout=2 * 60 * 60,
+    cpu=4.0,
+    memory=8192,
+    timeout=24 * 60 * 60,
+    retries=modal.Retries(max_retries=3, initial_delay=1.0),
+    single_use_containers=True,
+    secrets=[TRAINING_SECRET],
+    volumes={str(CACHE_ROOT): CACHE_VOLUME},
+)
+def produce_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
+    """Cheap CPU producer: ClimbMix ranges -> verified immutable HF READY shards."""
+
+    sys.path.insert(0, str(REMOTE_MODAL))
+    from rolling_producer import produce_incremental_dataset  # noqa: PLC0415
+
+    return produce_incremental_dataset(
+        model=model,
+        tokens=tokens,
+        repo_root=REMOTE_REPO,
+        producer_root=CACHE_ROOT / "producer",
+        commit_cache_volume=lambda: getattr(CACHE_VOLUME, "commit")(),
+    )
+
+
+@app.function(
+    timeout=24 * 60 * 60,
     retries=modal.Retries(max_retries=3, initial_delay=1.0),
     single_use_containers=True,
     secrets=[TRAINING_SECRET],
@@ -147,7 +177,7 @@ def remote_import_preflight() -> dict[str, object]:
     },
 )
 def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
-    """CPU-only gate: checkpoint-align, download, hash, then commit the required shard."""
+    """CPU-only gate: checkpoint-align, wait for lead, download, hash, commit."""
 
     sys.path.insert(0, str(REMOTE_MODAL))
     from model_repo_checkpoint import install_model_repo_checkpoint_transport  # noqa: PLC0415
@@ -310,6 +340,9 @@ def main(
         raise ValueError(
             "rolling HF datasets use the CPU-managed Modal cache path; do not supply --dataset-dir"
         )
+    from dataset.qualification import get_profile  # noqa: PLC0415
+
+    dataset_profile = get_profile(token_preset.dataset_profile)
     source_commit = _local_source_commit()
     payload = {
         "action": "train",
@@ -319,6 +352,7 @@ def main(
         "model_size": model_preset.trainer_size,
         "dataset_profile": token_preset.dataset_profile,
         "dataset_transport": token_preset.dataset_transport,
+        "incremental_dataset_producer": bool(dataset_profile.incremental_frontier),
         "run_id": canonical_run_id(model_preset, token_preset),
         "gpu": gpu,
         "microbatch_size": (
@@ -329,7 +363,7 @@ def main(
         "precision": precision,
         "source_commit": source_commit,
         "dataset_dir": (
-            "CPU-stage checkpoint-aligned HF shard"
+            "CPU-stage checkpoint-aligned HF shard frontier"
             if token_preset.dataset_transport == "hf_rolling_shards"
             else dataset_dir or "auto-discover unique matching dataset"
         ),
@@ -348,8 +382,24 @@ def main(
         profiles=preflight.get("profiles"),
         runtime=preflight.get("runtime"),
         rolling_runtime=preflight.get("rolling_runtime"),
+        rolling_producer=preflight.get("rolling_producer"),
         run_root=preflight.get("run_root"),
     )
+
+    producer_call = None
+    producer_result: dict[str, object] | None = None
+    if token_preset.dataset_transport == "hf_rolling_shards" and dataset_profile.incremental_frontier:
+        _stage(
+            "cpu_dataset_producer_start",
+            dataset_profile=token_preset.dataset_profile,
+            dataset_run_id=dataset_profile.run_id,
+        )
+        # Do not wait here. The independent CPU staging call below polls the
+        # READY frontier while this producer continues extending it.
+        producer_call = produce_rolling_dataset_remote.spawn(
+            model_preset.label,
+            token_preset.label,
+        )
 
     resolved_dataset_dir = dataset_dir
     if token_preset.dataset_transport == "hf_rolling_shards":
@@ -358,20 +408,32 @@ def main(
             run_id=payload["run_id"],
             dataset_profile=token_preset.dataset_profile,
         )
-        staged = stage_rolling_dataset_remote.remote(model_preset.label, token_preset.label)
+        stage_call = stage_rolling_dataset_remote.spawn(model_preset.label, token_preset.label)
+        staged, producer_result = await_stage_with_producer(stage_call, producer_call)
         _stage(
             "cpu_dataset_stage_complete",
             status=staged.get("status"),
             next_block_id=staged.get("next_block_id"),
             dataset_dir=staged.get("dataset_dir"),
+            incremental_frontier=staged.get("incremental_frontier"),
             h100_dispatch_allowed=staged.get("h100_dispatch_allowed"),
         )
         if staged.get("status") == "training_complete":
+            if producer_call is not None and producer_result is None:
+                try:
+                    producer_result = producer_call.get(timeout=0)
+                except TimeoutError:
+                    try:
+                        producer_call.cancel(terminate_containers=True)
+                    except Exception:
+                        pass
+                    producer_result = {"status": "cancelled_training_already_complete"}
             result = {
                 "status": "already_complete_cpu_gate",
                 "run_id": payload["run_id"],
                 "completed_steps": staged.get("completed_steps"),
                 "dataset_transport": token_preset.dataset_transport,
+                "dataset_producer": producer_result,
                 "h100_allocated": False,
             }
             print(json.dumps(result, indent=2, sort_keys=True), flush=True)
@@ -409,6 +471,28 @@ def main(
             microbatch_size,
             precision,
         ).get()
+    result = dict(result)
+    if producer_call is not None:
+        if producer_result is not None:
+            result["dataset_producer"] = producer_result
+        elif max_steps_this_session == 0 or result.get("status") == "complete":
+            producer_result = producer_call.get()
+            result["dataset_producer"] = producer_result
+            _stage(
+                "cpu_dataset_producer_complete",
+                status=producer_result.get("status"),
+                producer_complete=producer_result.get("producer_complete"),
+            )
+        else:
+            try:
+                producer_result = producer_call.get(timeout=0)
+            except TimeoutError:
+                result["dataset_producer"] = {
+                    "status": "running_after_training_segment",
+                    "function_call_id": getattr(producer_call, "object_id", None),
+                }
+            else:
+                result["dataset_producer"] = producer_result
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 

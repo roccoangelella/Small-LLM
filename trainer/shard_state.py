@@ -22,8 +22,13 @@ def load_reader_state(reader: object, state: Mapping[str, object]) -> None:
     cursor = state.get("last_consumed_block_id")
     if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < -1:
         raise ValueError("shard-reader checkpoint has an invalid cursor")
-    if cursor >= 0 and cursor not in reader._index:
-        raise ValueError("shard-reader checkpoint cursor is outside this dataset")
+    if cursor >= 0:
+        dynamic = bool(getattr(reader, "_dynamic_frontier", False))
+        if dynamic:
+            if cursor >= int(reader.block_count):
+                raise ValueError("shard-reader checkpoint cursor is outside the frozen incremental horizon")
+        elif cursor not in reader._index:
+            raise ValueError("shard-reader checkpoint cursor is outside this dataset")
     reader.last_acknowledged_block_id = cursor
 
 def pipeline_state(reader: object) -> dict[str, object]:

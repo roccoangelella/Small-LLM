@@ -25,9 +25,9 @@ def _rolling_cache(args: object) -> object | None:
     bucket_id = explicit_bucket or os.environ.get("SMALL_LLM_DATASET_SHARD_BUCKET")
     if not bucket_id:
         return None
-    # Modal microbatch probes use only a handful of blocks from CPU-staged
-    # shard 0.  Do not start a 1-GiB successor download from a short-lived probe
-    # process; the real online subprocess enables rolling prefetch immediately.
+    # Modal microbatch probes use only a handful of blocks from the CPU-staged
+    # bootstrap window. Do not start a one-GiB successor download from a short-
+    # lived probe process; the real online subprocess enables rolling prefetch.
     if (
         not explicit_bucket
         and os.environ.get("SMALL_LLM_MODAL_ROLLING_DATASET") == "1"
@@ -62,10 +62,35 @@ def _rolling_cache(args: object) -> object | None:
     if not isinstance(production, Mapping) or production.get("run_id") != run_id:
         raise RuntimeError("rolling dataset manifest run ID mismatch")
 
-    from dataset.rolling_cache import RollingShardCache
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
 
     store = HuggingFaceBucketShardStore(bucket_id, token=token, create_bucket=False)
+    incremental = payload.get("incremental_frontier")
+    if isinstance(incremental, Mapping):
+        from dataset.incremental_cache import IncrementalRollingShardCache
+        from dataset.incremental_frontier import RUN_CONTRACT_FILENAME
+
+        contract_path = manifest_path.parent / RUN_CONTRACT_FILENAME
+        try:
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as error:
+            raise RuntimeError("incremental rolling dataset has no readable run contract") from error
+        if not isinstance(contract, Mapping):
+            raise RuntimeError("incremental rolling dataset run contract is not an object")
+        if contract.get("run_id") != run_id:
+            raise RuntimeError("incremental rolling dataset run contract ID mismatch")
+        if incremental.get("contract_sha256") != contract.get("contract_sha256"):
+            raise RuntimeError("incremental rolling dataset manifest/contract identity mismatch")
+        return IncrementalRollingShardCache(
+            root=args.dataset_dir,
+            run_id=run_id,
+            contract=contract,
+            store=store,
+            prefetch_shards=prefetch,
+        )
+
+    from dataset.rolling_cache import RollingShardCache
+
     return RollingShardCache(
         root=args.dataset_dir,
         run_id=run_id,

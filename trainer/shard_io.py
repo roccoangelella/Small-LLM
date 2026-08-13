@@ -1,11 +1,17 @@
 """Verified reads from immutable schema-v2 shard locations."""
 from __future__ import annotations
+from collections.abc import Sequence
 from .shard_layout import BlockLocation, file_hash
 from .types import TokenBatch
 
-def read_location(reader: object, item: BlockLocation) -> TokenBatch:
+def read_location(
+    reader: object,
+    item: BlockLocation,
+    *,
+    peer_locations: Sequence[BlockLocation] | None = None,
+) -> TokenBatch:
     root = reader.root
-    locations = reader._locations
+    locations = tuple(peer_locations) if peer_locations is not None else reader._locations
     verified = reader._verified
     if item.path not in verified:
         if item.path.is_symlink() or not item.path.is_file():
@@ -14,7 +20,10 @@ def read_location(reader: object, item: BlockLocation) -> TokenBatch:
             item.path.resolve().relative_to(root.resolve())
         except ValueError as error:
             raise RuntimeError(f"shard escapes dataset root: {item.path}") from error
-        expected_size = max(x.offset + x.byte_size for x in locations if x.path == item.path)
+        matching = [x for x in locations if x.path == item.path]
+        if not matching:
+            raise RuntimeError(f"no shard geometry is available for {item.path}")
+        expected_size = max(x.offset + x.byte_size for x in matching)
         if item.path.stat().st_size != expected_size:
             raise RuntimeError(f"schema-v2 shard size mismatch: {item.path}")
         if reader.verify_checksums and file_hash(item.path) != item.checksum:

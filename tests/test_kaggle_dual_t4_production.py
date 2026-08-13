@@ -87,12 +87,15 @@ class KaggleDualT4ProductionTests(unittest.TestCase):
             [0, 7, 14, 21, 28, 35],
         )
 
-    def test_overflow_collective_precedes_optimizer_step(self) -> None:
+    def test_overflow_collectives_precede_any_optimizer_step(self) -> None:
         source = (KAGGLE / "dual_t4_train.py").read_text(encoding="utf-8")
         synchronize = source.index("dist.all_reduce(flags, op=dist.ReduceOp.MAX)")
+        unanimity = source.index("dist.all_reduce(unanimous, op=dist.ReduceOp.MIN)")
         optimizer_step = source.index("engine.scaler.step(engine.optimizer)")
-        self.assertLess(synchronize, optimizer_step)
-        self.assertIn("engine.scaler.update(new_scale=scale_before * backoff)", source)
+        self.assertLess(synchronize, unanimity)
+        self.assertLess(unanimity, optimizer_step)
+        self.assertIn("asymmetric GradScaler found_inf across DDP ranks", source)
+        self.assertIn("GradScaler skips the underlying", source)
 
     def test_checkpoint_and_validation_use_raw_model_adapter(self) -> None:
         sentinel_raw = object()
