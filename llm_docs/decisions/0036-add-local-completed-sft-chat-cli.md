@@ -1,7 +1,7 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-11
-supersedes: null
+superseded_by: 0064
 ---
 
 # 0036 — Add a local completed-SFT chat CLI
