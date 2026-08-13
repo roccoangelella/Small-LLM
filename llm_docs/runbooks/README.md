@@ -4,6 +4,7 @@ Runbooks contain executable or intentionally reproducible procedures, prerequisi
 
 ## Active
 
+- [`100m_10b_incremental_modal.md`](100m_10b_incremental_modal.md) — ADR-0058 CPU producer/frontier/staging/H100 procedure for the fresh 100M / 10B trajectory; technical readiness is separate from ADR-0050 launch authorization.
 - [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical `kaggle/launch.py` publication/training command surface for registered finite-data profiles.
 - [`20m_2b_runbook.md`](20m_2b_runbook.md) — authorized fresh 20M-model / 2B-token scaling run.
 - [`sft_s0_runbook.md`](sft_s0_runbook.md) — canonical `kaggle/launch_sft.py` bundle publication, T4 SFT, exact resume, and parent-versus-SFT qualification procedure.
