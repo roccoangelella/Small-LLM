@@ -7,6 +7,7 @@ import contextlib
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -46,16 +47,6 @@ def _argument_value(argv: Sequence[str], flag: str) -> str:
     if index + 1 >= len(values):
         raise RuntimeError(f"trainer argument has no value: {flag}")
     return str(values[index + 1])
-
-
-def _replace_argument(argv: list[str], flag: str, value: str) -> None:
-    try:
-        index = argv.index(flag)
-    except ValueError as error:
-        raise RuntimeError(f"required trainer argument is missing: {flag}") from error
-    if index + 1 >= len(argv):
-        raise RuntimeError(f"trainer argument has no value: {flag}")
-    argv[index + 1] = value
 
 
 def _distributed_sft_train_step(engine: Any, batch: Any) -> Any:
@@ -329,6 +320,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     original_session_step = trainer_session.TrainingSession.step
     original_behavior = sft_train.evaluate_behavior
     original_budget = sft_train.sft_budget_from_parent
+    original_select_resume = sft_train._select_resume
+    original_path_write_text = Path.write_text
     checkpoint_dir = Path(_argument_value(trainer_argv, "--checkpoint-dir")).resolve()
     fraction = numerator / denominator
 
@@ -381,6 +374,49 @@ def main(argv: Sequence[str] | None = None) -> int:
             denominator=denominator,
         )
 
+    def synchronized_resume(
+        args: argparse.Namespace,
+        *,
+        token: str | None,
+        expected_hashes: tuple[str, str, str],
+        expected_identity: Mapping[str, object],
+    ) -> tuple[Path, dict[str, object]] | None:
+        if rank == 0:
+            resumed = original_select_resume(
+                args,
+                token=token,
+                expected_hashes=expected_hashes,
+                expected_identity=expected_identity,
+            )
+            resume_step = -1
+            if resumed is not None:
+                resume_root, resume_info = resumed
+                checkpoint_id = str(resume_info["checkpoint_id"])
+                resume_step = int(resume_info["step"])
+                if resume_info.get("transport") == "remote":
+                    target = args.checkpoint_dir / checkpoint_id
+                    if not target.exists():
+                        shutil.copytree(resume_root, target)
+            signal = torch.tensor([resume_step], dtype=torch.int64, device=f"cuda:{local_rank}")
+            dist.broadcast(signal, src=0)
+            return resumed
+
+        signal = torch.tensor([-1], dtype=torch.int64, device=f"cuda:{local_rank}")
+        dist.broadcast(signal, src=0)
+        expected_step = int(signal.item())
+        if expected_step < 0:
+            return None
+        local = sft_train._local_resume(
+            args,
+            expected_hashes=expected_hashes,
+            expected_identity=expected_identity,
+        )
+        if local is None or int(local[1]["step"]) != expected_step:
+            raise RuntimeError(
+                "rank 1 could not load the exact SFT checkpoint selected by rank 0"
+            )
+        return local
+
     def stable_parent_checkpoint(
         *,
         repo_id: str,
@@ -404,6 +440,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sft_train.TrainerEngine = DistributedSFTTrainerEngine
     trainer_session.TrainingSession.step = synchronized_session_step
     sft_train.sft_budget_from_parent = profile_budget
+    sft_train._select_resume = synchronized_resume
     sft_train.download_parent_checkpoint = stable_parent_checkpoint
 
     if rank == 0:
@@ -433,8 +470,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             flush=True,
         )
     else:
-        rank_checkpoint_dir = checkpoint_dir / ".rank1"
-        _replace_argument(trainer_argv, "--checkpoint-dir", str(rank_checkpoint_dir))
+        summary_path = (checkpoint_dir / "sft-summary.json").resolve()
+
+        def rank1_write_text(path: Path, data: str, *args: Any, **kwargs: Any) -> int:
+            if path.resolve() == summary_path:
+                return len(data)
+            return original_path_write_text(path, data, *args, **kwargs)
+
+        Path.write_text = rank1_write_text
         sft_train._wandb_run = lambda *args, **kwargs: None
         sft_train._validation = lambda *args, **kwargs: _dummy_validation()
         sft_train.evaluate_behavior = lambda *args, **kwargs: _dummy_behavior()
@@ -450,6 +493,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         dist.barrier()
         return exit_code
     finally:
+        if rank != 0:
+            Path.write_text = original_path_write_text
         if dist.is_initialized():
             try:
                 dist.destroy_process_group()
