@@ -29,6 +29,11 @@ post-training = [
     "huggingface-hub>=1.5,<2",
     "tiktoken>=0.9.0",
 ]
+beam = [
+    # Beam's Python SDK exposes both the `beam` import used by beam/launch.py
+    # and the Beam CLI used for account, secret, volume, and machine setup.
+    "beam-client==0.2.201",
+]
 
 [project.scripts]
 small-llm-eval-data = "dataset.eval_core_cli:main"
