@@ -1,132 +1,90 @@
-# Training, Evaluation, and Checkpointing
+# Training, evaluation, and checkpointing
 
-_Last updated: 2026-07-31_
+_Last reviewed: 2026-08-13_
 
-## Fixed constraints
+## Reproducibility principle
 
-- Initial accelerator: one NVIDIA T4.
-- Initial context: 2,048 input tokens.
-- Likely microbatch for larger trials: 1, with gradient accumulation.
-- Train from random initialization.
-- Checkpoint only at completed optimizer-step boundaries.
-- Compare hybrid and all-MHA models with matched tokenizer, data mixture, parameter budget, training tokens, optimizer setup, data ordering, and evaluation protocol as closely as possible.
+Scaling or architecture claims must bind exact model geometry, tokenizer, dataset/source identity, data order, optimizer/update geometry, schedule, consumed targets, checkpoint identity, and evaluation protocol. Execution topology may differ only when explicitly qualified to preserve the scientific batch semantics.
 
-The intended first pass overlaps source streaming, preparation, local caching, Drive mirroring, and model training. With sufficient buffering, the T4 should be the steady-state bottleneck; data preparation must not starve it.
+## Instrumentation
 
-## Experiment ladder
+Production training records at least:
 
-1. Run the approximately 20M smoke model for implementation correctness.
-2. Connect it to the schema-v2 dataset consumer and joint-checkpoint contract.
-3. Validate forward pass, backward pass, generation, interruption, resume, and migration.
-4. Benchmark memory, throughput, and mixer kernels on the T4.
-5. Train the approximately 100M hybrid and a parameter-matched all-MHA baseline.
-6. Scale only after stable loss, throughput, memory, and checkpoint evidence.
+- exact model/config identity and source commit;
+- optimizer step and consumed loss-bearing targets;
+- train and held-out validation loss/perplexity;
+- gradient norm/clipping and FP16 scaler/overflow state;
+- scheduled LR and optimizer-group state;
+- peak GPU memory, step time, and throughput;
+- dataset wait/readiness state where relevant;
+- checkpoint/publication results;
+- W&B stable run identity.
 
-Smoke runs answer only whether the system works. The approximately 100M run is the first scale intended to compare architecture behavior.
+## Checkpoint boundary
 
-## Required instrumentation
+Checkpoint only after a successful complete optimizer block. Model state and dataset cursor must describe the same acknowledged boundary. Exact resume restores model, optimizer, scheduler, scaler, counters, RNG, and dataset position; source/config drift fails closed.
 
-Every run should record:
-
-- exact total and per-component parameter counts;
-- optimizer step and source/training token counters;
-- train and validation loss;
-- gradient norm and clipping events;
-- learning rate;
-- loss-scaler state and overflow events when using FP16;
-- peak allocated and reserved GPU memory;
-- tokens per second and step time;
-- data-wait time;
-- mixer-specific kernel timings;
-- GDN recurrent-state memory;
-- MHA activation memory;
-- checkpoint duration and size;
-- save/load verification results;
-- git commit, configuration hash, dataset hashes, tokenizer identity, schema version, and approved mixture-weight hash.
-
-## Fixed-window joint checkpoint contract
-
-Training must be pausable and safely resumable, including migration between VPS providers. A checkpoint binds exact trainer state to exact dataset-pipeline state.
-
-### Trainer state
-
-A complete trainer checkpoint must include:
-
-- model weights;
-- optimizer state;
-- learning-rate scheduler state;
-- FP16 scaler state when applicable;
-- optimizer step and token counters;
-- gradient-accumulation position;
-- Python, framework, CUDA, and data-order RNG states;
-- evaluation state.
-
-### Pipeline state
-
-The corresponding pipeline state must include:
-
-- last consumed and last durable block IDs;
-- validation state;
-- durable source/work-plan cursor;
-- queue, scheduler, rolling-mixture, and packer state;
-- pending prepared sequences;
-- finalized shard state;
-- exact Google Drive manifest snapshot;
-- hashes for configuration, source, code, tokenizer, schema, and approved mixture weights.
-
-### Publication order
+Remote model storage follows ADR 0055:
 
 ```text
-finish optimizer step and pause consumption
-→ finalize referenced shard tails
-→ upload and verify Drive shards
-→ atomically finalize local joint checkpoint
-→ upload and read-back verify versioned private-Hub checkpoint
-→ publish latest pointer
-→ conditionally update best
-→ resume training
+run/<run_id>/...       live two-phase exact-resume state
+models/<run_id>/...    stable completed artifacts
 ```
 
-No silent skip, unknown duplicate range, or model/data-cursor mismatch is acceptable. Bitwise-identical arithmetic after migration is best effort unless hardware and software environments match exactly.
+Stable artifacts require native `local_manifest.json` verification. Live two-phase checkpoints additionally use their publication manifest and pointer protocol.
 
-## Baseline comparison contract
+Dataset durability is separate. New dataset shards use HF Storage Buckets under ADR 0054; historical `drive_*` schema fields remain readable compatibility names.
 
-The all-MHA baseline should match the hybrid as closely as possible in:
+## Frozen intrinsic evaluation
 
-- tokenizer and vocabulary;
-- total parameters;
-- depth or total compute, with unavoidable differences documented;
-- SwiGLU FFN type and width;
-- RMSNorm placement;
-- RoPE configuration;
-- training tokens;
-- global token batch and optimizer setup;
-- data ordering;
-- checkpoint procedure;
-- evaluation datasets and metrics.
+`eval_core_v1` is the canonical project intrinsic evaluation corpus. A full bundle records:
 
-Final claims must not be based on unmatched token counts, unmatched parameter counts, or different data orderings.
+- NLL/loss and perplexity;
+- bits per decoded target byte;
+- top-1/5/10 next-token accuracy;
+- ECE calibration and bins;
+- per-cluster loss/perplexity;
+- cluster macro and exact source-mixture-weighted loss;
+- worst cluster;
+- sequence-position buckets;
+- document-bootstrap 95% intervals;
+- wall time, throughput, and peak allocated VRAM.
 
-## Open training decisions
+Compare bundles only when their `eval_manifest_sha256` is identical. The current 20M/500M, 20M/2B, and 100M/2B scorecard uses manifest `aa7b6157e5f420dd53a99552685eaed01962ee45c23cbe438e1321a886422792`.
 
-The following require explicit decisions and controlled tests:
+## Frozen qualitative comparison
 
-- optimizer and optimizer-state strategy;
-- learning-rate schedule, peak LR, warmup, and minimum LR;
-- initialization and depth-dependent residual scaling;
-- global token batch and gradient-accumulation schedule;
-- precision policy on T4;
-- gradient clipping;
-- weight decay and parameter exclusions;
-- checkpoint cadence;
-- evaluation datasets and metrics;
-- definition of the `best` checkpoint and metric direction;
-- token budget for each architecture trial;
-- whether repeated presentations up to 2T tokens are justified;
-- post-training and instruction-tuning procedure;
-- reasoning datasets and teacher model;
-- final compute availability and release policy.
+ADR 0025, not the Python sampler defaults, is authoritative for canonical post-pretraining qualitative comparison:
 
-## Evaluation principle
+```text
+temperature: 0
+top_p: 1
+top_k: 0
+seed: 17
+samples_per_prompt: 1
+questions_only: false
+max_new_tokens: 32
+trace_top_tokens: 0
+```
 
-Architecture comparisons must change one important variable at a time. Quality, stability, memory, throughput, and checkpoint behavior all matter. A configuration is not accepted merely because its nominal parameter count is attractive.
+The live-run version historically uses the validation-selected `best` pointer. Stable `models/...` artifacts preserve the terminal stable model rather than a validation-best history, so stable-model evaluation must record that endpoint-selection difference explicitly rather than pretending a `best` pointer exists.
+
+A sampled decoding run is useful supplementary evidence but must never be merged into the canonical greedy score. Example: the sampled 100M/2B run answered `Paris`, while the greedy endpoint run answered `France`.
+
+## Full evaluator versus exact qualitative protocol
+
+`trainer.eval_suite` combines `eval_core_v1` metrics with qualitative prompts, but its prompt runner currently uses native per-case generation budgets and does not expose ADR 0025's global `max_new_tokens=32`. Therefore:
+
+- use its intrinsic metrics for canonical full scale comparison;
+- prompt outputs from runs with identical flags are mutually comparable;
+- run `trainer.post_pretraining_prompt_suite` or the stable-model wrapper for the exact ADR-0025 qualitative protocol until the full evaluator gains an equivalent global cap.
+
+## Teacher-forced confidence diagnostic
+
+The teacher-forced held-out diagnostic is deterministic and operates on raw next-token logits; temperature/top-k/top-p are irrelevant. It records true-token probability/rank, top-k membership, entropy, and representative high-confidence errors over the frozen validation sample. It complements, but does not replace, full `eval_core_v1`.
+
+## Current scale interpretation
+
+The 2026-08-13 three-way full evaluation shows 20M improves from 500M→2B but unevenly, while 100M/2B improves every retained cluster and every context-position bucket relative to 20M/2B. This is evidence that 20M is capacity-constrained by 2B. Behavioral capability remains a separate gate for ADR 0050.
+
+Evidence: [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md).
