@@ -1,5 +1,7 @@
-# Usage: python chat.py --model_params 20M --num_tokens 500M
-# --model_params: model parameter profile (for example 20M)
+# Usage:
+#   python chat.py --model_params 20M --num_tokens 500M  # completed SFT run
+#   python chat.py --model_params 100M --num_tokens 2B   # stable pretrained run
+# --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 
 TEMPERATURE = 0.8
@@ -20,9 +22,12 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 
-_SFT_RUN_IDS = {
-    (20_000_000, 500_000_000): "20m-500m-sft-s0-001",
-    (20_000_000, 2_000_000_000): "20m-2b-sft-s0-001",
+_SOURCE_SFT = "sft"
+_SOURCE_STABLE_MODEL = "stable_model"
+_CHAT_RUNS = {
+    (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
+    (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
+    (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
 }
 _QUANTITY_SUFFIXES = {
     "": 1,
@@ -67,7 +72,7 @@ def _parse_quantity(value: str) -> int:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download a completed Small-LLM SFT checkpoint from Hugging Face and chat locally."
+        description="Download a completed Small-LLM chat artifact from Hugging Face and chat locally."
     )
     parser.add_argument(
         "--model_params",
@@ -75,7 +80,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="model_params",
         type=_parse_quantity,
         required=True,
-        help="model parameter profile, e.g. 20M",
+        help="model parameter profile, e.g. 20M or 100M",
     )
     parser.add_argument(
         "--num_tokens",
@@ -88,32 +93,39 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _resolve_sft_run_id(model_params: int, num_tokens: int) -> str:
+def _resolve_chat_run(model_params: int, num_tokens: int) -> tuple[str, str]:
     try:
-        return _SFT_RUN_IDS[(model_params, num_tokens)]
+        return _CHAT_RUNS[(model_params, num_tokens)]
     except KeyError as error:
         supported = ", ".join(
             f"{params // 1_000_000}M/{tokens // 1_000_000}M"
             if tokens < 1_000_000_000
             else f"{params // 1_000_000}M/{tokens // 1_000_000_000}B"
-            for params, tokens in _SFT_RUN_IDS
+            for params, tokens in _CHAT_RUNS
         )
         raise RuntimeError(
-            f"no registered SFT profile for model_params={model_params}, num_tokens={num_tokens}; "
+            f"no registered chat profile for model_params={model_params}, num_tokens={num_tokens}; "
             f"supported: {supported}"
         ) from error
 
 
-def _repo_id() -> str:
-    repo_id = os.environ.get("SMALL_LLM_SFT_HF_REPO_ID") or os.environ.get(
-        "SMALL_LLM_HF_REPO_ID"
-    )
-    if not repo_id:
-        raise RuntimeError(
-            "set SMALL_LLM_SFT_HF_REPO_ID (or SMALL_LLM_HF_REPO_ID when SFT checkpoints "
-            "share the base checkpoint repository)"
+def _repo_id(*, source: str) -> str:
+    if source == _SOURCE_SFT:
+        repo_id = os.environ.get("SMALL_LLM_SFT_HF_REPO_ID") or os.environ.get(
+            "SMALL_LLM_HF_REPO_ID"
         )
-    return repo_id
+        if not repo_id:
+            raise RuntimeError(
+                "set SMALL_LLM_SFT_HF_REPO_ID (or SMALL_LLM_HF_REPO_ID when SFT checkpoints "
+                "share the base checkpoint repository)"
+            )
+        return repo_id
+    if source == _SOURCE_STABLE_MODEL:
+        repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID")
+        if not repo_id:
+            raise RuntimeError("set SMALL_LLM_HF_REPO_ID for stable pretrained model artifacts")
+        return repo_id
+    raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 
 
 def _read_json(path: Path, *, label: str) -> dict[str, object]:
@@ -126,8 +138,13 @@ def _read_json(path: Path, *, label: str) -> dict[str, object]:
     return dict(payload)
 
 
-def _load_completed_sft(checkpoint_root: Path, *, device: object):
-    """Load one verified SFT checkpoint and reject partial SFT trajectories."""
+def _load_completed_checkpoint(
+    checkpoint_root: Path,
+    *,
+    device: object,
+    require_sft_identity: bool,
+):
+    """Load one verified completed checkpoint, optionally requiring SFT S0 identity."""
 
     from dataset.src.joint_checkpoint import verify_local_manifest
     from model.config import ModelConfig
@@ -135,39 +152,40 @@ def _load_completed_sft(checkpoint_root: Path, *, device: object):
 
     verify_local_manifest(checkpoint_root)
     checkpoint = _read_json(checkpoint_root / "checkpoint.json", label="checkpoint.json")
-    pipeline = checkpoint.get("pipeline_state")
-    sft_identity = pipeline.get("sft_identity") if isinstance(pipeline, Mapping) else None
-    if not isinstance(sft_identity, Mapping) or sft_identity.get("stage") != "sft_s0":
-        raise RuntimeError("the selected Hugging Face checkpoint is not an SFT S0 checkpoint")
+    if require_sft_identity:
+        pipeline = checkpoint.get("pipeline_state")
+        sft_identity = pipeline.get("sft_identity") if isinstance(pipeline, Mapping) else None
+        if not isinstance(sft_identity, Mapping) or sft_identity.get("stage") != "sft_s0":
+            raise RuntimeError("the selected Hugging Face checkpoint is not an SFT S0 checkpoint")
 
     with (checkpoint_root / "trainer_state.pkl").open("rb") as handle:
         state = pickle.load(handle)
     if not isinstance(state, dict) or state.get("version") != 1:
-        raise RuntimeError("SFT trainer_state.pkl has an unsupported structure or version")
+        raise RuntimeError("trainer_state.pkl has an unsupported structure or version")
 
     trainer_config = state.get("config")
     if not isinstance(trainer_config, Mapping) or trainer_config.get("schedule") != "wsd":
-        raise RuntimeError("SFT checkpoint has no valid WSD trainer configuration")
+        raise RuntimeError("checkpoint has no valid WSD trainer configuration")
     schedule_parts: list[int] = []
     for name in ("warmup_tokens", "stable_tokens", "decay_tokens"):
         value = trainer_config.get(name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise RuntimeError(f"SFT checkpoint has invalid {name}")
+            raise RuntimeError(f"checkpoint has invalid {name}")
         schedule_parts.append(value)
     expected_consumed = sum(schedule_parts)
     consumed = state.get("consumed_tokens")
     if isinstance(consumed, bool) or not isinstance(consumed, int) or consumed < 0:
-        raise RuntimeError("SFT checkpoint has an invalid consumed_tokens counter")
+        raise RuntimeError("checkpoint has an invalid consumed_tokens counter")
     if expected_consumed <= 0 or consumed != expected_consumed:
         raise RuntimeError(
-            "SFT exists on Hugging Face but is not complete: "
+            "checkpoint exists on Hugging Face but is not complete: "
             f"consumed_loss_targets={consumed:,}, full_schedule_targets={expected_consumed:,}"
         )
 
     raw_config = state.get("model_config")
     model_state = state.get("model")
     if not isinstance(raw_config, Mapping) or not isinstance(model_state, Mapping):
-        raise RuntimeError("SFT checkpoint does not contain self-describing model weights")
+        raise RuntimeError("checkpoint does not contain self-describing model weights")
     config_values = dict(raw_config)
     if isinstance(config_values.get("layer_pattern"), list):
         config_values["layer_pattern"] = tuple(config_values["layer_pattern"])
@@ -196,21 +214,41 @@ def _load_completed_sft(checkpoint_root: Path, *, device: object):
     return model, config, consumed
 
 
-def _download_model(*, repo_id: str, run_id: str, device: object):
-    from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
-
+def _download_model(*, repo_id: str, run_id: str, source: str, device: object):
     token = os.environ.get("HF_TOKEN")
     temporary = tempfile.TemporaryDirectory(prefix="small-llm-chat-")
     try:
-        checkpoint_root, info = download_verified_checkpoint(
-            repo_id=repo_id,
-            run_id=run_id,
-            token=token,
-            revision=None,
-            pointer_name="latest",
-            destination=Path(temporary.name),
+        if source == _SOURCE_SFT:
+            from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
+
+            checkpoint_root, info = download_verified_checkpoint(
+                repo_id=repo_id,
+                run_id=run_id,
+                token=token,
+                revision=None,
+                pointer_name="latest",
+                destination=Path(temporary.name),
+            )
+            require_sft_identity = True
+        elif source == _SOURCE_STABLE_MODEL:
+            from trainer.model_artifact import download_verified_model_artifact
+
+            checkpoint_root, info = download_verified_model_artifact(
+                repo_id=repo_id,
+                run_id=run_id,
+                token=token,
+                revision=None,
+                destination=Path(temporary.name),
+            )
+            require_sft_identity = False
+        else:
+            raise RuntimeError(f"unsupported chat artifact source: {source!r}")
+
+        model, config, consumed = _load_completed_checkpoint(
+            checkpoint_root,
+            device=device,
+            require_sft_identity=require_sft_identity,
         )
-        model, config, consumed = _load_completed_sft(checkpoint_root, device=device)
     except Exception:
         temporary.cleanup()
         raise
@@ -378,8 +416,8 @@ def _chat(model, config, *, device) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    run_id = _resolve_sft_run_id(args.model_params, args.num_tokens)
-    repo_id = _repo_id()
+    run_id, source = _resolve_chat_run(args.model_params, args.num_tokens)
+    repo_id = _repo_id(source=source)
 
     try:
         import torch
@@ -394,11 +432,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         model, config, consumed, info, temporary = _download_model(
             repo_id=repo_id,
             run_id=run_id,
+            source=source,
             device=device,
         )
     except Exception as error:
         raise RuntimeError(
-            f"could not load a completed SFT checkpoint for {run_id} from {repo_id}: {error}"
+            f"could not load a completed chat artifact for {run_id} from {repo_id}: {error}"
         ) from error
 
     try:
