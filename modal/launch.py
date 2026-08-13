@@ -167,7 +167,7 @@ def produce_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]
 
 
 @app.function(
-    timeout=6 * 60 * 60,
+    timeout=24 * 60 * 60,
     retries=modal.Retries(max_retries=3, initial_delay=1.0),
     single_use_containers=True,
     secrets=[TRAINING_SECRET],
