@@ -8,7 +8,7 @@ supersedes: null
 
 ## Context and problem statement
 
-Beam exposes a wider on-demand catalog, but the project Beam credits are intended to be consumed through Beam's serverless GPU lane. The current account/machine listing shows serverless availability for A10G, RTX4090, and RTX5090, with RTX5090 at $0.71/hour and RTX4090 at $0.66/hour. The project should not accidentally dispatch an on-demand-only GPU such as H100 from the Beam training adapter.
+Beam exposes a wider on-demand catalog, but the project Beam credits are intended to be consumed through Beam's serverless GPU lane. The current account/machine listing shows serverless availability for A10G, RTX4090, and RTX5090. The same table separately lists $0.71/hour for RTX5090 and $0.66/hour for RTX4090 in its **on-demand** column; those numbers are not treated as serverless billing rates. The project should not accidentally dispatch an on-demand-only GPU such as H100 from the Beam training adapter.
 
 The 100M Small-LLM training geometry is small enough that a consumer Blackwell GPU is a plausible execution target, but the exact safe microbatch and cost efficiency must be measured on the real GDN-2/FLA training kernel rather than assumed from nominal TFLOPS or VRAM.
 
@@ -32,7 +32,7 @@ The first RTX5090 launch must still run the existing real forward/backward micro
 ### Positive
 
 - Beam credits are spent on the intended serverless lane and scale to zero when the function is not running.
-- RTX5090 becomes the primary cost/performance candidate while costing only slightly more per hour than RTX4090 in the current account listing.
+- RTX5090 becomes the primary serverless performance candidate; serverless credit burn and dollars per target token are measured from actual Beam runs rather than inferred from the table's on-demand price column.
 - Accidental H100/on-demand dispatch from the Beam adapter is prevented.
 - The same exact-resume Hugging Face checkpoint/model transport remains portable between Beam and Modal.
 
