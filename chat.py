@@ -1,3 +1,7 @@
+# Usage: python chat.py --model_params 20M --num_tokens 500M
+# --model_params: model parameter profile (for example 20M)
+# --num_tokens: parent pretraining token profile (for example 500M or 2B)
+
 TEMPERATURE = 0.8
 TOP_K = 50
 TOP_P = 0.95
