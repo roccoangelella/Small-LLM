@@ -16,6 +16,8 @@ from dataset.incremental_frontier import (
 from dataset.src.remote import sha256_path
 from dataset.src.storage import write_json_atomic
 
+CPU_STAGE_MAX_SECONDS = 24 * 60 * 60
+
 
 def _load(path: Path, *, label: str) -> dict[str, object]:
     try:
@@ -49,7 +51,7 @@ def stage_incremental_window_when_ready(
     run_id: str,
     destination: Path,
     start_block_id: int,
-    timeout_seconds: float = 6 * 60 * 60,
+    timeout_seconds: float = CPU_STAGE_MAX_SECONDS,
     poll_seconds: float = 5.0,
 ) -> dict[str, object]:
     """Wait on producer bootstrap metadata entirely on CPU, then stage the lead window.
@@ -190,6 +192,7 @@ def verify_incremental_stage(
 
 
 __all__ = [
+    "CPU_STAGE_MAX_SECONDS",
     "_stable_consumer_manifest",
     "stage_incremental_window_when_ready",
     "verify_incremental_stage",
