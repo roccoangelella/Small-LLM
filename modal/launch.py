@@ -22,6 +22,7 @@ DATA_ROOT, RUN_ROOT, CACHE_ROOT = Path("/data"), Path("/runs"), Path("/cache")
 APP_NAME = "small-llm-training"
 
 sys.path.insert(0, str(LOCAL_MODAL))
+from cpu_supervision import await_stage_with_producer  # noqa: E402
 from profiles import (  # noqa: E402
     DEFAULT_GPU,
     DEFAULT_PRECISION,
@@ -386,13 +387,14 @@ def main(
     )
 
     producer_call = None
+    producer_result: dict[str, object] | None = None
     if token_preset.dataset_transport == "hf_rolling_shards" and dataset_profile.incremental_frontier:
         _stage(
             "cpu_dataset_producer_start",
             dataset_profile=token_preset.dataset_profile,
             dataset_run_id=dataset_profile.run_id,
         )
-        # Do not wait here. The independent CPU staging gate below polls the
+        # Do not wait here. The independent CPU staging call below polls the
         # READY frontier while this producer continues extending it.
         producer_call = produce_rolling_dataset_remote.spawn(
             model_preset.label,
@@ -406,7 +408,8 @@ def main(
             run_id=payload["run_id"],
             dataset_profile=token_preset.dataset_profile,
         )
-        staged = stage_rolling_dataset_remote.remote(model_preset.label, token_preset.label)
+        stage_call = stage_rolling_dataset_remote.spawn(model_preset.label, token_preset.label)
+        staged, producer_result = await_stage_with_producer(stage_call, producer_call)
         _stage(
             "cpu_dataset_stage_complete",
             status=staged.get("status"),
@@ -416,7 +419,15 @@ def main(
             h100_dispatch_allowed=staged.get("h100_dispatch_allowed"),
         )
         if staged.get("status") == "training_complete":
-            producer_result = producer_call.get() if producer_call is not None else None
+            if producer_call is not None and producer_result is None:
+                try:
+                    producer_result = producer_call.get(timeout=0)
+                except TimeoutError:
+                    try:
+                        producer_call.cancel(terminate_containers=True)
+                    except Exception:
+                        pass
+                    producer_result = {"status": "cancelled_training_already_complete"}
             result = {
                 "status": "already_complete_cpu_gate",
                 "run_id": payload["run_id"],
@@ -462,7 +473,9 @@ def main(
         ).get()
     result = dict(result)
     if producer_call is not None:
-        if max_steps_this_session == 0 or result.get("status") == "complete":
+        if producer_result is not None:
+            result["dataset_producer"] = producer_result
+        elif max_steps_this_session == 0 or result.get("status") == "complete":
             producer_result = producer_call.get()
             result["dataset_producer"] = producer_result
             _stage(
@@ -471,7 +484,15 @@ def main(
                 producer_complete=producer_result.get("producer_complete"),
             )
         else:
-            result["dataset_producer"] = {"status": "continues_in_background"}
+            try:
+                producer_result = producer_call.get(timeout=0)
+            except TimeoutError:
+                result["dataset_producer"] = {
+                    "status": "running_after_training_segment",
+                    "function_call_id": getattr(producer_call, "object_id", None),
+                }
+            else:
+                result["dataset_producer"] = producer_result
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 
