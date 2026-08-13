@@ -20,17 +20,17 @@ from post_training.sft.config import DEFAULT_INSTRUCTION_SOURCE_SHARES, SFTDataC
 
 
 class SFT100M2BKaggleTests(unittest.TestCase):
-    def test_profile_uses_completed_parent_and_ten_percent_budget(self) -> None:
+    def test_profile_uses_completed_parent_and_four_percent_budget(self) -> None:
         profile = sft_cli.resolve_profile(100_000_000, 2_000_000_000)
         self.assertEqual(profile.parent_run_id, "100m-2b-data-001")
-        self.assertEqual(profile.sft_run_id, "100m-2b-sft-s0-10pct-001")
+        self.assertEqual(profile.sft_run_id, "100m-2b-sft-s0-001")
         self.assertEqual(profile.known_parent_consumed_tokens, 2_001_000_448)
-        self.assertEqual(profile.sft_fraction_numerator, 10)
+        self.assertEqual(profile.sft_fraction_numerator, 4)
         self.assertEqual(profile.sft_fraction_denominator, 100)
-        self.assertEqual(profile.requested_sft_targets, 200_100_044)
+        self.assertEqual(profile.requested_sft_targets, 80_040_017)
         self.assertEqual(
-            sft_budget_from_parent(2_001_000_448, numerator=10, denominator=100),
-            200_100_044,
+            sft_budget_from_parent(2_001_000_448, numerator=4, denominator=100),
+            80_040_017,
         )
 
     def test_stratification_is_unchanged(self) -> None:
@@ -57,8 +57,8 @@ class SFT100M2BKaggleTests(unittest.TestCase):
                 0,
             )
         payload = json.loads(output.getvalue())
-        self.assertEqual(payload["sft_fraction"], 0.10)
-        self.assertEqual(payload["requested_sft_targets"], 200_100_044)
+        self.assertEqual(payload["sft_fraction"], 0.04)
+        self.assertEqual(payload["requested_sft_targets"], 80_040_017)
         self.assertEqual(payload["kaggle_training_topology"], "2xT4-DDP")
         self.assertEqual(payload["microbatch_size"], 4)
 
