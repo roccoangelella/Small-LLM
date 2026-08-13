@@ -13,6 +13,7 @@ GPU function.
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import queue
 import subprocess
@@ -94,6 +95,38 @@ CPU_IMAGE = LEGACY_SERVERLESS_IMAGE
 
 def _stage(name: str, **fields: object) -> None:
     print(json.dumps({"beam_stage": name, **fields}, sort_keys=True), flush=True)
+
+
+def _require_remote_mapping(result: object, *, label: str) -> dict[str, object]:
+    """Turn Beam's failure-as-None controller behavior into a useful error."""
+
+    if result is None:
+        raise RuntimeError(
+            f"Beam remote {label} returned no result; inspect the failed task above or run "
+            "`beam task list --filter status=error`"
+        )
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"Beam remote {label} returned {type(result).__name__}, expected an object"
+        )
+    return result
+
+
+def _retry_transient_volume_io(
+    operation: Callable[[], object],
+    *,
+    timeout_seconds: float = 60.0,
+) -> object:
+    """Retry only EAGAIN from Beam's distributed-volume filesystem."""
+
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            return operation()
+        except OSError as error:
+            if error.errno != errno.EAGAIN or time.monotonic() >= deadline:
+                raise
+            time.sleep(1.0)
 
 
 def _repo_root() -> Path:
@@ -190,10 +223,10 @@ def remote_import_preflight() -> dict[str, object]:
     import runtime as remote_runtime  # noqa: F401, PLC0415
     from dataset.src.remote import ensure_safe_directory  # noqa: PLC0415
 
-    RUN_ROOT.mkdir(parents=True, exist_ok=True)
+    _retry_transient_volume_io(lambda: ensure_safe_directory(RUN_ROOT))
     probe = RUN_ROOT / ".small-llm-safe-path-preflight"
-    ensure_safe_directory(probe)
-    probe.rmdir()
+    _retry_transient_volume_io(lambda: ensure_safe_directory(probe))
+    _retry_transient_volume_io(probe.rmdir)
     return {
         "status": "ok",
         "repo": str(repo),
@@ -458,9 +491,7 @@ def _start_remote_thread(
 ) -> threading.Thread:
     def worker() -> None:
         try:
-            result = call(*args)
-            if result is None:
-                raise RuntimeError(f"Beam remote {label} returned no result")
+            result = _require_remote_mapping(call(*args), label=label)
         except BaseException as error:  # noqa: BLE001 - relay remote failure to controller
             output.put((label, "error", error))
         else:
@@ -564,7 +595,10 @@ def main() -> int:
         return 0
 
     _stage("remote_import_preflight_start")
-    preflight = remote_import_preflight.remote()
+    preflight = _require_remote_mapping(
+        remote_import_preflight.remote(),
+        label="import preflight",
+    )
     _stage("remote_import_preflight_complete", **preflight)
 
     resolved_dataset_dir = args.dataset_dir
@@ -576,7 +610,10 @@ def main() -> int:
                 model_preset.label, token_preset.label
             )
         else:
-            staged = stage_rolling_dataset_remote.remote(model_preset.label, token_preset.label)
+            staged = _require_remote_mapping(
+                stage_rolling_dataset_remote.remote(model_preset.label, token_preset.label),
+                label="dataset stage",
+            )
         _stage(
             "cpu_dataset_stage_complete",
             status=staged.get("status"),
@@ -609,11 +646,14 @@ def main() -> int:
         if isinstance(next_block, bool) or not isinstance(next_block, int):
             raise RuntimeError("Beam CPU stage returned no valid next block")
         _stage("cpu_volume_visibility_start", dataset_dir=remote_dataset_dir, required_block=next_block)
-        visible = verify_staged_dataset_visible_remote.remote(
-            model_preset.label,
-            token_preset.label,
-            remote_dataset_dir,
-            next_block,
+        visible = _require_remote_mapping(
+            verify_staged_dataset_visible_remote.remote(
+                model_preset.label,
+                token_preset.label,
+                remote_dataset_dir,
+                next_block,
+            ),
+            label="dataset visibility",
         )
         _stage("cpu_volume_visibility_complete", status=visible.get("status"))
         resolved_dataset_dir = remote_dataset_dir
@@ -625,16 +665,18 @@ def main() -> int:
         dataset_transport=token_preset.dataset_transport,
     )
     gpu_function = GPU_FUNCTIONS[args.gpu]
-    result = gpu_function.remote(
-        model_preset.label,
-        token_preset.label,
-        source_commit,
-        resolved_dataset_dir,
-        args.max_steps_this_session,
-        args.microbatch_size,
-        args.precision,
+    result = _require_remote_mapping(
+        gpu_function.remote(
+            model_preset.label,
+            token_preset.label,
+            source_commit,
+            resolved_dataset_dir,
+            args.max_steps_this_session,
+            args.microbatch_size,
+            args.precision,
+        ),
+        label="training",
     )
-    result = dict(result)
     if producer_result is not None:
         result["dataset_producer"] = producer_result
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
