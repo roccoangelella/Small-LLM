@@ -32,7 +32,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(profile.microbatch_size, 2)
         self.assertEqual(
             profile.launch_commit,
-            "2e8fcdf8ed57ec6b998ac1d915ce161f79bfa8ef",
+            "9fb336bf025133bcf0c485bf2f1add28c0b5c8c1",
         )
         self.assertEqual(profile.requested_sft_targets, 80_040_017)
         self.assertEqual(
@@ -116,6 +116,18 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         )
         microbatch_index = command.index("--microbatch-size")
         self.assertEqual(command[microbatch_index + 1], "2")
+        validation_index = command.index("--validation-blocks")
+        behavior_index = command.index("--behavior-cases")
+        self.assertEqual(
+            command[validation_index + 1],
+            str(sft_scaled_runtime.INLINE_VALIDATION_BLOCKS),
+        )
+        self.assertEqual(
+            command[behavior_index + 1],
+            str(sft_scaled_runtime.INLINE_BEHAVIOR_CASES),
+        )
+        self.assertEqual(sft_scaled_runtime.INLINE_VALIDATION_BLOCKS, 1)
+        self.assertEqual(sft_scaled_runtime.INLINE_BEHAVIOR_CASES, 2)
         self.assertEqual(captured["cwd"], worktree)
         parent_preflight.assert_called_once_with(
             repo_id="owner/parent",
