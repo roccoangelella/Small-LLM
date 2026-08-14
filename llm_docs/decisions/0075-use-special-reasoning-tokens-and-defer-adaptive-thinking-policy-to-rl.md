@@ -21,15 +21,19 @@ The current model has `semantic_vocab_size=50_257` and `padded_vocab_size=50_304
 
 Those rows were not semantically pretrained. They must be initialized deliberately and trained during reasoning SFT. Because the input embedding and LM projection are tied, the same rows learn both as input control markers and as output tokens predicted by the model.
 
+The promoted reasoning-token rows will use the same frozen token-embedding initialization policy used by the pretrained model rather than a custom semantic-average initializer. Under the selected normal initializer this is the existing GPT-style `Normal(0, 0.02)` matrix initialization, applied only to the newly promoted rows under the run's deterministic seed policy. Existing pretrained embedding rows are preserved unchanged; the remaining padded rows stay non-semantic/zeroed.
+
 ## Rationale
 
 The control-token interface makes reasoning boundaries machine-parseable for later verifiers and RL while preserving the option to bypass reasoning on trivial prompts. Recent 2026 efficient-reasoning work warns that fixed or unconditional length penalties can cause under-thinking or suppress useful exploration, whereas correctness-gated and adaptive penalties preserve accuracy more reliably.
+
+Using the original embedding initializer for promoted control-token rows keeps their cold-start treatment consistent with the model's established initialization contract and avoids introducing an unrelated token-specific heuristic into the reasoning-format ablation.
 
 ## Follow-up
 
 1. Freeze the reasoning skill taxonomy and L1/L2/L3 task definitions.
 2. Freeze the exact three-token serialization semantics.
-3. Implement tokenizer/model support using the existing padded rows.
+3. Implement tokenizer/model support using the existing padded rows and the frozen embedding initializer for promoted rows.
 4. Run the textual-delimiter vs atomic-token pilot.
 5. Build the verified R-SFT dataset.
 6. After R-SFT qualification, design the adaptive RLVR reward for correctness plus reasoning efficiency.
