@@ -286,11 +286,13 @@ def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
     install_model_repo_checkpoint_transport()
     from rolling_dataset import stage_for_h100  # noqa: PLC0415
 
-    return stage_for_h100(
-        model=model,
-        tokens=tokens,
-        cache_root=CACHE_ROOT,
-        run_root=RUN_ROOT,
+    return _retry_transient_volume_io(
+        lambda: stage_for_h100(
+            model=model,
+            tokens=tokens,
+            cache_root=CACHE_ROOT,
+            run_root=RUN_ROOT,
+        )
     )
 
 

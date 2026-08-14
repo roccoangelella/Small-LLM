@@ -44,6 +44,11 @@ class BeamVolumePreflightTest(unittest.TestCase):
         )
         self.assertIn("_retry_transient_volume_io(probe.rmdir)", segment)
 
+    def test_dataset_stage_retries_transient_volume_io(self) -> None:
+        segment = self._function_segment("stage_rolling_dataset_remote")
+        self.assertIn("_retry_transient_volume_io(", segment)
+        self.assertIn("lambda: stage_for_h100(", segment)
+
     def test_direct_remote_calls_fail_closed_on_missing_results(self) -> None:
         helper = self._function_segment("_require_remote_mapping")
         main = self._function_segment("main")
