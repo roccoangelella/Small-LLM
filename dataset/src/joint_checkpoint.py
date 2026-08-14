@@ -80,7 +80,7 @@ def _validate_sha256(value: object, *, field: str) -> str:
 def verify_local_manifest(root: Path) -> dict[str, object]:
     """Verify the local checkpoint manifest before any opaque state is read.
 
-    The save-time manifest intentionally covers the trainer pickle and the
+    The save-time manifest intentionally covers the trainer state and the
     inspectable checkpoint JSON, but not itself or publication-time metadata.
     Published trees may therefore contain the three known metadata files in
     addition to the manifest's listed files; every other file is rejected.
@@ -147,7 +147,7 @@ def _verify_published_checkpoint_manifest(root: Path, supplied: object) -> dict[
     """Verify a publisher manifest and the downloaded tree it describes.
 
     ``build_checkpoint_manifest`` excludes ``checkpoint_manifest.json`` so it
-    cannot contain a self-hash.  We instead require the downloaded manifest
+    cannot contain a self-hash. We instead require the downloaded manifest
     file to parse to exactly the pointer's supplied object, and require that it
     is the only file outside the supplied coverage set.
     """
@@ -323,12 +323,39 @@ def _fsync_tree(path: Path) -> None:
         os.close(fd)
 
 
+def _save_trainer_state(trainer: TrainerCheckpointAdapter, path: Path) -> None:
+    serializer = getattr(trainer, "save_checkpoint_state", None)
+    if callable(serializer):
+        serializer(path)
+        if not path.is_file():
+            raise RuntimeError("trainer checkpoint serializer did not create trainer_state.pkl")
+        return
+    trainer_state = dict(trainer.state_dict())
+    trainer_state.setdefault("python_rng_state", random.getstate())
+    with path.open("wb") as handle:
+        pickle.dump(trainer_state, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _load_trainer_state(trainer: TrainerCheckpointAdapter, path: Path) -> None:
+    loader = getattr(trainer, "load_checkpoint_state", None)
+    if callable(loader):
+        loader(path)
+        return
+    with path.open("rb") as handle:
+        state = pickle.load(handle)
+    trainer.load_state_dict(state)
+    if "python_rng_state" in state:
+        random.setstate(state["python_rng_state"])
+
+
 class CheckpointCoordinator:
     """Makes a checkpoint only between completed optimizer steps.
 
-    Trainer state is opaque pickle here so PyTorch/JAX/other adapters can retain
-    their native model, optimizer, scheduler, scaler and device RNG objects.
-    The accompanying JSON makes the data-pipeline contract inspectable.
+    Trainer state is opaque to the coordinator. Framework adapters may provide
+    streaming file serializers; simpler adapters retain the historical pickle
+    fallback. The accompanying JSON keeps the data-pipeline contract inspectable.
     """
 
     def __init__(self, root: Path, *, configuration_hash: str, source_hash: str, schema_hash: str) -> None:
@@ -346,11 +373,8 @@ class CheckpointCoordinator:
             raise RuntimeError("checkpoint has a partial gradient accumulation window")
         staging = Path(tempfile.mkdtemp(prefix=f".{checkpoint_id}.", dir=self.root))
         try:
-            trainer_state = dict(trainer.state_dict())
-            trainer_state.setdefault("python_rng_state", random.getstate())
-            with (staging / "trainer_state.pkl").open("wb") as handle:
-                pickle.dump(trainer_state, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                handle.flush(); os.fsync(handle.fileno())
+            trainer_state_path = staging / "trainer_state.pkl"
+            _save_trainer_state(trainer, trainer_state_path)
             payload = {
                 "version": 1, "checkpoint_id": checkpoint_id,
                 "configuration_hash": self.configuration_hash, "source_hash": self.source_hash,
@@ -358,7 +382,7 @@ class CheckpointCoordinator:
                 "pipeline_state": dict(pipeline_state), "validation_metrics": dict(validation_metrics or {}),
             }
             write_json_atomic(staging / "checkpoint.json", payload)
-            manifest = {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(staging / "trainer_state.pkl")},
+            manifest = {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
                                   {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")}]} 
             write_json_atomic(staging / "local_manifest.json", manifest)
             _fsync_tree(staging)
@@ -384,11 +408,7 @@ class CheckpointCoordinator:
         if (payload["configuration_hash"], payload["source_hash"], payload["schema_hash"]) != (
             self.configuration_hash, self.source_hash, self.schema_hash):
             raise RuntimeError("checkpoint configuration/source/schema identity mismatch")
-        with (root / "trainer_state.pkl").open("rb") as handle:
-            state = pickle.load(handle)
-        trainer.load_state_dict(state)
-        if "python_rng_state" in state:
-            random.setstate(state["python_rng_state"])
+        _load_trainer_state(trainer, root / "trainer_state.pkl")
         return dict(payload["pipeline_state"])
 
     def publish(self, publisher: TwoPhaseCheckpointPublisher, *, checkpoint_id: str,
