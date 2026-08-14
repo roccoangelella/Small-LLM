@@ -3,31 +3,34 @@
 from __future__ import annotations
 
 import math
+import os
 import unittest
+from unittest import mock
 
 import torch
 
 from tests.test_trainer_optimizer import _Model
 from trainer.config import TrainerConfig
 from trainer.engine import TrainerEngine
+from trainer.optimizer import HybridMuonAdamW
 from trainer.optimizer_telemetry import InstrumentedHybridMuonAdamW
 
 
 class OptimizerTelemetryTests(unittest.TestCase):
+    @staticmethod
+    def _config() -> TrainerConfig:
+        return TrainerConfig(
+            optimizer="hybrid_muon_adamw",
+            precision="fp32",
+            learning_rate=1e-3,
+            weight_decay=0.1,
+            muon_weight_decay=0.1,
+            muon_update_rms=0.18,
+        )
+
     def _optimizer(self) -> InstrumentedHybridMuonAdamW:
         model = _Model()
-        engine = TrainerEngine(
-            model,
-            TrainerConfig(
-                optimizer="hybrid_muon_adamw",
-                precision="fp32",
-                learning_rate=1e-3,
-                weight_decay=0.1,
-                muon_weight_decay=0.1,
-                muon_update_rms=0.18,
-            ),
-            device="cpu",
-        )
+        engine = TrainerEngine(model, self._config(), device="cpu")
         self.assertIsInstance(engine.optimizer, InstrumentedHybridMuonAdamW)
         return engine.optimizer
 
@@ -73,6 +76,27 @@ class OptimizerTelemetryTests(unittest.TestCase):
         self.assertNotIn("step_statistics", state)
         optimizer.clear_step_statistics()
         self.assertEqual(optimizer.step_statistics(), {})
+
+    def test_low_memory_opt_out_uses_base_optimizer_and_loads_instrumented_state(self) -> None:
+        source = self._optimizer()
+        for group in source.param_groups:
+            for parameter in group["params"]:
+                parameter.grad = torch.ones_like(parameter)
+        source.step()
+        state = source.state_dict()
+
+        with mock.patch.dict(
+            os.environ,
+            {"SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY": "1"},
+            clear=False,
+        ):
+            engine = TrainerEngine(_Model(), self._config(), device="cpu")
+
+        self.assertIsInstance(engine.optimizer, HybridMuonAdamW)
+        self.assertNotIsInstance(engine.optimizer, InstrumentedHybridMuonAdamW)
+        engine.optimizer.load_state_dict(state)
+        self.assertEqual(len(engine.optimizer.state), len(source.state))
+        self.assertFalse(hasattr(engine.optimizer, "step_statistics"))
 
 
 if __name__ == "__main__":

@@ -60,8 +60,11 @@ strong uniform intrinsic gains above. See
 
 ADR 0071 records the user's explicit decision that this evidence is sufficient
 to launch the fresh 100M/10B trajectory. The full run is now active on one Beam
-RTX5090 from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`, resumed exactly from the step-250
-checkpoint created by launch source `42b0376`.
+RTX4090 from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`. Its
+current segment resumed exactly from the verified HF step-3,000 checkpoint
+after repeated Beam RTX5090 worker/startup failures; the earlier step-250
+infrastructure migration from launch source `42b0376` remains part of the
+checkpoint ancestry.
 Training is uncapped and will run through the full 76,294-update plan without a
 5B pause. The approximately-5B checkpoint will be evaluated concurrently on
 Kaggle and will not act as a continuation gate.
@@ -96,21 +99,35 @@ and final manifest SHA-256
 Canonical evidence is
 [`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
 
-The VPS-fed Beam wrapper is active on RTX5090 with no session cap. ADR 0072
+The VPS-fed Beam wrapper is active on RTX4090 with no session cap. ADR 0072
 pins the live gateway-compatible `beam-client==0.2.207`. The training run ID is
-`100m-10b-data-001`, and W&B reports that run as `running`. Finite production
-metrics were observed through step 250, followed by 16-block validation loss
+`100m-10b-data-001`, and W&B is online on the unchanged resumable run. Finite
+production metrics were observed through step 250, followed by 16-block validation loss
 8.827006. The first Beam checkpoint then hung after its atomic rename during a
 POSIX parent-directory `fsync`. The checkpoint independently verified on CPU as
 `step-00000250`, with next block 250, and source `1f9dff9` resumed it under an
-exact one-time infrastructure migration. Production continued through at least
-step 267 at about 41,454 target tokens/s with no error. The active path keeps
+exact one-time infrastructure migration. One later RTX5090 container
+disappeared without a trainer traceback after finite updates beyond step 1,650;
+an exact step-1,500 recovery then remained finite through step 3,250 and
+validation loss 3.722389 before failing as an incomplete checkpoint staging
+directory was created. A clean RTX5090 retry subsequently failed before the
+trainer command. The active segment therefore uses the supported RTX4090 lane,
+resumed exact HF `step-00003000`, and advanced through at least step 3,009 with
+finite loss 3.639936. The same RTX4090 segment has since advanced through at
+least step 4,430 with finite loss 3.139167, about 32,876 target tokens/s, zero
+overflow events, and W&B `running`. Beam showed exactly one running GPU
+container. The active path keeps
 Triton compilation on container-local scratch, makes the VPS preseed guard
 initialize fail-closed, and retries Beam Volume `EAGAIN` during CPU staging.
 Canonical launch evidence is
 [`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
 The step-250 checkpoint incident and verified resume are recorded in
 [`../evidence/scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md`](../evidence/scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md).
+The later worker disappearance and verified step-1,500 recovery are recorded in
+[`../evidence/scaling/100m_10b_beam_worker_loss_step1500_resume_2026-08-14.md`](../evidence/scaling/100m_10b_beam_worker_loss_step1500_resume_2026-08-14.md).
+The step-3,250 failure, failed RTX5090 startup retry, and verified RTX4090
+step-3,000 failover are recorded in
+[`../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 

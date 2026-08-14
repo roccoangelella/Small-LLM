@@ -32,7 +32,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(profile.microbatch_size, 2)
         self.assertEqual(
             profile.launch_commit,
-            "2e8fcdf8ed57ec6b998ac1d915ce161f79bfa8ef",
+            "fac40563b7ccaf8b4880e8c4853bc27f0ff337fa",
         )
         self.assertEqual(profile.requested_sft_targets, 80_040_017)
         self.assertEqual(
@@ -106,6 +106,11 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         command = captured["command"]
         self.assertIsInstance(command, list)
         assert isinstance(command, list)
+        self.assertEqual(command[0], "env")
+        for setting in sft_scaled_runtime.KAGGLE_SFT_PROCESS_ENV:
+            self.assertIn(setting, command)
+        self.assertIn("SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY=1", command)
+        self.assertIn("MALLOC_ARENA_MAX=2", command)
         python_index = command.index("python")
         self.assertLess(command.index("torch==2.10.0"), python_index)
         self.assertLess(command.index("triton==3.6.0"), python_index)
@@ -116,6 +121,18 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         )
         microbatch_index = command.index("--microbatch-size")
         self.assertEqual(command[microbatch_index + 1], "2")
+        validation_index = command.index("--validation-blocks")
+        behavior_index = command.index("--behavior-cases")
+        self.assertEqual(
+            command[validation_index + 1],
+            str(sft_scaled_runtime.INLINE_VALIDATION_BLOCKS),
+        )
+        self.assertEqual(
+            command[behavior_index + 1],
+            str(sft_scaled_runtime.INLINE_BEHAVIOR_CASES),
+        )
+        self.assertEqual(sft_scaled_runtime.INLINE_VALIDATION_BLOCKS, 1)
+        self.assertEqual(sft_scaled_runtime.INLINE_BEHAVIOR_CASES, 2)
         self.assertEqual(captured["cwd"], worktree)
         parent_preflight.assert_called_once_with(
             repo_id="owner/parent",

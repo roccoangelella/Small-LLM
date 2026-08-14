@@ -14,19 +14,22 @@ The intrinsic scaling result is clear: 20M still gains from 500M→2B, but uneve
 ## Active scaling trajectory — full 100M / 10B
 
 The exact ADR-0025 comparison is complete and ADR 0071 closes the launch gate.
-The fresh `100m-10b-data-001` Beam RTX5090 trajectory is active from source
-commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`, after an exact step-250 infrastructure-only resume from launch
-source `42b0376`; keep it running through all 76,294 updates without
-`--max-steps-this-session`.
+The fresh `100m-10b-data-001` Beam trajectory is active from source commit
+`1f9dff920ecc45ce2fdb43fd875514a18391273d`. After repeated RTX5090 worker and
+startup failures, the current supported RTX4090 segment resumed exactly from
+the independently verified HF `step-00003000`; keep it running through all
+76,294 updates without `--max-steps-this-session`. The earlier exact step-250
+infrastructure-only resume from launch source `42b0376` remains recorded
+checkpoint ancestry.
 
 Keep these immediate checks:
 
-1. Preserve exact resume from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d` and the qualified
-   microbatch 4; microbatch 8 exceeded RTX5090 memory while 4 passed at 62.08%
-   peak reserved memory. `42b0376` is the recorded one-time resume parent only.
+1. Preserve exact resume from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d` and microbatch 4.
+   RTX4090 is the current infrastructure failover; `42b0376` is the recorded
+   one-time resume parent only.
 2. Watch finite loss, gradient, throughput, and overflow telemetry in W&B.
-3. Confirm the next Beam-local durability boundary returns without the removed
-   distributed-filesystem `fsync`, then verify HF publication at update 500.
+3. Confirm the next Beam-local durability boundary and rolling HF publication
+   at step 4,500.
 4. Capture `step-00038000` / 4,980,736,000 targets for concurrent Kaggle
    qualification before the rolling HF pointer advances to step 38,500.
 5. Do not pause or terminate Beam based on that intermediate result; qualify the
@@ -41,7 +44,7 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - upload + independent remote hash verification before durable cursor/READY publication;
 - frozen 16-block validation prefix;
 - CPU producer/stager establishes the checkpoint-aligned current+successor lead window before H100 allocation;
-- RTX5090 consumes exact block order and fails closed rather than skipping or
+- the supported single-GPU Beam worker consumes exact block order and fails closed rather than skipping or
   reordering if preseeded Beam bytes are missing;
 - single-GPU Beam topology with qualified microbatch 4 and the frozen
   64-sequence optimizer block;
@@ -67,7 +70,7 @@ The first 20M/500M S0 SFT is behaviorally failed despite lower held-out SFT loss
 - New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise.
 - Context remains 2,048 for these comparisons.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
-- Kaggle DDP evaluation does not change the single-RTX5090 Beam training topology.
+- Kaggle DDP evaluation does not change the single-GPU Beam training topology.
 - New dataset durability uses HF Storage Buckets, not Google Drive.
 - Stable model artifacts use the `models/...` namespace; live exact-resume checkpoints use `run/...`.
 - Canonical qualitative comparison settings come from ADR 0025, not software sampling defaults.

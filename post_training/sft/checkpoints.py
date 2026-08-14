@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import pickle
 from pathlib import Path
 import tempfile
 from typing import Mapping
@@ -16,6 +15,7 @@ from model.config import ModelConfig
 from model.model import SmallLLM
 from trainer.identity import canonical_hash
 from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
+from trainer.state import load_trainer_state_file, release_host_memory
 
 
 def _read_json(path: Path, *, label: str) -> dict[str, object]:
@@ -46,18 +46,18 @@ def load_verified_native_checkpoint(
     checkpoint_root = Path(root)
     verify_local_manifest(checkpoint_root)
     checkpoint = _read_json(checkpoint_root / "checkpoint.json", label="checkpoint.json")
-    with (checkpoint_root / "trainer_state.pkl").open("rb") as handle:
-        state = pickle.load(handle)
-    if not isinstance(state, Mapping) or state.get("version") != 1:
+    state = load_trainer_state_file(
+        checkpoint_root / "trainer_state.pkl",
+        map_location="cpu",
+    )
+    if state.get("version") != 1:
         raise RuntimeError("trainer_state.pkl has an unsupported state version")
     raw_config = state.get("model_config")
     model_state = state.get("model")
     if not isinstance(raw_config, Mapping) or not isinstance(model_state, Mapping):
         raise RuntimeError("checkpoint does not contain self-describing model weights")
-    config = _model_config(raw_config)
-    model = SmallLLM(config)
-    model.load_state_dict(model_state, strict=True)
-    model.to(torch.device(device))
+    config_values = dict(raw_config)
+    config = _model_config(config_values)
 
     consumed = state.get("consumed_tokens")
     if isinstance(consumed, bool) or not isinstance(consumed, int) or consumed < 0:
@@ -73,9 +73,16 @@ def load_verified_native_checkpoint(
         "local_manifest_sha256": sha256_path(checkpoint_root / "local_manifest.json"),
         "trainer_state_sha256": sha256_path(checkpoint_root / "trainer_state.pkl"),
         "consumed_tokens": consumed,
-        "model_config": dict(raw_config),
+        "model_config": config_values,
     }
     identity["identity_sha256"] = canonical_hash(identity)
+
+    model = SmallLLM(config)
+    model.load_state_dict(model_state, strict=True)
+    model.to(torch.device(device))
+    del model_state
+    del state
+    release_host_memory()
     return model, config, identity
 
 

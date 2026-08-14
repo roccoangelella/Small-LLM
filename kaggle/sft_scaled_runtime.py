@@ -12,6 +12,22 @@ import dual_t4_runtime
 import sft_runtime as base
 
 
+# Keep inline qualification deliberately tiny while both DDP workers are alive.
+# Full post-SFT qualification runs separately after training, when the duplicate
+# dual-T4 host footprint is gone.
+INLINE_VALIDATION_BLOCKS = 1
+INLINE_BEHAVIOR_CASES = 2
+
+# Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
+# arena growth and omit qualification-only optimizer tensor cloning in this
+# execution path; neither setting changes optimizer state or model updates.
+KAGGLE_SFT_PROCESS_ENV = (
+    "MALLOC_ARENA_MAX=2",
+    "MALLOC_TRIM_THRESHOLD_=131072",
+    "SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY=1",
+)
+
+
 def _require_stable_parent_artifact(
     *,
     repo_id: str,
@@ -20,7 +36,6 @@ def _require_stable_parent_artifact(
     api: Any | None = None,
 ) -> None:
     """Fail on a wrong parent repository before W&B or GPU setup begins."""
-
     if not token:
         raise base.RuntimeFailure("HF_TOKEN is required for the private SFT parent artifact")
     if api is None:
@@ -164,6 +179,8 @@ def train(
         "--checkpoint-every-steps", str(profile.cadence_steps),
         "--evaluation-every-steps", str(profile.cadence_steps),
         "--remote-publish-every-steps", str(profile.cadence_steps),
+        "--validation-blocks", str(INLINE_VALIDATION_BLOCKS),
+        "--behavior-cases", str(INLINE_BEHAVIOR_CASES),
         "--wandb-mode", "online",
         "--wandb-project", "Small-LLM",
         "--wandb-run-id", profile.wandb_run_id,
@@ -174,7 +191,7 @@ def train(
     if max_steps_this_session is not None:
         trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
 
-    command = base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
+    command = ["env", *KAGGLE_SFT_PROCESS_ENV] + base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
         "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
         str(worktree / "kaggle" / "dual_t4_sft.py"),
         "--worktree", str(worktree),
@@ -189,4 +206,12 @@ def evaluate(profile: base.SFTProfileSpec, **kwargs) -> int:
     return base.evaluate(profile, **kwargs)
 
 
-__all__ = ["evaluate", "prepare", "publish", "train"]
+__all__ = [
+    "INLINE_BEHAVIOR_CASES",
+    "INLINE_VALIDATION_BLOCKS",
+    "KAGGLE_SFT_PROCESS_ENV",
+    "evaluate",
+    "prepare",
+    "publish",
+    "train",
+]

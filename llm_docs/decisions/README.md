@@ -67,6 +67,17 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0071-run-full-100m-10b-with-concurrent-5b-evaluation.md`](0071-run-full-100m-10b-with-concurrent-5b-evaluation.md)
 - [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-for-live-gateway.md)
+- [`0073-persist-sft-cadence-checkpoints-before-evaluation.md`](0073-persist-sft-cadence-checkpoints-before-evaluation.md)
+- [`0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md`](0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md)
+- [`0075-bound-dual-t4-sft-inline-qualification.md`](0075-bound-dual-t4-sft-inline-qualification.md)
+- [`0076-bound-continuous-kaggle-sft-host-memory.md`](0076-bound-continuous-kaggle-sft-host-memory.md)
+- [`0077-start-reasoning-sft-with-three-shuffled-concise-difficulty-bands.md`](0077-start-reasoning-sft-with-three-shuffled-concise-difficulty-bands.md)
+- [`0078-define-reasoning-skill-contract-before-r-sft-data.md`](0078-define-reasoning-skill-contract-before-r-sft-data.md)
+- [`0079-use-special-reasoning-tokens-and-defer-adaptive-thinking-policy-to-rl.md`](0079-use-special-reasoning-tokens-and-defer-adaptive-thinking-policy-to-rl.md)
+- [`0080-use-gemini-api-as-rsft-teacher-despite-contract-caveat.md`](0080-use-gemini-api-as-rsft-teacher-despite-contract-caveat.md)
+- [`0081-track-reasoning-difficulty-labels-for-telemetry-only.md`](0081-track-reasoning-difficulty-labels-for-telemetry-only.md)
+- [`0082-focus-r0-on-logic-primitives-and-defer-exact-computation.md`](0082-focus-r0-on-logic-primitives-and-defer-exact-computation.md)
+- [`0083-wire-rsft-gemrouter-transport-before-prompt-policy.md`](0083-wire-rsft-gemrouter-transport-before-prompt-policy.md)
 
 ## Superseded ADRs
 
