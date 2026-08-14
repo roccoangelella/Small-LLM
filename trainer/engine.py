@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import pickle
 import random
 from typing import Iterable, Mapping
 
@@ -99,15 +101,23 @@ class TrainerEngine:
         return wrapper, raw
 
     def save_checkpoint_state(self, path: Path | str) -> None:
-        """Write exact-resume state while keeping DDP wrappers out of model keys."""
+        """Write exact-resume state, streaming only the DDP production path."""
 
+        checkpoint_path = Path(path)
         wrapper, raw = self._checkpoint_model()
         if raw is wrapper:
-            save_engine_checkpoint_state(self, path)
+            # Preserve the established plain-pickle format for ordinary
+            # single-device pretraining. The low-memory streamed format is an
+            # execution adaptation for DDP where host headroom is constrained.
+            state = dict(self.state_dict())
+            with checkpoint_path.open("wb") as handle:
+                pickle.dump(state, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                handle.flush()
+                os.fsync(handle.fileno())
             return
         self.model = raw
         try:
-            save_engine_checkpoint_state(self, path)
+            save_engine_checkpoint_state(self, checkpoint_path)
         finally:
             self.model = wrapper
 
