@@ -18,6 +18,15 @@ import sft_runtime as base
 INLINE_VALIDATION_BLOCKS = 1
 INLINE_BEHAVIOR_CASES = 2
 
+# Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
+# arena growth and omit qualification-only optimizer tensor cloning in this
+# execution path; neither setting changes optimizer state or model updates.
+KAGGLE_SFT_PROCESS_ENV = (
+    "MALLOC_ARENA_MAX=2",
+    "MALLOC_TRIM_THRESHOLD_=131072",
+    "SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY=1",
+)
+
 
 def _require_stable_parent_artifact(
     *,
@@ -182,7 +191,7 @@ def train(
     if max_steps_this_session is not None:
         trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
 
-    command = base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
+    command = ["env", *KAGGLE_SFT_PROCESS_ENV] + base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
         "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
         str(worktree / "kaggle" / "dual_t4_sft.py"),
         "--worktree", str(worktree),
@@ -200,6 +209,7 @@ def evaluate(profile: base.SFTProfileSpec, **kwargs) -> int:
 __all__ = [
     "INLINE_BEHAVIOR_CASES",
     "INLINE_VALIDATION_BLOCKS",
+    "KAGGLE_SFT_PROCESS_ENV",
     "evaluate",
     "prepare",
     "publish",
