@@ -110,16 +110,17 @@ wheels = [
 
 [[package]]
 name = "beam-client"
-version = "0.2.201"
+version = "0.2.207"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beta9" },
+    { name = "packaging" },
     { name = "requests" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/b9/1e19e8c9d810b97bc2d7a89e0f6e45a9ef6dfc3930e4814040afe06d5c7e/beam_client-0.2.201.tar.gz", hash = "sha256:c714a0df8d979b067f81d9a107f068ced1197c6b3af328b056bfc805b8a11c3c", size = 8249, upload-time = "2026-07-07T17:45:55.086Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/ad/fa6dea00e65d4f854b8b5a3f772bd359a85bebc989929fa7c4e217f5a94f/beam_client-0.2.207.tar.gz", hash = "sha256:b64b466bdf3727777913d3e1145336137d32064334705e40967532f6c73aa02d", size = 8419, upload-time = "2026-07-23T18:01:02.6Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/fa/2bf34c91d133087a07d1da8de66ee76c8ab68249441f163744ce6b7024b5/beam_client-0.2.201-py3-none-any.whl", hash = "sha256:6d508c58135254511f4e478faffbffa39a3db7ab517e50d937bc6e01f657de7c", size = 12581, upload-time = "2026-07-07T17:45:53.887Z" },
+    { url = "https://files.pythonhosted.org/packages/75/9d/719b3c79c4caa2a0464cb944fd6d4904e997a1c9026b538fec4079ada0ec/beam_client-0.2.207-py3-none-any.whl", hash = "sha256:6dd13d71bc9687f63fae127a22514e9f32e0657708a82ce31f4e6a3e51c7164c", size = 12741, upload-time = "2026-07-23T18:01:01.419Z" },
 ]
 
 [[package]]
@@ -1641,8 +1642,8 @@ runtime = [
 
 [package.metadata]
 requires-dist = [
-    { name = "beam-client", specifier = "==0.2.201" },
-    { name = "beam-client", marker = "extra == 'beam'", specifier = "==0.2.201" },
+    { name = "beam-client", specifier = "==0.2.207" },
+    { name = "beam-client", marker = "extra == 'beam'", specifier = "==0.2.207" },
     { name = "fla-core", specifier = "==0.5.2" },
     { name = "fla-core", marker = "extra == 'fla'", specifier = "==0.5.2" },
     { name = "fla-core", marker = "extra == 'model'", specifier = "==0.5.2" },

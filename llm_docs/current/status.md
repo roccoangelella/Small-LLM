@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-13
+last_reviewed: 2026-08-14
 ---
 
 # Current project status
@@ -49,21 +49,25 @@ At fixed 20M capacity, 500M→2B improves ordinary full-eval loss but only 14/19
 
 Canonical evidence: [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md).
 
-## Behavioral qualification boundary
+## Behavioral qualification and 10B authorization
 
-ADR 0025 freezes the canonical full qualitative comparison at greedy decoding (`temperature=0`, `top_p=1`, `top_k=0`, seed 17, one sample) with a **global 32-new-token cap**. The recent three `eval_suite` bundles used the same greedy decoding but native per-case generation budgets because `trainer.eval_suite` does not expose that global cap. Their intrinsic metrics are authoritative and their prompt outputs are mutually comparable, but they are not the exact ADR-0025 qualitative protocol.
+The exact ADR-0025 greedy-32 comparison is complete. Strict QA remains mixed at
+0/12 for 20M/500M, 2/12 for 20M/2B, and 2/12 for 100M/2B, but the 100M endpoint
+stops before the cap on 10/12 QA prompts versus 3/12 at 20M/2B, is markedly less
+repetitive, exposes more facts under matched sampled decoding, and has the
+strong uniform intrinsic gains above. See
+[`../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md`](../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md).
 
-On the mutually comparable greedy QA outputs, strict direct-answer counts are 0/12 for 20M/500M, 2/12 for 20M/2B, and 2/12 for 100M/2B. The 100M model does show much better QA termination/repetition behavior, but long greedy continuations still loop.
-
-A separate earlier sampled 100M/2B evaluation (`temperature=0.8`, `top_p=0.95`, `top_k=50`) did answer the France-capital prompt with **Paris**. The later greedy run answered `France`. Keep these as separate decoding outcomes.
-
-Because ADR 0050 requires material behavioral/capability improvement rather than loss/perplexity alone, the **fresh 100M/10B scientific launch gate remains open** pending exact frozen behavioral qualification and an explicit gate decision. Dataset/CPU-staging/provider engineering may proceed independently under ADR 0058/0061/0062; selecting Beam instead of Modal does not bypass the scientific gate.
+ADR 0071 records the user's explicit decision that this evidence is sufficient
+to launch the fresh 100M/10B trajectory. Training will run through the full
+76,294-update plan without a 5B pause. The approximately-5B checkpoint will be
+evaluated concurrently on Kaggle and will not act as a continuation gate.
 
 ## GDN-2 production execution
 
 Production CUDA GDN-2 execution is mixed FLA on `fla-core==0.5.2` with FP32 master parameters plus CUDA FP16 autocast. Saved/configured `gdn_chunk_size` is 32; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence remains the correctness/reference fallback. See [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md).
 
-Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. Beam execution has repository-level coverage but still requires its first live GPU qualification before a long run.
+Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. The first authorized RTX5090 allocation will perform the live 8/12/16 microbatch and FLA/Triton qualification before continuing into the full run.
 
 ## Dataset and checkpoint durability
 
@@ -78,15 +82,26 @@ models/<run_id>/...    stable completed model artifacts
 
 Stable `models/...` artifacts are verified with their native `local_manifest.json`. `checkpoint_manifest.json` is publication metadata for the live two-phase `run/...` protocol and is **not required** for stable model artifacts.
 
-## 100M / 10B preparation
+## 100M / 10B execution
 
 ADR 0058 defines the incremental producer/consumer path: approximately-1-GiB immutable HF dataset shards, monotonic READY frontier, frozen 16-block validation prefix, cheap CPU production/staging before H100 allocation, current+successor lead window, and exact ordered H100 consumption. The frozen whole-block training horizon is 76,294 updates / 10,000,007,168 target tokens with standard WSD 3,815 warmup / 57,220 stable / 15,259 decay updates.
 
-**Technical implementation is complete on `main`.** CI compilation and the focused HF checkpoint-transport regressions pass. In the full-suite CI log, all incremental-10B regressions pass: exact profile/horizon, monotonic READY publication, frozen validation, durability ordering, dynamic reader continuation beyond the bootstrap manifest, current+successor CPU staging, successor-prefetch promotion without duplicate download, producer/stager supervision before H100 dispatch, and checkpoint-aligned rolling-cache behavior. CPU producer, CPU stager, and their internal readiness wait are all bounded to a 24-hour CPU session; no H100 is allocated during bootstrap waiting.
+Dataset production is complete. HF and Beam both contain 21 train and 21
+validation shards; HF reports `target_reached=true`, `producer_complete=true`,
+and final manifest SHA-256
+`d23e7e4641e30c25b56189093bf1270cd11e85efc8b26bc4660af1873edb96f1`.
+Canonical evidence is
+[`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
+
+The authorized launch path is the VPS-fed Beam wrapper
+`beam/vps_train.py` on RTX5090 with no session cap. ADR 0072 pins the live
+gateway-compatible `beam-client==0.2.207`. The training run ID remains
+`100m-10b-data-001`; no prior HF checkpoint namespace existed at the final
+prelaunch check.
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
-Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../reference/100m_10b_incremental_dataset.md). Operational procedure: [`../runbooks/100m_10b_incremental_modal.md`](../runbooks/100m_10b_incremental_modal.md).
+Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../reference/100m_10b_incremental_dataset.md). Active operational procedure: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md).
 
 ## Post-training status
 

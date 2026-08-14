@@ -28,21 +28,26 @@ beam machine list
 
 The adapter deliberately allows only the Beam serverless lane recorded by the current project decision: `RTX5090`, `RTX4090`, and `A10G`. `RTX5090` is the default. `H100` is intentionally rejected by the Beam launcher so Beam credits cannot accidentally spill into an on-demand H100; use the existing Modal lane when H100 is the intended comparison.
 
-## Dry run and scientific launch gate
+## Dry run and authorized full launch
 
 The Beam adapter can be resolved without allocating a GPU:
 
 ```bash
-python beam/launch.py --model 100M --tokens 10B --gpu RTX5090 --dry-run
+uv run python beam/vps_train.py --model 100M --tokens 10B --gpu RTX5090 --dry-run
 ```
 
-The canonical `100m-10b-data-001` trajectory is still behind ADR 0050's behavioral launch gate. **Do not use `--max-steps-this-session` as a GPU smoke test before that gate closes**: even a short segment would create/resume the canonical checkpoint and W&B identity.
-
-Once the scientific gate is explicitly closed, launch the real trajectory with:
+ADR 0071 closes the behavioral launch gate and authorizes the full trajectory.
+The completed dataset is fed from the VPS-populated Beam Volume, so launch the
+real trajectory through the VPS wrapper:
 
 ```bash
-python beam/launch.py --model 100M --tokens 10B --gpu RTX5090
+uv run python beam/vps_train.py --model 100M --tokens 10B --gpu RTX5090
 ```
+
+Do not pass `--max-steps-this-session`: the approximately-5B Kaggle evaluation
+runs concurrently and does not pause the Beam trajectory. Capture the rolling
+HF checkpoint at step 38,000 before step 38,500 replaces the live pointer; see
+[`../llm_docs/runbooks/100m_10b_beam.md`](../llm_docs/runbooks/100m_10b_beam.md).
 
 A fresh Beam trajectory probes real forward/backward execution at microbatch `8, 12, 16`. OOM, non-finite, and >90%-reserved-memory candidates are rejected; the fastest safe candidate is frozen. The optimizer block remains exactly 64 sequences.
 

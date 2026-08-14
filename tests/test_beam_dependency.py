@@ -11,5 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_beam_client_is_declared() -> None:
     payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "beam-client==0.2.207" in payload["project"]["dependencies"]
     extras = payload["project"]["optional-dependencies"]
-    assert extras["beam"] == ["beam-client==0.2.201"]
+    assert extras["beam"] == ["beam-client==0.2.207"]

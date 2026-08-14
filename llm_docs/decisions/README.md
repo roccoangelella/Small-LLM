@@ -48,7 +48,6 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0044-publish-100m-2b-final-model-to-hugging-face.md`](0044-publish-100m-2b-final-model-to-hugging-face.md)
 - [`0048-verify-modal-dataset-in-active-workspace.md`](0048-verify-modal-dataset-in-active-workspace.md)
 - [`0049-make-modal-launch-logs-concise-and-unambiguous.md`](0049-make-modal-launch-logs-concise-and-unambiguous.md)
-- [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md)
 - [`0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md`](0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md)
 - [`0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md`](0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md)
 - [`0054-retire-google-drive-for-new-dataset-durability.md`](0054-retire-google-drive-for-new-dataset-durability.md)
@@ -63,9 +62,17 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0063-document-local-chat-cli-usage-in-source.md`](0063-document-local-chat-cli-usage-in-source.md)
 - [`0064-allow-stable-pretrained-artifacts-in-local-chat.md`](0064-allow-stable-pretrained-artifacts-in-local-chat.md)
 - [`0065-cap-beam-startup-probe-at-microbatch-16.md`](0065-cap-beam-startup-probe-at-microbatch-16.md)
-- [`0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md`](0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md)
+- [`0067-keep-100m-2b-sft-at-4-percent-on-dual-t4.md`](0067-keep-100m-2b-sft-at-4-percent-on-dual-t4.md)
+- [`0069-own-beam-launch-namespace-in-synced-checkout.md`](0069-own-beam-launch-namespace-in-synced-checkout.md)
+- [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
+- [`0071-run-full-100m-10b-with-concurrent-5b-evaluation.md`](0071-run-full-100m-10b-with-concurrent-5b-evaluation.md)
+- [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-for-live-gateway.md)
 
 ## Superseded ADRs
+
+- [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md) — superseded by ADR 0071 after the user authorized the full 10B run with a concurrent, non-blocking approximately-5B Kaggle evaluation.
+- [`0068-make-plain-uv-sync-install-complete-runtime.md`](0068-make-plain-uv-sync-install-complete-runtime.md) — its complete-runtime rule is retained, but ADR 0072 replaces the gateway-rejected Beam 0.2.201 pin with 0.2.207.
+- [`0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md`](0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md) — superseded by ADR 0067, which retains dual-T4 execution but restores the 4%-of-parent SFT budget.
 
 - [`0008-run-500m-final-20m-data-scaling-probe.md`](0008-run-500m-final-20m-data-scaling-probe.md) — its 500M run decision was executed, but its claim that 500M would be the final 20M data-scaling probe was superseded by later scaling decisions.
 - [`0012-bind-public-gdr2-repository-identity.md`](0012-bind-public-gdr2-repository-identity.md) — superseded by ADR 0013 after the repository was renamed.
