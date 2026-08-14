@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import math
+import pickle
+from pathlib import Path
 import random
 from typing import Mapping
+import zipfile
 
 import torch
 from torch import Tensor
@@ -48,12 +51,25 @@ def _model_config_dict(engine: object) -> dict[str, object] | None:
     return dict(raw)
 
 
-def engine_state_dict(engine: object) -> dict[str, object]:
+def engine_state_dict(engine: object, *, cpu: bool = True) -> dict[str, object]:
+    """Return complete exact-resume state.
+
+    The ordinary public state-dict path remains CPU-portable. Checkpoint writers
+    may request device-native tensors so ``torch.save`` can stage one storage at
+    a time instead of materializing a second full model+optimizer copy in host
+    RAM before serialization.
+    """
+
+    model_state: object = engine.model.state_dict()
+    optimizer_state: object = engine.optimizer.state_dict()
+    if cpu:
+        model_state = cpu_tree(model_state)
+        optimizer_state = cpu_tree(optimizer_state)
     state: dict[str, object] = {
         "version": 1,
         "config": engine.config.as_dict(),
-        "model": cpu_tree(engine.model.state_dict()),
-        "optimizer": cpu_tree(engine.optimizer.state_dict()),
+        "model": model_state,
+        "optimizer": optimizer_state,
         "scheduler": engine.scheduler.state_dict(),
         "scaler": engine.scaler.state_dict(),
         "global_step": engine.global_step,
@@ -72,6 +88,49 @@ def engine_state_dict(engine: object) -> dict[str, object]:
     if model_config is not None:
         state["model_config"] = model_config
     return state
+
+
+def load_trainer_state_file(
+    path: Path | str,
+    *,
+    map_location: str | torch.device | None = "cpu",
+) -> dict[str, object]:
+    """Load either the historical plain-pickle or streamed torch checkpoint format."""
+
+    checkpoint_path = Path(path)
+    if zipfile.is_zipfile(checkpoint_path):
+        state = torch.load(
+            checkpoint_path,
+            map_location=map_location,
+            weights_only=False,
+        )
+    else:
+        with checkpoint_path.open("rb") as handle:
+            state = pickle.load(handle)
+    if not isinstance(state, Mapping):
+        raise RuntimeError("trainer checkpoint state is not a mapping")
+    return dict(state)
+
+
+def save_engine_checkpoint_state(engine: object, path: Path | str) -> None:
+    """Serialize exact-resume state without a full host-side tensor clone."""
+
+    checkpoint_path = Path(path)
+    if getattr(engine, "device", None) is not None and engine.device.type == "cuda":
+        torch.cuda.synchronize(engine.device)
+    state = engine_state_dict(engine, cpu=False)
+    torch.save(
+        state,
+        checkpoint_path,
+        pickle_protocol=pickle.HIGHEST_PROTOCOL,
+    )
+
+
+def load_engine_checkpoint_state(engine: object, path: Path | str) -> None:
+    """Restore streamed or historical exact-resume state onto the live device."""
+
+    state = load_trainer_state_file(path, map_location=engine.device)
+    load_engine_state(engine, state)
 
 
 def load_engine_state(engine: object, state: Mapping[str, object]) -> None:
@@ -122,3 +181,14 @@ def load_engine_state(engine: object, state: Mapping[str, object]) -> None:
             raise ValueError("trainer checkpoint has invalid CUDA RNG state")
         if cuda_states:
             torch.cuda.set_rng_state_all([item.cpu() for item in cuda_states])
+
+
+__all__ = [
+    "cpu_tree",
+    "engine_state_dict",
+    "load_engine_checkpoint_state",
+    "load_engine_state",
+    "load_trainer_state_file",
+    "move_optimizer_state",
+    "save_engine_checkpoint_state",
+]
