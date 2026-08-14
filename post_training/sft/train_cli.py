@@ -303,6 +303,56 @@ def _log(run: object | None, payload: Mapping[str, object]) -> None:
         run.log(dict(payload))
 
 
+def _memory_snapshot(engine: TrainerEngine) -> dict[str, int]:
+    """Return lightweight host/GPU memory telemetry without adding dependencies."""
+
+    result: dict[str, int] = {}
+    status = Path("/proc/self/status")
+    if status.is_file():
+        try:
+            for line in status.read_text(encoding="utf-8").splitlines():
+                key, separator, value = line.partition(":")
+                if not separator or key not in {"VmRSS", "VmHWM"}:
+                    continue
+                fields = value.strip().split()
+                if not fields:
+                    continue
+                kib = int(fields[0])
+                result["host_rss_bytes" if key == "VmRSS" else "host_peak_rss_bytes"] = kib * 1024
+        except (OSError, ValueError):
+            pass
+    if engine.device.type == "cuda" and torch.cuda.is_available():
+        result.update(
+            cuda_allocated_bytes=int(torch.cuda.memory_allocated(engine.device)),
+            cuda_reserved_bytes=int(torch.cuda.memory_reserved(engine.device)),
+            cuda_peak_allocated_bytes=int(torch.cuda.max_memory_allocated(engine.device)),
+            cuda_peak_reserved_bytes=int(torch.cuda.max_memory_reserved(engine.device)),
+        )
+    return result
+
+
+def _cadence_actions(
+    step: int,
+    *,
+    checkpoint_every_steps: int,
+    remote_publish_every_steps: int,
+    evaluation_every_steps: int,
+) -> tuple[str, ...]:
+    """Order durability before evaluation at every cadence boundary."""
+
+    actions: list[str] = []
+    checkpoint_due = step % checkpoint_every_steps == 0
+    publish_due = step % remote_publish_every_steps == 0
+    evaluation_due = step % evaluation_every_steps == 0
+    if checkpoint_due or publish_due:
+        actions.append("checkpoint")
+    if publish_due:
+        actions.append("publish")
+    if evaluation_due:
+        actions.append("evaluate")
+    return tuple(actions)
+
+
 def _validation(
     engine: TrainerEngine,
     bundle_root: Path,
@@ -446,15 +496,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     validation: dict[str, object] | None = None
     behavior: dict[str, object] | None = None
 
+    def cadence_event(phase: str, **extra: object) -> None:
+        event: dict[str, object] = {
+            "step": engine.global_step,
+            "phase": phase,
+            "memory": _memory_snapshot(engine),
+            **extra,
+        }
+        print(json.dumps({"sft_cadence": event}, sort_keys=True), flush=True)
+
     def evaluate(*, full_behavior: bool = False) -> None:
         nonlocal validation, behavior
+        cadence_event("validation:start", maximum_blocks=args.validation_blocks)
         validation = _validation(engine, bundle_root, maximum_blocks=args.validation_blocks)
+        cadence_event("validation:done", **validation)
+        selected_behavior_cases = None if full_behavior else args.behavior_cases
+        cadence_event("behavior:start", maximum_cases=selected_behavior_cases)
         behavior = evaluate_behavior(
             engine.model,
             precision=args.precision,
             max_seq_len=model_config.max_seq_len,
-            max_cases=None if full_behavior else args.behavior_cases,
+            max_cases=selected_behavior_cases,
         )
+        cadence_event("behavior:done", **behavior["summary"])
         event = {"step": engine.global_step, "validation": validation, "behavior": behavior["summary"]}
         print(json.dumps({"sft_evaluation": event}, sort_keys=True), flush=True)
         _log(
@@ -472,6 +536,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     def save(checkpoint_id: str) -> None:
         if checkpoint_id in saved:
             return
+        cadence_event("checkpoint:start", checkpoint_id=checkpoint_id)
         pipeline = {**train_reader.pipeline_state(), "sft_identity": identity}
         metrics = {
             "sft_validation": validation or {},
@@ -484,12 +549,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             validation_metrics=metrics,
         )
         saved.add(checkpoint_id)
+        cadence_event("checkpoint:done", checkpoint_id=checkpoint_id)
         print(json.dumps({"local_checkpoint": checkpoint_id}, sort_keys=True), flush=True)
 
     def publish(checkpoint_id: str, *, final: bool) -> None:
         if publisher is None or publication_manifest is None or checkpoint_id in published:
             return
         save(checkpoint_id)
+        cadence_event("publication:start", checkpoint_id=checkpoint_id, final=final)
         coordinator.publish(
             publisher,
             checkpoint_id=checkpoint_id,
@@ -498,6 +565,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             best_metric=None,
         )
         published.add(checkpoint_id)
+        cadence_event("publication:done", checkpoint_id=checkpoint_id, final=final)
         print(
             json.dumps({"remote_publication": {"checkpoint_id": checkpoint_id, "final": final}}, sort_keys=True),
             flush=True,
@@ -522,18 +590,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                     **{f"train/{key}": value for key, value in metrics.as_dict().items() if key != "step"},
                 },
             )
-            if engine.global_step % args.evaluation_every_steps == 0:
-                evaluate()
             checkpoint_id = f"step-{engine.global_step:08d}"
-            if engine.global_step % args.checkpoint_every_steps == 0:
-                save(checkpoint_id)
-            if engine.global_step % args.remote_publish_every_steps == 0:
-                publish(checkpoint_id, final=False)
+            for action in _cadence_actions(
+                engine.global_step,
+                checkpoint_every_steps=args.checkpoint_every_steps,
+                remote_publish_every_steps=args.remote_publish_every_steps,
+                evaluation_every_steps=args.evaluation_every_steps,
+            ):
+                if action == "checkpoint":
+                    save(checkpoint_id)
+                elif action == "publish":
+                    publish(checkpoint_id, final=False)
+                elif action == "evaluate":
+                    evaluate()
+                else:  # pragma: no cover - protected by _cadence_actions
+                    raise RuntimeError(f"unknown SFT cadence action: {action}")
 
-        evaluate(full_behavior=engine.global_step == total_steps)
         checkpoint_id = f"step-{engine.global_step:08d}"
         save(checkpoint_id)
         publish(checkpoint_id, final=engine.global_step == total_steps)
+        evaluate(full_behavior=engine.global_step == total_steps)
         summary = {
             "schema": "small-llm-sft-training-summary-v1",
             "sft_run_id": args.sft_run_id,
@@ -576,7 +652,9 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "_cadence_actions",
     "_checkpoint_step",
+    "_memory_snapshot",
     "_select_resume",
     "_validate_resume_checkpoint",
     "build_parser",
