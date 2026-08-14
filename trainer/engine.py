@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import random
 from typing import Iterable, Mapping
 
@@ -16,7 +17,12 @@ from .optimizer import _classify_parameters, build_adamw, build_optimizer
 from .optimizer_telemetry import InstrumentedHybridMuonAdamW
 from .schedule import TokenLRScheduler
 from .session import TrainingSession
-from .state import engine_state_dict, load_engine_state
+from .state import (
+    engine_state_dict,
+    load_engine_checkpoint_state,
+    load_engine_state,
+    save_engine_checkpoint_state,
+)
 from .step import train_step
 from .types import TokenBatch
 
@@ -86,6 +92,37 @@ class TrainerEngine:
 
     def load_state_dict(self, state: Mapping[str, object]) -> None:
         load_engine_state(self, state)
+
+    def _checkpoint_model(self) -> tuple[nn.Module, nn.Module]:
+        wrapper = self.model
+        raw = getattr(self, "_small_llm_raw_model", wrapper)
+        return wrapper, raw
+
+    def save_checkpoint_state(self, path: Path | str) -> None:
+        """Write exact-resume state while keeping DDP wrappers out of model keys."""
+
+        wrapper, raw = self._checkpoint_model()
+        if raw is wrapper:
+            save_engine_checkpoint_state(self, path)
+            return
+        self.model = raw
+        try:
+            save_engine_checkpoint_state(self, path)
+        finally:
+            self.model = wrapper
+
+    def load_checkpoint_state(self, path: Path | str) -> None:
+        """Load exact-resume state while keeping DDP wrappers out of model keys."""
+
+        wrapper, raw = self._checkpoint_model()
+        if raw is wrapper:
+            load_engine_checkpoint_state(self, path)
+            return
+        self.model = raw
+        try:
+            load_engine_checkpoint_state(self, path)
+        finally:
+            self.model = wrapper
 
 
 __all__ = [
