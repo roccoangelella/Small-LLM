@@ -78,8 +78,16 @@ WSD model, and its result does not pause or terminate the Beam trajectory.
 
 ## Resume
 
-Rerun the same uncapped microbatch-4 command from source commit
-`42b0376511ba1fc7ceecfbbafbeae2027530fc2d` or the exact source commit recorded
-by a later checkpoint. CPU staging realigns to the next unconsumed block before
-a new GPU allocation. Never change the microbatch, precision, dataset identity,
-or run ID on resume.
+Rerun the same uncapped microbatch-4 command from active source commit
+`1f9dff920ecc45ce2fdb43fd875514a18391273d` or the exact source commit recorded by a later checkpoint. Commit
+`42b0376` is accepted only as the one-time infrastructure-migration parent for
+the verified step-250 checkpoint. CPU staging realigns to the next unconsumed
+block before a new GPU allocation. Never change the microbatch, precision,
+dataset identity, or run ID on resume.
+
+Beam sets `SMALL_LLM_CHECKPOINT_FSYNC=0`. Checkpoint files and manifests still
+use staging plus atomic rename and are hash-verified on restore, but the runtime
+does not issue local-disk power-loss barriers against Beam's distributed
+Volume. Do not remove this provider-specific setting: the first step-250 save
+completed its final rename and then blocked indefinitely on the parent
+directory `fsync`.

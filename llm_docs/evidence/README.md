@@ -4,6 +4,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Current scaling comparison
 
+- [`scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md`](scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md) — first validation/checkpoint boundary, Beam distributed-Volume fsync hang, independently verified step-250 checkpoint, and exact continuation.
 - [`scaling/100m_10b_beam_launch_2026-08-14.md`](scaling/100m_10b_beam_launch_2026-08-14.md) — live RTX5090 launch, startup incidents and fixes, microbatch-4 qualification, W&B identity, and first production progress.
 - [`scaling/100m_10b_dataset_completion_2026-08-14.md`](scaling/100m_10b_dataset_completion_2026-08-14.md) — completed 10B producer state plus authenticated HF and Beam inventory verification.
 - [`scaling/100m_2b_behavioral_qualification_2026-08-13.md`](scaling/100m_2b_behavioral_qualification_2026-08-13.md) — exact greedy-32 and supplementary sampled evidence used for the 100M/10B launch decision.

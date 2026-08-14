@@ -15,17 +15,18 @@ The intrinsic scaling result is clear: 20M still gains from 500M→2B, but uneve
 
 The exact ADR-0025 comparison is complete and ADR 0071 closes the launch gate.
 The fresh `100m-10b-data-001` Beam RTX5090 trajectory is active from source
-commit `42b0376511ba1fc7ceecfbbafbeae2027530fc2d`; keep it running through all
-76,294 updates without `--max-steps-this-session`.
+commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`, after an exact step-250 infrastructure-only resume from launch
+source `42b0376`; keep it running through all 76,294 updates without
+`--max-steps-this-session`.
 
 Keep these immediate checks:
 
-1. Preserve exact resume from source commit `42b0376` and the qualified
+1. Preserve exact resume from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d` and the qualified
    microbatch 4; microbatch 8 exceeded RTX5090 memory while 4 passed at 62.08%
-   peak reserved memory.
+   peak reserved memory. `42b0376` is the recorded one-time resume parent only.
 2. Watch finite loss, gradient, throughput, and overflow telemetry in W&B.
-3. Confirm ordinary local durability at update 250 and verified HF
-   publication every 500 updates.
+3. Confirm the next Beam-local durability boundary returns without the removed
+   distributed-filesystem `fsync`, then verify HF publication at update 500.
 4. Capture `step-00038000` / 4,980,736,000 targets for concurrent Kaggle
    qualification before the rolling HF pointer advances to step 38,500.
 5. Do not pause or terminate Beam based on that intermediate result; qualify the

@@ -60,7 +60,8 @@ strong uniform intrinsic gains above. See
 
 ADR 0071 records the user's explicit decision that this evidence is sufficient
 to launch the fresh 100M/10B trajectory. The full run is now active on one Beam
-RTX5090 from source commit `42b0376511ba1fc7ceecfbbafbeae2027530fc2d`.
+RTX5090 from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`, resumed exactly from the step-250
+checkpoint created by launch source `42b0376`.
 Training is uncapped and will run through the full 76,294-update plan without a
 5B pause. The approximately-5B checkpoint will be evaluated concurrently on
 Kaggle and will not act as a continuation gate.
@@ -98,12 +99,18 @@ Canonical evidence is
 The VPS-fed Beam wrapper is active on RTX5090 with no session cap. ADR 0072
 pins the live gateway-compatible `beam-client==0.2.207`. The training run ID is
 `100m-10b-data-001`, and W&B reports that run as `running`. Finite production
-metrics were observed through at least step 99 at about 42,190 target tokens/s
-with zero overflow events. The successful launch follows fixes that keep
-Triton compilation on container-local scratch, make the VPS preseed guard
-initialize fail-closed, and retry Beam Volume `EAGAIN` during CPU staging.
+metrics were observed through step 250, followed by 16-block validation loss
+8.827006. The first Beam checkpoint then hung after its atomic rename during a
+POSIX parent-directory `fsync`. The checkpoint independently verified on CPU as
+`step-00000250`, with next block 250, and source `1f9dff9` resumed it under an
+exact one-time infrastructure migration. Production continued through at least
+step 267 at about 41,454 target tokens/s with no error. The active path keeps
+Triton compilation on container-local scratch, makes the VPS preseed guard
+initialize fail-closed, and retries Beam Volume `EAGAIN` during CPU staging.
 Canonical launch evidence is
 [`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
+The step-250 checkpoint incident and verified resume are recorded in
+[`../evidence/scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md`](../evidence/scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
