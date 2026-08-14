@@ -5,7 +5,7 @@ from pathlib import Path
 
 import sft_runtime
 
-IMPLEMENTATION_COMMIT = "3e409b09dd8af24c004ad42c22edcce4e8c9d077"
+IMPLEMENTATION_COMMIT = "cd7f571e49b0a1c50a8c9f459d553e4508179129"
 
 
 class Profile(sft_runtime.SFTProfileSpec):
