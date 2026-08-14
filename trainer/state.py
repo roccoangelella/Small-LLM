@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import asdict, is_dataclass
+import gc
 import math
 import pickle
 from pathlib import Path
@@ -25,6 +27,19 @@ def cpu_tree(value: object) -> object:
     if isinstance(value, list):
         return [cpu_tree(item) for item in value]
     return value
+
+
+def release_host_memory() -> None:
+    """Return collectable Python/glibc heap pages before memory-sensitive IO."""
+
+    gc.collect()
+    try:
+        libc = ctypes.CDLL(None)
+        malloc_trim = getattr(libc, "malloc_trim", None)
+        if callable(malloc_trim):
+            malloc_trim(0)
+    except (AttributeError, OSError):
+        pass
 
 
 def move_optimizer_state(optimizer: Optimizer, device: torch.device) -> None:
@@ -90,6 +105,15 @@ def engine_state_dict(engine: object, *, cpu: bool = True) -> dict[str, object]:
     return state
 
 
+def _cpu_location(location: str | torch.device | None) -> bool:
+    if location is None:
+        return False
+    try:
+        return torch.device(location).type == "cpu"
+    except (RuntimeError, TypeError):
+        return False
+
+
 def load_trainer_state_file(
     path: Path | str,
     *,
@@ -103,6 +127,7 @@ def load_trainer_state_file(
             checkpoint_path,
             map_location=map_location,
             weights_only=False,
+            mmap=_cpu_location(map_location),
         )
     else:
         with checkpoint_path.open("rb") as handle:
@@ -116,21 +141,30 @@ def save_engine_checkpoint_state(engine: object, path: Path | str) -> None:
     """Serialize exact-resume state without a full host-side tensor clone."""
 
     checkpoint_path = Path(path)
+    release_host_memory()
     if getattr(engine, "device", None) is not None and engine.device.type == "cuda":
         torch.cuda.synchronize(engine.device)
     state = engine_state_dict(engine, cpu=False)
-    torch.save(
-        state,
-        checkpoint_path,
-        pickle_protocol=pickle.HIGHEST_PROTOCOL,
-    )
+    try:
+        torch.save(
+            state,
+            checkpoint_path,
+            pickle_protocol=pickle.HIGHEST_PROTOCOL,
+        )
+    finally:
+        del state
+        release_host_memory()
 
 
 def load_engine_checkpoint_state(engine: object, path: Path | str) -> None:
     """Restore streamed or historical exact-resume state onto the live device."""
 
-    state = load_trainer_state_file(path, map_location=engine.device)
-    load_engine_state(engine, state)
+    state = load_trainer_state_file(path, map_location="cpu")
+    try:
+        load_engine_state(engine, state)
+    finally:
+        del state
+        release_host_memory()
 
 
 def load_engine_state(engine: object, state: Mapping[str, object]) -> None:
@@ -190,5 +224,6 @@ __all__ = [
     "load_engine_state",
     "load_trainer_state_file",
     "move_optimizer_state",
+    "release_host_memory",
     "save_engine_checkpoint_state",
 ]
