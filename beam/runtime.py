@@ -753,7 +753,12 @@ def run_training(
 
     environment = _gpu_environment()
     capability = str(environment["compute_capability"]).replace(".", "")
-    triton_cache = cache_root / "triton" / f"sm{capability}" / "torch-2.10-triton-3.6"
+    configured_triton_cache = os.environ.get("TRITON_CACHE_DIR", "").strip()
+    triton_cache = (
+        Path(configured_triton_cache)
+        if configured_triton_cache
+        else cache_root / "triton" / f"sm{capability}" / "torch-2.10-triton-3.6"
+    )
     triton_cache.mkdir(parents=True, exist_ok=True)
     os.environ["TRITON_CACHE_DIR"] = str(triton_cache)
 

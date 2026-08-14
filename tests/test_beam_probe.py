@@ -36,8 +36,14 @@ class BeamProbeTest(unittest.TestCase):
         self.assertIn("fastest_safe_measured_candidate", source)
 
     def test_triton_cache_uses_container_local_scratch(self) -> None:
-        source = (BEAM / "launch.py").read_text(encoding="utf-8")
-        self.assertIn('"TRITON_CACHE_DIR": "/tmp/small-llm-triton-cache"', source)
+        launch_source = (BEAM / "launch.py").read_text(encoding="utf-8")
+        runtime_source = (BEAM / "runtime.py").read_text(encoding="utf-8")
+        self.assertIn('"TRITON_CACHE_DIR": "/tmp/small-llm-triton-cache"', launch_source)
+        self.assertIn(
+            'configured_triton_cache = os.environ.get("TRITON_CACHE_DIR", "").strip()',
+            runtime_source,
+        )
+        self.assertIn("Path(configured_triton_cache)", runtime_source)
 
     def test_vps_preseed_guard_can_import_before_working_directory_is_added(self) -> None:
         environment = os.environ.copy()
