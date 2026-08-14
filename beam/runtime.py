@@ -812,6 +812,16 @@ def run_training(
 
     if runtime_path.is_file():
         existing = _json(runtime_path)
+        existing_source_commit = existing.get("source_commit")
+        migration_parent = os.environ.get(
+            "SMALL_LLM_INFRA_MIGRATION_PARENT_COMMIT", ""
+        ).strip()
+        if (
+            isinstance(existing_source_commit, str)
+            and existing_source_commit != source_commit
+            and existing_source_commit == migration_parent
+        ):
+            resume_parent_source_commit = existing_source_commit
         frozen_microbatch = existing.get("microbatch_size")
         if not isinstance(frozen_microbatch, int):
             raise RuntimeError("saved Modal runtime has no valid microbatch_size")

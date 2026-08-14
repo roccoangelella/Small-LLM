@@ -45,6 +45,19 @@ class BeamProbeTest(unittest.TestCase):
         )
         self.assertIn("Path(configured_triton_cache)", runtime_source)
 
+    def test_beam_checkpointing_skips_posix_fsync(self) -> None:
+        launch_source = (BEAM / "launch.py").read_text(encoding="utf-8")
+        runtime_source = (BEAM / "runtime.py").read_text(encoding="utf-8")
+        transport_source = (BEAM / "model_repo_checkpoint.py").read_text(encoding="utf-8")
+        self.assertIn('"SMALL_LLM_CHECKPOINT_FSYNC": "0"', launch_source)
+        self.assertIn(
+            '"42b0376511ba1fc7ceecfbbafbeae2027530fc2d"',
+            launch_source,
+        )
+        self.assertIn("resume_parent_source_commit = existing_source_commit", runtime_source)
+        self.assertIn("actual_source == migration_parent", transport_source)
+        self.assertIn("compatible[\"source_commit\"] = actual_source", transport_source)
+
     def test_vps_preseed_guard_can_import_before_working_directory_is_added(self) -> None:
         environment = os.environ.copy()
         environment.update(

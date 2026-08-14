@@ -32,6 +32,13 @@ _POST_SAVE_METADATA = frozenset({"local_manifest.json", "drive_manifest.json", "
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def _checkpoint_fsync_enabled() -> bool:
+    value = os.environ.get("SMALL_LLM_CHECKPOINT_FSYNC", "1").strip()
+    if value not in {"0", "1"}:
+        raise RuntimeError("SMALL_LLM_CHECKPOINT_FSYNC must be 0 or 1")
+    return value == "1"
+
+
 def _manifest_relative_path(name: object) -> Path:
     """Return a safe checkpoint-relative path or reject an untrusted name."""
 
@@ -344,33 +351,38 @@ class CheckpointCoordinator:
             raise RuntimeError("joint checkpoints are legal only at completed optimizer-step boundaries")
         if int(pipeline_state.get("gradient_accumulation_position", 0)) != 0:
             raise RuntimeError("checkpoint has a partial gradient accumulation window")
+        checkpoint_fsync = _checkpoint_fsync_enabled()
         staging = Path(tempfile.mkdtemp(prefix=f".{checkpoint_id}.", dir=self.root))
         try:
             trainer_state = dict(trainer.state_dict())
             trainer_state.setdefault("python_rng_state", random.getstate())
             with (staging / "trainer_state.pkl").open("wb") as handle:
                 pickle.dump(trainer_state, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                handle.flush(); os.fsync(handle.fileno())
+                handle.flush()
+                if checkpoint_fsync:
+                    os.fsync(handle.fileno())
             payload = {
                 "version": 1, "checkpoint_id": checkpoint_id,
                 "configuration_hash": self.configuration_hash, "source_hash": self.source_hash,
                 "schema_hash": self.schema_hash, "optimizer_step_complete": True,
                 "pipeline_state": dict(pipeline_state), "validation_metrics": dict(validation_metrics or {}),
             }
-            write_json_atomic(staging / "checkpoint.json", payload)
+            write_json_atomic(staging / "checkpoint.json", payload, fsync=checkpoint_fsync)
             manifest = {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(staging / "trainer_state.pkl")},
                                   {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")}]} 
-            write_json_atomic(staging / "local_manifest.json", manifest)
-            _fsync_tree(staging)
+            write_json_atomic(staging / "local_manifest.json", manifest, fsync=checkpoint_fsync)
+            if checkpoint_fsync:
+                _fsync_tree(staging)
             final = self.root / checkpoint_id
             if final.exists():
                 raise FileExistsError(f"checkpoint already exists: {checkpoint_id}")
             os.replace(staging, final)
-            parent_fd = os.open(self.root, os.O_RDONLY)
-            try:
-                os.fsync(parent_fd)
-            finally:
-                os.close(parent_fd)
+            if checkpoint_fsync:
+                parent_fd = os.open(self.root, os.O_RDONLY)
+                try:
+                    os.fsync(parent_fd)
+                finally:
+                    os.close(parent_fd)
             return final
         except BaseException:
             shutil.rmtree(staging, ignore_errors=True)

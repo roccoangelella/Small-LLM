@@ -20,7 +20,13 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def write_json_atomic(path: Path, payload: Any, *, sort_keys: bool = True) -> None:
+def write_json_atomic(
+    path: Path,
+    payload: Any,
+    *,
+    sort_keys: bool = True,
+    fsync: bool = True,
+) -> None:
     """Atomically write JSON so a checkpoint is never partially valid on disk."""
 
     ensure_parent(path)
@@ -29,16 +35,18 @@ def write_json_atomic(path: Path, payload: Any, *, sort_keys: bool = True) -> No
         json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=sort_keys)
         handle.write("\n")
         handle.flush()
-        os.fsync(handle.fileno())
+        if fsync:
+            os.fsync(handle.fileno())
     temporary.replace(path)
     # Persist the directory entry as well as the file contents.  Without this
     # fsync, a power loss can theoretically forget the rename even though the
     # temporary file itself was durable.
-    directory_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(directory_fd)
-    finally:
-        os.close(directory_fd)
+    if fsync:
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
 
 
 def read_json(path: Path) -> Any:

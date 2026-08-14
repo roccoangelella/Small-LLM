@@ -49,6 +49,16 @@ RUNTIME_ENV = {
     # distributed Volumes are excellent for durable checkpoints and dataset
     # bytes, but kernel compilation needs ordinary local filesystem semantics.
     "TRITON_CACHE_DIR": "/tmp/small-llm-triton-cache",
+    # Beam Volumes persist writes without a client commit call. POSIX fsync on
+    # their distributed filesystem can block after an otherwise-complete
+    # atomic checkpoint rename, so retain atomic manifests but skip local-disk
+    # power-loss barriers on this provider only.
+    "SMALL_LLM_CHECKPOINT_FSYNC": "0",
+    # One-time, exact infrastructure migration from the launch source whose
+    # step-250 checkpoint exposed the Beam fsync hang.
+    "SMALL_LLM_INFRA_MIGRATION_PARENT_COMMIT": (
+        "42b0376511ba1fc7ceecfbbafbeae2027530fc2d"
+    ),
     "WANDB_INIT_TIMEOUT": "30",
     "PYTHONUNBUFFERED": "1",
 }

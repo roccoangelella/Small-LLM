@@ -199,7 +199,24 @@ def _runtime_contract_model_repo(*args: Any, **kwargs: Any) -> dict[str, Any]:
 def _assert_contract_model_repo(path: Path, expected: Mapping[str, Any]) -> None:
     """Keep scientific immutables frozen while allowing this infrastructure migration."""
 
-    _ORIGINAL_ASSERT_CONTRACT(path, expected)
+    actual = base_runtime._json(path)
+    actual_source = actual.get("source_commit")
+    expected_source = expected.get("source_commit")
+    migration_parent = os.environ.get(
+        "SMALL_LLM_INFRA_MIGRATION_PARENT_COMMIT", ""
+    ).strip()
+    if actual_source != expected_source and actual_source == migration_parent:
+        compatible = dict(expected)
+        compatible["source_commit"] = actual_source
+        _ORIGINAL_ASSERT_CONTRACT(path, compatible)
+        actual["source_commit"] = expected_source
+        actual["resume_parent_source_commit"] = actual_source
+        actual["source_migration"] = (
+            "Beam step-250 checkpoint fsync infrastructure-only migration"
+        )
+        base_runtime._write_json(path, actual)
+    else:
+        _ORIGINAL_ASSERT_CONTRACT(path, expected)
     actual = base_runtime._json(path)
     desired = expected.get("checkpoint_transports")
     if actual.get("checkpoint_transports") != desired:

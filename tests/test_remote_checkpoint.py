@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from dataset.src.joint_checkpoint import CheckpointCoordinator, restore_on_empty_vps
@@ -103,6 +104,30 @@ class RemoteCheckpointTest(unittest.TestCase):
             configuration_hash="cfg",
             schema_hash="schema",
         )
+
+    def test_checkpoint_can_skip_fsync_for_distributed_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {"SMALL_LLM_CHECKPOINT_FSYNC": "0"},
+        ), mock.patch("dataset.src.joint_checkpoint.os.fsync") as fsync:
+            root = Path(tmp)
+            checkpoint = CheckpointCoordinator(
+                root / "checkpoints",
+                configuration_hash="cfg",
+                source_hash="src",
+                schema_hash="schema",
+            ).save(
+                checkpoint_id="step-00000250",
+                trainer=MockTrainer(),
+                pipeline_state={
+                    "gradient_accumulation_position": 0,
+                    "last_consumed_block_id": 249,
+                },
+                optimizer_step_complete=True,
+            )
+            fsync.assert_not_called()
+            self.assertTrue((checkpoint / "trainer_state.pkl").is_file())
+            self.assertTrue((checkpoint / "local_manifest.json").is_file())
 
     def test_resumable_download_and_checksum_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
