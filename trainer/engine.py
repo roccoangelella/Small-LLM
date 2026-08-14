@@ -36,10 +36,22 @@ def seed_everything(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_training_optimizer(model: nn.Module, config: TrainerConfig) -> Optimizer:
-    """Build the selected optimizer with qualification telemetry when supported."""
+    """Build the selected optimizer, optionally omitting diagnostic telemetry.
+
+    ``InstrumentedHybridMuonAdamW`` is scientifically equivalent to the base
+    hybrid optimizer, but it clones parameter tensors to derive per-step update
+    diagnostics.  Memory-constrained execution environments may opt out of that
+    non-checkpointed telemetry without changing optimizer state or updates.
+    """
 
     if config.optimizer == "hybrid_muon_adamw":
+        if _env_flag("SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY"):
+            return build_optimizer(model, config)
         return InstrumentedHybridMuonAdamW(_classify_parameters(model), config)
     return build_optimizer(model, config)
 
