@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -32,6 +34,34 @@ class BeamProbeTest(unittest.TestCase):
         self.assertIn("median_tokens_per_second", source)
         self.assertIn("peak_reserved_memory_bytes", source)
         self.assertIn("fastest_safe_measured_candidate", source)
+
+    def test_triton_cache_uses_container_local_scratch(self) -> None:
+        source = (BEAM / "launch.py").read_text(encoding="utf-8")
+        self.assertIn('"TRITON_CACHE_DIR": "/tmp/small-llm-triton-cache"', source)
+
+    def test_vps_preseed_guard_can_import_before_working_directory_is_added(self) -> None:
+        environment = os.environ.copy()
+        environment.update(
+            PYTHONPATH=str(BEAM / "vps_site"),
+            SMALL_LLM_DATASET_REQUIRE_PRESEEDED="1",
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import dataset.incremental_frontier as frontier; "
+                    "print(frontier._download_verified.__name__)"
+                ),
+            ],
+            cwd="/tmp",
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "_preseeded_only")
 
 
 if __name__ == "__main__":

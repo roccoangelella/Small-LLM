@@ -7,11 +7,28 @@ in the mounted Beam Volume. No HF byte-download fallback is allowed.
 from __future__ import annotations
 
 import os
+import sys
 import time
+from pathlib import Path
 
 
 if os.environ.get("SMALL_LLM_DATASET_REQUIRE_PRESEEDED") == "1":
-    import dataset.incremental_frontier as frontier
+    # Beam adds the synced working directory to the child interpreter only
+    # after Python's site initialization on some runtime paths. Resolve it from
+    # this file so the guard can import the repository during sitecustomize.
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+
+    try:
+        import dataset.incremental_frontier as frontier
+    except BaseException as error:  # sitecustomize errors are otherwise ignored by Python
+        print(
+            f"fatal: VPS-fed dataset preseed guard could not initialize: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+        os._exit(70)
 
     try:
         _WAIT_SECONDS = float(os.environ.get("SMALL_LLM_DATASET_PRESEED_WAIT_SECONDS", "120"))

@@ -45,6 +45,10 @@ from profiles import (  # noqa: E402
 SECRETS = ["WANDB_API_KEY", "HF_TOKEN", "SMALL_LLM_HF_REPO_ID"]
 RUNTIME_ENV = {
     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    # Keep Triton's generated kernels on container-local scratch. Beam's
+    # distributed Volumes are excellent for durable checkpoints and dataset
+    # bytes, but kernel compilation needs ordinary local filesystem semantics.
+    "TRITON_CACHE_DIR": "/tmp/small-llm-triton-cache",
     "WANDB_INIT_TIMEOUT": "30",
     "PYTHONUNBUFFERED": "1",
 }
