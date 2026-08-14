@@ -59,15 +59,17 @@ strong uniform intrinsic gains above. See
 [`../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md`](../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md).
 
 ADR 0071 records the user's explicit decision that this evidence is sufficient
-to launch the fresh 100M/10B trajectory. Training will run through the full
-76,294-update plan without a 5B pause. The approximately-5B checkpoint will be
-evaluated concurrently on Kaggle and will not act as a continuation gate.
+to launch the fresh 100M/10B trajectory. The full run is now active on one Beam
+RTX5090 from source commit `42b0376511ba1fc7ceecfbbafbeae2027530fc2d`.
+Training is uncapped and will run through the full 76,294-update plan without a
+5B pause. The approximately-5B checkpoint will be evaluated concurrently on
+Kaggle and will not act as a continuation gate.
 
 ## GDN-2 production execution
 
 Production CUDA GDN-2 execution is mixed FLA on `fla-core==0.5.2` with FP32 master parameters plus CUDA FP16 autocast. Saved/configured `gdn_chunk_size` is 32; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence remains the correctness/reference fallback. See [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md).
 
-Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. The first authorized RTX5090 allocation will perform the live 8/12/16 microbatch and FLA/Triton qualification before continuing into the full run.
+Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. On the live RTX5090, microbatch 8 exceeded VRAM. Explicit microbatch 4 then passed four finite updates at median 42,018 target tokens/s with 20,904,411,136 peak reserved bytes, 62.08% of the 33,670,758,400-byte device. The frozen optimizer block remains 64 sequences.
 
 ## Dataset and checkpoint durability
 
@@ -93,11 +95,15 @@ and final manifest SHA-256
 Canonical evidence is
 [`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
 
-The authorized launch path is the VPS-fed Beam wrapper
-`beam/vps_train.py` on RTX5090 with no session cap. ADR 0072 pins the live
-gateway-compatible `beam-client==0.2.207`. The training run ID remains
-`100m-10b-data-001`; no prior HF checkpoint namespace existed at the final
-prelaunch check.
+The VPS-fed Beam wrapper is active on RTX5090 with no session cap. ADR 0072
+pins the live gateway-compatible `beam-client==0.2.207`. The training run ID is
+`100m-10b-data-001`, and W&B reports that run as `running`. Finite production
+metrics were observed through at least step 99 at about 42,190 target tokens/s
+with zero overflow events. The successful launch follows fixes that keep
+Triton compilation on container-local scratch, make the VPS preseed guard
+initialize fail-closed, and retry Beam Volume `EAGAIN` during CPU staging.
+Canonical launch evidence is
+[`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 

@@ -27,4 +27,5 @@ Keep active plans updated while work proceeds. Once finished, move the plan to `
 
 ## Completed
 
+- [`completed/2026-08-14-100m-10b-beam-launch.md`](completed/2026-08-14-100m-10b-beam-launch.md)
 - [`completed/2026-08-10-project-memory-refactor.md`](completed/2026-08-10-project-memory-refactor.md)

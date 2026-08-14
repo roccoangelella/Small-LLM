@@ -14,16 +14,17 @@ The intrinsic scaling result is clear: 20M still gains from 500M→2B, but uneve
 ## Active scaling trajectory — full 100M / 10B
 
 The exact ADR-0025 comparison is complete and ADR 0071 closes the launch gate.
-Run the fresh `100m-10b-data-001` Beam RTX5090 trajectory through all 76,294
-updates without `--max-steps-this-session`.
+The fresh `100m-10b-data-001` Beam RTX5090 trajectory is active from source
+commit `42b0376511ba1fc7ceecfbbafbeae2027530fc2d`; keep it running through all
+76,294 updates without `--max-steps-this-session`.
 
 Keep these immediate checks:
 
-1. CPU import, checkpoint-aligned staging, and fresh-container visibility must
-   pass before GPU allocation.
-2. The first live GPU allocation must pass the frozen 8/12/16 microbatch probe,
-   finite-loss/gradient checks, memory bound, and FLA/Triton execution.
-3. Preserve ordinary local durability every 250 updates and verified HF
+1. Preserve exact resume from source commit `42b0376` and the qualified
+   microbatch 4; microbatch 8 exceeded RTX5090 memory while 4 passed at 62.08%
+   peak reserved memory.
+2. Watch finite loss, gradient, throughput, and overflow telemetry in W&B.
+3. Confirm ordinary local durability at update 250 and verified HF
    publication every 500 updates.
 4. Capture `step-00038000` / 4,980,736,000 targets for concurrent Kaggle
    qualification before the rolling HF pointer advances to step 38,500.
@@ -41,7 +42,8 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - CPU producer/stager establishes the checkpoint-aligned current+successor lead window before H100 allocation;
 - RTX5090 consumes exact block order and fails closed rather than skipping or
   reordering if preseeded Beam bytes are missing;
-- single-GPU Beam topology;
+- single-GPU Beam topology with qualified microbatch 4 and the frozen
+  64-sequence optimizer block;
 - exact 76,294-update / 10,000,007,168-target horizon and ADR-0057 WSD schedule;
 - model checkpoints in the HF model repository and dataset shards in the HF dataset Storage Bucket.
 

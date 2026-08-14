@@ -15,7 +15,7 @@ GPU: one Beam serverless RTX5090
 updates: 76,294
 target tokens: 10,000,007,168
 WSD: 3,815 warmup / 57,220 stable / 15,259 decay
-microbatch qualification: 8, 12, 16; fastest safe result freezes
+microbatch: 4 (live-qualified; 8 exceeded RTX5090 VRAM)
 precision: fp16 autocast with FP32 master parameters
 ```
 
@@ -49,14 +49,16 @@ Run from the repository root in a persistent tmux session:
 uv run python beam/vps_train.py \
   --model 100M \
   --tokens 10B \
-  --gpu RTX5090
+  --gpu RTX5090 \
+  --microbatch-size 4
 ```
 
 Do not pass `--max-steps-this-session`. The wrapper uses only the external VPS
 dataset feed, then performs CPU import, checkpoint-aligned staging, and
-fresh-container visibility gates before allocating the GPU. The first GPU
-allocation probes real forward/backward execution at microbatch 8, 12, and 16
-and continues directly with the fastest safe result.
+fresh-container visibility gates before allocating the GPU. The requested
+microbatch 4 still runs the four-update finite-loss, gradient, memory, and
+throughput qualification before continuing directly into production. Do not
+return to auto 8/12/16 on this device: live microbatch 8 exceeded VRAM.
 
 ## Concurrent approximately-5B Kaggle evaluation
 
@@ -76,8 +78,8 @@ WSD model, and its result does not pause or terminate the Beam trajectory.
 
 ## Resume
 
-Rerun the same uncapped command from the exact source commit recorded by the
-latest checkpoint. CPU staging realigns to the next unconsumed block before a
-new GPU allocation. Never change the microbatch, precision, dataset identity,
+Rerun the same uncapped microbatch-4 command from source commit
+`42b0376511ba1fc7ceecfbbafbeae2027530fc2d` or the exact source commit recorded
+by a later checkpoint. CPU staging realigns to the next unconsumed block before
+a new GPU allocation. Never change the microbatch, precision, dataset identity,
 or run ID on resume.
-
