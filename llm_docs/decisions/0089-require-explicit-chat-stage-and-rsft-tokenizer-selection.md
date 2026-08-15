@@ -5,15 +5,21 @@ date: 2026-08-15
 
 # ADR 0089 — Require explicit chat stage and R-SFT tokenizer selection
 
-## Context
+## Context and problem statement
 
 R-SFT introduces three semantic control-token IDs on rows 50,257–50,259 while pretrained and S0 SFT checkpoints retain the ordinary 50,257-token GPT-2 semantic vocabulary. The local chat CLI must not guess which tokenizer contract belongs to a selected model artifact.
 
 Before this decision, `chat.py` treated pretrained selection as the default and used `--sft` only as an override. That becomes unsafe once R-SFT checkpoints can emit and consume the promoted reasoning-token IDs.
 
-## Decision
+## Considered options
 
-The local `chat.py` stage is now mandatory and explicit. Every invocation must select exactly one of:
+1. Keep pretrained as the implicit default and add only an `--r-sft` override.
+2. Auto-detect the tokenizer from whatever checkpoint resolves for the requested model size/token profile.
+3. Require an explicit stage flag and then fail closed if the selected artifact does not match that stage's tokenizer/vocabulary contract.
+
+## Decision outcome
+
+Choose option 3. The local `chat.py` stage is mandatory and explicit. Every invocation must select exactly one of:
 
 - `--pre-trained`
 - `--sft`
