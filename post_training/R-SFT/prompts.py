@@ -8,7 +8,6 @@ structural requirements derived from the project's difficulty metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from textwrap import dedent
 
 DEFAULT_BATCH_SIZE = 10
 R0_SKILLS = ("INF", "DED", "REL", "CSP", "IND", "ABD", "MAG")
@@ -291,81 +290,81 @@ def build_generation_prompt(
     if structural_requirements is not None:
         if not isinstance(structural_requirements, str) or not structural_requirements.strip():
             raise ValueError("structural_requirements must be a non-empty string when provided")
-        structural_block = (
-            "\nFor this batch, also satisfy these structural requirements:\n"
-            f"{structural_requirements.strip()}\n"
-        )
-    else:
-        structural_block = ""
 
     spec = SKILL_PROMPT_SPECS[normalized_skill]
-    return dedent(
-        f"""
-        Generate {batch_size} self-contained {spec.name} reasoning problems.
+    sections = [
+        f"Generate {batch_size} self-contained {spec.name} reasoning problems.",
+        spec.definition,
+        "Good problem structures include:\n" + _bullet_lines(spec.good_structures),
+        (
+            "Keep every problem fully self-contained. Every fact, definition, relationship, or rule "
+            "needed to solve it must be explicitly stated. Do not rely on outside knowledge, unstated "
+            "assumptions, common-sense facts, or hidden definitions."
+        ),
+        (
+            "All stated premises must be mutually consistent unless the problem explicitly asks the "
+            "solver to identify a contradiction. Never resolve an inconsistency by silently ignoring "
+            "one of the premises."
+        ),
+        (
+            "Use precise wording. Be unambiguous about quantities, thresholds, exclusivity, relations, "
+            "and necessary or sufficient conditions whenever they matter."
+        ),
+        spec.avoid,
+    ]
 
-        {spec.definition}
+    if structural_requirements is not None:
+        sections.append(
+            "For this batch, also satisfy these structural requirements:\n"
+            + structural_requirements.strip()
+        )
 
-        Good problem structures include:
-        {_bullet_lines(spec.good_structures)}
-
-        Keep every problem fully self-contained. Every fact, definition, relationship, or rule needed
-        to solve it must be explicitly stated. Do not rely on outside knowledge, unstated assumptions,
-        common-sense facts, or hidden definitions.
-
-        All stated premises must be mutually consistent unless the problem explicitly asks the solver
-        to identify a contradiction. Never resolve an inconsistency by silently ignoring one of the
-        premises.
-
-        Use precise wording. Be unambiguous about quantities, thresholds, exclusivity, relations, and
-        necessary or sufficient conditions whenever they matter.
-
-        {spec.avoid}
-
-        {structural_block}
-        Prefer open-ended questions when natural. Ask for the conclusion, state, entity, classification,
-        consequence, relation, supported claim, contradiction, or other result that follows from the
-        supplied information. Yes/no questions are allowed when genuinely natural, but do not make them
-        the dominant question type.
-
-        Here is one example of the style and reasoning structure we want:
-
-        Problem:
-        {spec.example_problem}
-
-        Reasoning:
-        {spec.example_reasoning}
-
-        Answer:
-        {spec.example_answer}
-
-        Generate genuinely different problems. Do not simply reproduce the same underlying instance
-        while changing names, nouns, verbs, or settings.
-
-        Vary both the reasoning structure and the subject matter across the batch. Use a broad mix of
-        ordinary situations, organizations, objects, natural phenomena, classifications, and technical
-        settings. {spec.diversity_note}
-
-        For each problem, provide a concise but complete reasoning path and a natural final answer that
-        states the actual conclusion. The final answer may be a word, phrase, sentence, or short
-        explanation depending on what best answers the question. Do not force answers into a yes/no
-        format.
-
-        Use whatever reasoning depth is naturally required. Do not add filler and do not omit necessary
-        inferences.
-
-        Return ONLY a valid JSON array containing exactly {batch_size} objects.
-
-        Each object must contain exactly these three string fields:
-
-        {{
-          "problem": "...",
-          "reasoning": "...",
-          "answer": "..."
-        }}
-
-        Do not include markdown fences, headings, explanations, or any text outside the JSON array.
-        """
-    ).strip()
+    sections.extend(
+        [
+            (
+                "Prefer open-ended questions when natural. Ask for the conclusion, state, entity, "
+                "classification, consequence, relation, supported claim, contradiction, or other "
+                "result that follows from the supplied information. Yes/no questions are allowed "
+                "when genuinely natural, but do not make them the dominant question type."
+            ),
+            (
+                "Here is one example of the style and reasoning structure we want:\n\n"
+                f"Problem:\n{spec.example_problem}\n\n"
+                f"Reasoning:\n{spec.example_reasoning}\n\n"
+                f"Answer:\n{spec.example_answer}"
+            ),
+            (
+                "Generate genuinely different problems. Do not simply reproduce the same underlying "
+                "instance while changing names, nouns, verbs, or settings."
+            ),
+            (
+                "Vary both the reasoning structure and the subject matter across the batch. Use a "
+                "broad mix of ordinary situations, organizations, objects, natural phenomena, "
+                f"classifications, and technical settings. {spec.diversity_note}"
+            ),
+            (
+                "For each problem, provide a concise but complete reasoning path and a natural final "
+                "answer that states the actual conclusion. The final answer may be a word, phrase, "
+                "sentence, or short explanation depending on what best answers the question. Do not "
+                "force answers into a yes/no format."
+            ),
+            (
+                "Use whatever reasoning depth is naturally required. Do not add filler and do not "
+                "omit necessary inferences."
+            ),
+            f"Return ONLY a valid JSON array containing exactly {batch_size} objects.",
+            (
+                "Each object must contain exactly these three string fields:\n\n"
+                "{\n"
+                '  "problem": "...",\n'
+                '  "reasoning": "...",\n'
+                '  "answer": "..."\n'
+                "}"
+            ),
+            "Do not include markdown fences, headings, explanations, or any text outside the JSON array.",
+        ]
+    )
+    return "\n\n".join(sections)
 
 
 __all__ = [
