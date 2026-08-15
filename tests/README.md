@@ -1,97 +1,74 @@
-# Model and T4 qualification tests
+# Tests and qualification
 
-Ordinary repository tests remain CPU-friendly and run through `unittest`. The T4 qualification harness is a separate hardware-acceptance command because it requires CUDA, performs timed optimizer steps, and writes a benchmark report.
+The `tests/` tree has three distinct roles. Keep them separate:
 
-## Corrected parity contract
-
-The original schema-v1 harness generated unconstrained Gaussian Q/K tensors and an order-one random recurrent state. That did not match the real GDN-2 layer, which L2-normalizes Q/K and starts independent training records from a zero FP32 state. Those synthetic inputs could make the recurrence explode and invalidated the first report's parity conclusion.
-
-Schema version 2 fixes the test rather than changing the model:
-
-- Q and K are L2-normalized before the recurrence;
-- the `training_zero_state` profile starts from an all-zero FP32 state;
-- the `bounded_cache_state` profile uses a small FP32 state to test carried-state behavior;
-- parity is evaluated outside CUDA autocast, so FP16 parity means FP16-quantized inputs entering the recurrence's explicit FP32 core;
-- full-model FP16 benchmarks still run under CUDA autocast and remain the operational stability test;
-- initialization screening uses the fastest FP16 chunk that first passes every requested parity profile and the full-model benchmark, rather than always forcing chunk 64.
-
-The old schema-v1 report remains useful for execution, memory, and throughput evidence. Its parity failures must not be treated as proof of a mathematical GDN-2 defect.
-
-## What the harness checks
-
-`tests/t4_qualification.py` performs four checks:
-
-1. compares chunkwise GDN-2 with the tokenwise recurrent oracle for outputs, final state, and every recurrence-input gradient in FP32 and FP16-input modes;
-2. runs both zero-state training parity and bounded carried-state parity for chunk sizes 16, 32, and 64;
-3. benchmarks the approximately-20M smoke model at context 2,048, recording loss, gradient norm, FP16 scaler reductions, memory, step time, and tokens per second;
-4. screens normal versus Xavier initialization on a parity-qualified FP16 chunk and can optionally benchmark Plan B.
-
-The recurrence cases intentionally remain small. Running the serial Python oracle across the full 2,048-token model would benchmark Python-loop overhead rather than the intended training path.
-
-## Kaggle preparation
-
-Enable a GPU accelerator in Kaggle and make the repository the current working directory.
-
-Confirm the assigned device:
-
-```bash
-python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no CUDA')"
+```text
+tests/
+├── test_*.py                 ordinary CPU/unit/integration regressions
+├── qualification/            explicit GPU/model qualification launchers
+├── test_datasets/            large VPS-local qualification corpora (gitignored)
+├── production_helpers.py     shared production-test helpers
+├── synthetic.py              shared synthetic dataset helpers
+├── trainer_fixtures.py       shared trainer test fixtures
+└── t4_qualification.py       historical hardware-acceptance harness
 ```
 
-Run the CPU-only control tests first:
+Files named `test_*.py` remain at the package root because the repository's current CI and local command use `unittest discover`. They should not be deleted or moved merely because they are old; prune them only when the production path they protect is removed or the coverage is demonstrably duplicated.
 
-```bash
-python -m unittest tests.test_t4_qualification -v
-```
+## Ordinary repository tests
 
-## Quick corrected T4 check
-
-```bash
-python -m tests.t4_qualification \
-  --require-t4 \
-  --chunk-sizes 32 \
-  --precisions fp32 fp16 \
-  --warmup-steps 0 \
-  --measure-steps 1 \
-  --initialization-steps 1 \
-  --output /kaggle/working/t4_qualification_v2_quick.json
-```
-
-## Full corrected qualification
-
-```bash
-python -m tests.t4_qualification \
-  --require-t4 \
-  --chunk-sizes 16 32 64 \
-  --precisions fp32 fp16 \
-  --sequence-length 2048 \
-  --batch-size 1 \
-  --warmup-steps 1 \
-  --measure-steps 3 \
-  --include-plan-b \
-  --output /kaggle/working/t4_qualification_v2.json
-```
-
-The process exits with:
-
-- `0` when every requested bounded parity case passes and at least one parity-qualified training candidate completes;
-- `1` when parity fails or no viable candidate completes;
-- `2` for an environment or command error.
-
-## Reading the schema-v2 report
-
-The JSON report contains:
-
-- `parity_contract`: the exact Q/K normalization, state, autocast, and FP16 semantics;
-- `parity`: separate output, final-state, and named-gradient comparisons for every profile;
-- `benchmarks`: full-model losses, gradients, overflow behavior, memory, and throughput;
-- `initialization_probe_chunk_size`: the qualified chunk used for initializer screening, or `null` when the probe was skipped;
-- `recommendation`: the fastest viable GDN-2 candidate, or Plan B only when no GDN-2 candidate qualifies.
-
-A recommendation is evidence for review, not an automatic configuration change. Repeat the full run before changing the frozen default chunk size or initialization.
-
-Run the complete ordinary suite with:
+From the repository root:
 
 ```bash
 python -m unittest discover -v
 ```
+
+For a single module:
+
+```bash
+python -m unittest -v tests.test_vps_sft_qualification
+```
+
+These tests should remain CPU-friendly unless the module explicitly documents a hardware requirement.
+
+## VPS full SFT qualification
+
+Kaggle is no longer required for the 100M / 2B parent-versus-SFT qualification. Put the frozen evaluation data under `tests/test_datasets/` as documented in [`test_datasets/README.md`](test_datasets/README.md), then run:
+
+```bash
+python -m tests.qualification.sft_100m_2b_vps --suite full
+```
+
+The launcher:
+
+1. loads `.env` when present without overwriting already-exported variables;
+2. verifies the complete local SFT bundle;
+3. verifies the frozen local `eval_core_v1` corpus;
+4. resolves the immutable 100M / 2B parent and completed SFT checkpoint from Hugging Face, or accepts explicit local checkpoint directories;
+5. runs the existing provider-neutral `post_training.sft.eval_suite` on CUDA/FP16 by default;
+6. writes `artifacts/100m-2b-sft-full-qualification.json` unless `--output` is supplied.
+
+Use `--help` for repository, checkpoint, device, precision, block-count, and output overrides.
+
+## Local qualification datasets
+
+Large corpora are never committed. The canonical layout is:
+
+```text
+tests/test_datasets/eval_core_v1/
+tests/test_datasets/100m-2b-sft-s0-001/
+```
+
+This replaces the old requirement to upload/attach those datasets to Kaggle simply to run qualification.
+
+## Historical T4 hardware harness
+
+`tests/t4_qualification.py` is a separate hardware-acceptance harness from the early dual-T4 qualification work. It is retained because current regression tests and archived runbooks still reference its parity/recommendation logic. It is **not** part of the normal full SFT qualification command above.
+
+Run its CPU control tests with:
+
+```bash
+python -m unittest -v tests.test_t4_qualification
+```
+
+Only invoke the hardware harness itself when intentionally reproducing that historical CUDA qualification path.
