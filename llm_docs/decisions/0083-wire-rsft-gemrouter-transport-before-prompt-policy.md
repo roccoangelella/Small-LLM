@@ -18,11 +18,7 @@ The reasoning-data path needs a tested request/response boundary before prompt, 
 
 Create the first reasoning-distillation API transport at `post_training/R-SFT/dataset.py`.
 
-The transport uses the user-provided OpenAI-compatible endpoint:
-
-`https://gemr.84-8-255-231.nip.io/v1/chat/completions`
-
-with default model `gemini-3.7-flash` and bearer authentication from `GEMR_API_KEY`. The client must accept ordinary chat `role`/`content` messages and normalize the first assistant response from `choices[0].message.content`.
+The transport uses the user-provided private OpenAI-compatible GemRouter endpoint, with default model `gemini-3.7-flash` and bearer authentication from `GEMR_API_KEY`. The literal endpoint is intentionally not retained in repository memory; ADR 0086 moves endpoint configuration to `LLM_ENDPOINT` in environment configuration. The client must accept ordinary chat `role`/`content` messages and normalize the first assistant response from `choices[0].message.content`.
 
 For this base implementation, send only `model` and `messages`. Do not set temperature, top-p, top-k, token limits, seed, or other generation controls; provider defaults remain in force.
 
@@ -49,5 +45,5 @@ Keep the transport dependency-light and cover the request/response contract with
 ## Consequences
 
 - The initial implementation proves only authenticated request/response transport, not dataset policy or quality.
-- Real credentials remain environment-only and must never enter source control.
+- Real credentials and the private endpoint remain environment-only and must never enter source control.
 - Prompt templates, batching, verification, rejection, and frozen serialization require later explicit work.
