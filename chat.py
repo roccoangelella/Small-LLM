@@ -1,8 +1,10 @@
 # Usage:
-#   python chat.py --model_params 20M --num_tokens 500M  # completed SFT run
-#   python chat.py --model_params 100M --num_tokens 2B   # stable pretrained run
+#   python chat.py --model_params 20M --num_tokens 500M          # completed SFT run
+#   python chat.py --model_params 100M --num_tokens 2B           # stable pretrained run
+#   python chat.py --model_params 100M --num_tokens 2B --sft     # completed 100M/2B SFT run
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
+# --sft: select the completed SFT artifact when both pretrained and SFT runs exist
 
 TEMPERATURE = 0.8
 TOP_K = 50
@@ -16,7 +18,6 @@ import gc
 import json
 import math
 import os
-import pickle
 import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -28,6 +29,11 @@ _CHAT_RUNS = {
     (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
     (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
     (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
+}
+_SFT_CHAT_RUNS = {
+    (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
+    (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
+    (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-001", _SOURCE_SFT),
 }
 _QUANTITY_SUFFIXES = {
     "": 1,
@@ -90,22 +96,35 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="parent pretraining token profile, e.g. 500M or 2B",
     )
+    parser.add_argument(
+        "--sft",
+        action="store_true",
+        help="select the completed SFT artifact for this model/token profile",
+    )
     return parser.parse_args(argv)
 
 
-def _resolve_chat_run(model_params: int, num_tokens: int) -> tuple[str, str]:
+def _resolve_chat_run(
+    model_params: int,
+    num_tokens: int,
+    *,
+    prefer_sft: bool = False,
+) -> tuple[str, str]:
+    key = (model_params, num_tokens)
+    registry = _SFT_CHAT_RUNS if prefer_sft else _CHAT_RUNS
     try:
-        return _CHAT_RUNS[(model_params, num_tokens)]
+        return registry[key]
     except KeyError as error:
         supported = ", ".join(
             f"{params // 1_000_000}M/{tokens // 1_000_000}M"
             if tokens < 1_000_000_000
             else f"{params // 1_000_000}M/{tokens // 1_000_000_000}B"
-            for params, tokens in _CHAT_RUNS
+            for params, tokens in registry
         )
+        stage = "SFT " if prefer_sft else ""
         raise RuntimeError(
-            f"no registered chat profile for model_params={model_params}, num_tokens={num_tokens}; "
-            f"supported: {supported}"
+            f"no registered {stage}chat profile for model_params={model_params}, "
+            f"num_tokens={num_tokens}; supported: {supported}"
         ) from error
 
 
@@ -149,6 +168,7 @@ def _load_completed_checkpoint(
     from dataset.src.joint_checkpoint import verify_local_manifest
     from model.config import ModelConfig
     from model.model import SmallLLM
+    from trainer.state import load_trainer_state_file
 
     verify_local_manifest(checkpoint_root)
     checkpoint = _read_json(checkpoint_root / "checkpoint.json", label="checkpoint.json")
@@ -158,9 +178,8 @@ def _load_completed_checkpoint(
         if not isinstance(sft_identity, Mapping) or sft_identity.get("stage") != "sft_s0":
             raise RuntimeError("the selected Hugging Face checkpoint is not an SFT S0 checkpoint")
 
-    with (checkpoint_root / "trainer_state.pkl").open("rb") as handle:
-        state = pickle.load(handle)
-    if not isinstance(state, dict) or state.get("version") != 1:
+    state = load_trainer_state_file(checkpoint_root / "trainer_state.pkl", map_location="cpu")
+    if state.get("version") != 1:
         raise RuntimeError("trainer_state.pkl has an unsupported structure or version")
 
     trainer_config = state.get("config")
@@ -416,7 +435,11 @@ def _chat(model, config, *, device) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    run_id, source = _resolve_chat_run(args.model_params, args.num_tokens)
+    run_id, source = _resolve_chat_run(
+        args.model_params,
+        args.num_tokens,
+        prefer_sft=args.sft,
+    )
     repo_id = _repo_id(source=source)
 
     try:
