@@ -1,8 +1,8 @@
-"""Thin GemRouter/Gemini transport for the first reasoning-SFT data lane.
+"""Thin GemRouter/Gemini transport for the reasoning-SFT data lane.
 
-This module intentionally owns only API request/response plumbing. Prompt
-construction, skill/difficulty sampling, deterministic verification, rejection,
-deduplication, and final dataset serialization are deliberately deferred.
+This module owns only API request/response plumbing. Prompt construction lives
+in prompts.py; deterministic verification, rejection, deduplication, and final
+dataset serialization remain separate concerns.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 GEMR_API_KEY_ENV = "GEMR_API_KEY"
-DEFAULT_ENDPOINT = "https://gemr.84-8-255-231.nip.io/v1/chat/completions"
+LLM_ENDPOINT_ENV = "LLM_ENDPOINT"
 DEFAULT_MODEL = "gemini-3.7-flash"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
@@ -77,29 +77,59 @@ def _dotenv_value(path: Path, key: str) -> str | None:
     return None
 
 
+def _resolve_setting(
+    *,
+    explicit_value: str | None,
+    env_name: str,
+    setting_name: str,
+    env_path: Path | None,
+) -> str:
+    if explicit_value is not None:
+        if not isinstance(explicit_value, str) or not explicit_value.strip():
+            raise ValueError(f"{setting_name} must be a non-empty string")
+        return explicit_value.strip()
+
+    environment_value = os.environ.get(env_name)
+    if environment_value and environment_value.strip():
+        return environment_value.strip()
+
+    dotenv_path = _repository_root() / ".env" if env_path is None else Path(env_path)
+    dotenv_value = _dotenv_value(dotenv_path, env_name)
+    if dotenv_value:
+        return dotenv_value
+
+    raise RuntimeError(
+        f"{env_name} is required; set it in the environment or repository .env"
+    )
+
+
 def resolve_api_key(
     api_key: str | None = None,
     *,
     env_path: Path | None = None,
 ) -> str:
-    """Resolve the GemRouter key from an explicit value, env, or repo .env."""
+    """Resolve the GemRouter bearer key from an explicit value, env, or repo .env."""
 
-    if api_key is not None:
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("api_key must be a non-empty string")
-        return api_key.strip()
+    return _resolve_setting(
+        explicit_value=api_key,
+        env_name=GEMR_API_KEY_ENV,
+        setting_name="api_key",
+        env_path=env_path,
+    )
 
-    environment_value = os.environ.get(GEMR_API_KEY_ENV)
-    if environment_value and environment_value.strip():
-        return environment_value.strip()
 
-    dotenv_path = _repository_root() / ".env" if env_path is None else Path(env_path)
-    dotenv_value = _dotenv_value(dotenv_path, GEMR_API_KEY_ENV)
-    if dotenv_value:
-        return dotenv_value
+def resolve_endpoint(
+    endpoint: str | None = None,
+    *,
+    env_path: Path | None = None,
+) -> str:
+    """Resolve the private OpenAI-compatible endpoint without hardcoding it."""
 
-    raise RuntimeError(
-        f"{GEMR_API_KEY_ENV} is required; set it in the environment or repository .env"
+    return _resolve_setting(
+        explicit_value=endpoint,
+        env_name=LLM_ENDPOINT_ENV,
+        setting_name="endpoint",
+        env_path=env_path,
     )
 
 
@@ -171,20 +201,18 @@ class GeminiDistillationClient:
         self,
         *,
         api_key: str | None = None,
-        endpoint: str = DEFAULT_ENDPOINT,
+        endpoint: str | None = None,
         model: str = DEFAULT_MODEL,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         env_path: Path | None = None,
     ) -> None:
-        if not isinstance(endpoint, str) or not endpoint.strip():
-            raise ValueError("endpoint must be a non-empty string")
         if not isinstance(model, str) or not model.strip():
             raise ValueError("model must be a non-empty string")
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
         self.api_key = resolve_api_key(api_key, env_path=env_path)
-        self.endpoint = endpoint.strip()
+        self.endpoint = resolve_endpoint(endpoint, env_path=env_path)
         self.model = model.strip()
         self.timeout_seconds = float(timeout_seconds)
 
@@ -232,11 +260,12 @@ class GeminiDistillationClient:
 
 __all__ = [
     "ChatMessage",
-    "DEFAULT_ENDPOINT",
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT_SECONDS",
     "DistillationResponse",
     "GEMR_API_KEY_ENV",
     "GeminiDistillationClient",
+    "LLM_ENDPOINT_ENV",
     "resolve_api_key",
+    "resolve_endpoint",
 ]
