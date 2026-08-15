@@ -1,10 +1,10 @@
 # Usage:
-#   python chat.py --model_params 20M --num_tokens 500M          # completed SFT run
-#   python chat.py --model_params 100M --num_tokens 2B           # stable pretrained run
-#   python chat.py --model_params 100M --num_tokens 2B --sft     # completed 100M/2B SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
+#   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --r-sft       # completed R-SFT run (once registered)
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
-# --sft: select the completed SFT artifact when both pretrained and SFT runs exist
+# Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
 TEMPERATURE = 0.8
 TOP_K = 50
@@ -15,9 +15,11 @@ SEED = 17
 import argparse
 import codecs
 import gc
+import importlib.util
 import json
 import math
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -25,15 +27,25 @@ from typing import Mapping, Sequence
 
 _SOURCE_SFT = "sft"
 _SOURCE_STABLE_MODEL = "stable_model"
-_CHAT_RUNS = {
-    (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
-    (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
+_STAGE_PRETRAINED = "pre-trained"
+_STAGE_SFT = "sft"
+_STAGE_R_SFT = "r-sft"
+_GPT2_SEMANTIC_VOCAB_SIZE = 50_257
+
+_PRETRAINED_CHAT_RUNS = {
     (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
 }
 _SFT_CHAT_RUNS = {
     (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
     (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
     (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-001", _SOURCE_SFT),
+}
+# Register completed/verified R-SFT artifacts here only after their run identity is frozen.
+_R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {}
+_STAGE_REGISTRIES = {
+    _STAGE_PRETRAINED: _PRETRAINED_CHAT_RUNS,
+    _STAGE_SFT: _SFT_CHAT_RUNS,
+    _STAGE_R_SFT: _R_SFT_CHAT_RUNS,
 }
 _QUANTITY_SUFFIXES = {
     "": 1,
@@ -45,7 +57,7 @@ _QUANTITY_SUFFIXES = {
 
 
 class _TokenTextStreamer:
-    """Incrementally decode GPT-2 token bytes without corrupting split UTF-8."""
+    """Incrementally decode token bytes without corrupting split UTF-8."""
 
     def __init__(self, encoding: object) -> None:
         self.encoding = encoding
@@ -57,6 +69,21 @@ class _TokenTextStreamer:
 
     def finish(self) -> str:
         return self.decoder.decode(b"", final=True)
+
+
+def _load_rsft_tokenizer_module():
+    module_name = "small_llm_rsft_tokenizer"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().parent / "post_training" / "R-SFT" / "tokenizer.py"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load R-SFT tokenizer module {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _parse_quantity(value: str) -> int:
@@ -78,7 +105,7 @@ def _parse_quantity(value: str) -> int:
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download a completed Small-LLM chat artifact from Hugging Face and chat locally."
+        description="Download a completed Small-LLM artifact from Hugging Face and chat locally."
     )
     parser.add_argument(
         "--model_params",
@@ -96,10 +123,28 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="parent pretraining token profile, e.g. 500M or 2B",
     )
-    parser.add_argument(
+    stage = parser.add_mutually_exclusive_group(required=True)
+    stage.add_argument(
+        "--pre-trained",
+        "--pretrained",
+        dest="stage",
+        action="store_const",
+        const=_STAGE_PRETRAINED,
+        help="select a registered stable pretrained artifact and the normal GPT-2 tokenizer",
+    )
+    stage.add_argument(
         "--sft",
-        action="store_true",
-        help="select the completed SFT artifact for this model/token profile",
+        dest="stage",
+        action="store_const",
+        const=_STAGE_SFT,
+        help="select a registered completed SFT artifact and the normal GPT-2 tokenizer",
+    )
+    stage.add_argument(
+        "--r-sft",
+        dest="stage",
+        action="store_const",
+        const=_STAGE_R_SFT,
+        help="select a registered completed R-SFT artifact and its reasoning special-token tokenizer",
     )
     return parser.parse_args(argv)
 
@@ -108,10 +153,13 @@ def _resolve_chat_run(
     model_params: int,
     num_tokens: int,
     *,
-    prefer_sft: bool = False,
+    stage: str,
 ) -> tuple[str, str]:
     key = (model_params, num_tokens)
-    registry = _SFT_CHAT_RUNS if prefer_sft else _CHAT_RUNS
+    try:
+        registry = _STAGE_REGISTRIES[stage]
+    except KeyError as error:
+        raise RuntimeError(f"unsupported chat stage: {stage!r}") from error
     try:
         return registry[key]
     except KeyError as error:
@@ -121,9 +169,10 @@ def _resolve_chat_run(
             else f"{params // 1_000_000}M/{tokens // 1_000_000_000}B"
             for params, tokens in registry
         )
-        stage = "SFT " if prefer_sft else ""
+        if not supported:
+            supported = "none registered yet"
         raise RuntimeError(
-            f"no registered {stage}chat profile for model_params={model_params}, "
+            f"no registered {stage} chat profile for model_params={model_params}, "
             f"num_tokens={num_tokens}; supported: {supported}"
         ) from error
 
@@ -135,8 +184,8 @@ def _repo_id(*, source: str) -> str:
         )
         if not repo_id:
             raise RuntimeError(
-                "set SMALL_LLM_SFT_HF_REPO_ID (or SMALL_LLM_HF_REPO_ID when SFT checkpoints "
-                "share the base checkpoint repository)"
+                "set SMALL_LLM_SFT_HF_REPO_ID (or SMALL_LLM_HF_REPO_ID when post-training "
+                "checkpoints share the base checkpoint repository)"
             )
         return repo_id
     if source == _SOURCE_STABLE_MODEL:
@@ -161,22 +210,34 @@ def _load_completed_checkpoint(
     checkpoint_root: Path,
     *,
     device: object,
-    require_sft_identity: bool,
+    stage: str,
 ):
-    """Load one verified completed checkpoint, optionally requiring SFT S0 identity."""
+    """Load one verified completed checkpoint and enforce its tokenizer-stage contract."""
 
     from dataset.src.joint_checkpoint import verify_local_manifest
     from model.config import ModelConfig
     from model.model import SmallLLM
     from trainer.state import load_trainer_state_file
 
+    if stage not in _STAGE_REGISTRIES:
+        raise RuntimeError(f"unsupported chat stage: {stage!r}")
+
     verify_local_manifest(checkpoint_root)
     checkpoint = _read_json(checkpoint_root / "checkpoint.json", label="checkpoint.json")
-    if require_sft_identity:
-        pipeline = checkpoint.get("pipeline_state")
-        sft_identity = pipeline.get("sft_identity") if isinstance(pipeline, Mapping) else None
+    pipeline = checkpoint.get("pipeline_state")
+    pipeline = pipeline if isinstance(pipeline, Mapping) else {}
+
+    reasoning_spec = None
+    if stage == _STAGE_SFT:
+        sft_identity = pipeline.get("sft_identity")
         if not isinstance(sft_identity, Mapping) or sft_identity.get("stage") != "sft_s0":
             raise RuntimeError("the selected Hugging Face checkpoint is not an SFT S0 checkpoint")
+    elif stage == _STAGE_R_SFT:
+        tokenizer_module = _load_rsft_tokenizer_module()
+        try:
+            reasoning_spec = tokenizer_module.spec_from_pipeline_state(pipeline)
+        except ValueError as error:
+            raise RuntimeError(f"invalid R-SFT reasoning tokenizer contract: {error}") from error
 
     state = load_trainer_state_file(checkpoint_root / "trainer_state.pkl", map_location="cpu")
     if state.get("version") != 1:
@@ -210,6 +271,20 @@ def _load_completed_checkpoint(
         config_values["layer_pattern"] = tuple(config_values["layer_pattern"])
     config = ModelConfig(**config_values)  # type: ignore[arg-type]
 
+    if stage == _STAGE_R_SFT:
+        tokenizer_module = _load_rsft_tokenizer_module()
+        expected_vocab = tokenizer_module.R_SFT_SEMANTIC_VOCAB_SIZE
+        if config.semantic_vocab_size != expected_vocab:
+            raise RuntimeError(
+                f"R-SFT checkpoint semantic_vocab_size={config.semantic_vocab_size} does not match "
+                f"reasoning tokenizer vocabulary {expected_vocab}"
+            )
+    elif config.semantic_vocab_size != _GPT2_SEMANTIC_VOCAB_SIZE:
+        raise RuntimeError(
+            f"{stage} chat requires the normal {_GPT2_SEMANTIC_VOCAB_SIZE}-token GPT-2 "
+            f"vocabulary, got semantic_vocab_size={config.semantic_vocab_size}"
+        )
+
     # The optimizer/scaler/RNG payloads are irrelevant for inference. Drop them
     # before allocating the live model so local RAM peaks stay modest.
     for name in (
@@ -230,10 +305,10 @@ def _load_completed_checkpoint(
     gc.collect()
     model.to(device)
     model.eval()
-    return model, config, consumed
+    return model, config, consumed, reasoning_spec
 
 
-def _download_model(*, repo_id: str, run_id: str, source: str, device: object):
+def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, device: object):
     token = os.environ.get("HF_TOKEN")
     temporary = tempfile.TemporaryDirectory(prefix="small-llm-chat-")
     try:
@@ -248,7 +323,6 @@ def _download_model(*, repo_id: str, run_id: str, source: str, device: object):
                 pointer_name="latest",
                 destination=Path(temporary.name),
             )
-            require_sft_identity = True
         elif source == _SOURCE_STABLE_MODEL:
             from trainer.model_artifact import download_verified_model_artifact
 
@@ -259,19 +333,18 @@ def _download_model(*, repo_id: str, run_id: str, source: str, device: object):
                 revision=None,
                 destination=Path(temporary.name),
             )
-            require_sft_identity = False
         else:
             raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 
-        model, config, consumed = _load_completed_checkpoint(
+        model, config, consumed, reasoning_spec = _load_completed_checkpoint(
             checkpoint_root,
             device=device,
-            require_sft_identity=require_sft_identity,
+            stage=stage,
         )
     except Exception:
         temporary.cleanup()
         raise
-    return model, config, consumed, info, temporary
+    return model, config, consumed, reasoning_spec, info, temporary
 
 
 def _fit_generation_prompt(history, *, template, encoding, max_prompt_tokens: int):
@@ -364,13 +437,38 @@ def _stream_sample_token_ids(
     return generated
 
 
-def _chat(model, config, *, device) -> None:
-    import tiktoken
+def _build_chat_encoding(*, stage: str, reasoning_spec=None, base_encoding: object | None = None):
+    """Select normal GPT-2 or the artifact-defined R-SFT tokenizer."""
 
+    if base_encoding is None:
+        try:
+            import tiktoken
+        except ImportError as error:
+            raise RuntimeError(
+                "tiktoken is required; install the project post-training extra"
+            ) from error
+        base_encoding = tiktoken.get_encoding("gpt2")
+
+    if stage == _STAGE_R_SFT:
+        if reasoning_spec is None:
+            raise RuntimeError("R-SFT chat requires a verified reasoning token specification")
+        tokenizer_module = _load_rsft_tokenizer_module()
+        return tokenizer_module.ReasoningGPT2Encoder(
+            reasoning_spec,
+            base_encoding=base_encoding,
+        )
+    if stage not in {_STAGE_PRETRAINED, _STAGE_SFT}:
+        raise RuntimeError(f"unsupported chat stage: {stage!r}")
+    if reasoning_spec is not None:
+        raise RuntimeError(f"{stage} chat must not receive an R-SFT reasoning token specification")
+    return base_encoding
+
+
+def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
     from post_training.sft.schema import ChatMessage
     from post_training.sft.template import GPT2ChatTemplate
 
-    encoding = tiktoken.get_encoding("gpt2")
+    encoding = _build_chat_encoding(stage=stage, reasoning_spec=reasoning_spec)
     template = GPT2ChatTemplate(
         eos_token_id=50_256,
         maximum_context_tokens=config.max_seq_len,
@@ -438,7 +536,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_id, source = _resolve_chat_run(
         args.model_params,
         args.num_tokens,
-        prefer_sft=args.sft,
+        stage=args.stage,
     )
     repo_id = _repo_id(source=source)
 
@@ -452,23 +550,30 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     try:
-        model, config, consumed, info, temporary = _download_model(
+        model, config, consumed, reasoning_spec, info, temporary = _download_model(
             repo_id=repo_id,
             run_id=run_id,
             source=source,
+            stage=args.stage,
             device=device,
         )
     except Exception as error:
         raise RuntimeError(
-            f"could not load a completed chat artifact for {run_id} from {repo_id}: {error}"
+            f"could not load a completed {args.stage} chat artifact for {run_id} from {repo_id}: {error}"
         ) from error
 
     try:
         print(
-            f"Loaded {run_id} checkpoint={info.get('checkpoint_id')} "
+            f"Loaded {run_id} stage={args.stage} checkpoint={info.get('checkpoint_id')} "
             f"loss_targets={consumed:,} device={device}."
         )
-        _chat(model, config, device=device)
+        _chat(
+            model,
+            config,
+            device=device,
+            stage=args.stage,
+            reasoning_spec=reasoning_spec,
+        )
     finally:
         temporary.cleanup()
     return 0
