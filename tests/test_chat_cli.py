@@ -37,8 +37,27 @@ def test_resolve_chat_run_is_fail_closed() -> None:
         "100m-2b-data-001",
         chat._SOURCE_STABLE_MODEL,
     )
+    assert chat._resolve_chat_run(
+        100_000_000,
+        2_000_000_000,
+        prefer_sft=True,
+    ) == (
+        "100m-2b-sft-s0-001",
+        chat._SOURCE_SFT,
+    )
     with pytest.raises(RuntimeError, match="no registered chat profile"):
         chat._resolve_chat_run(100_000_000, 10_000_000_000)
+    with pytest.raises(RuntimeError, match="no registered SFT chat profile"):
+        chat._resolve_chat_run(100_000_000, 10_000_000_000, prefer_sft=True)
+
+
+def test_sft_flag_is_explicit() -> None:
+    default_args = chat._parse_args(["--model_params", "100M", "--num_tokens", "2B"])
+    sft_args = chat._parse_args(
+        ["--model_params", "100M", "--num_tokens", "2B", "--sft"]
+    )
+    assert default_args.sft is False
+    assert sft_args.sft is True
 
 
 class _FakeTemplate:
