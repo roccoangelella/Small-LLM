@@ -5,6 +5,9 @@ from pathlib import Path
 import sys
 import unittest
 
+from post_training.sft.schema import ChatMessage, ConversationRecord
+from post_training.sft.template import GPT2ChatTemplate
+
 
 RSFT_DIR = Path(__file__).resolve().parents[1] / "post_training" / "R-SFT"
 
@@ -86,6 +89,29 @@ class ReasoningTokenizerTests(unittest.TestCase):
         self.assertEqual(token_ids.count(50_259), 1)
         self.assertEqual(encoding.decode(token_ids), text)
         self.assertEqual(encoding.decode_single_token_bytes(50_257), b"<R>")
+
+    def test_existing_sft_template_uses_rsft_encoder_atomically(self) -> None:
+        encoding = tokenizer.ReasoningGPT2Encoder(
+            self.spec,
+            base_encoding=_ByteEncoding(),
+        )
+        record = ConversationRecord(
+            conversation_id="rsft-test",
+            source="r0-reasoning",
+            messages=(
+                ChatMessage(role="user", content="Problem"),
+                ChatMessage(
+                    role="assistant",
+                    content="<R>Reasoning</R><A>Answer",
+                ),
+            ),
+        )
+        tokenized = GPT2ChatTemplate().encode_conversation(record, encoding)
+        self.assertEqual(tokenized.token_ids.count(50_257), 1)
+        self.assertEqual(tokenized.token_ids.count(50_258), 1)
+        self.assertEqual(tokenized.token_ids.count(50_259), 1)
+        self.assertLess(tokenized.token_ids.index(50_257), tokenized.token_ids.index(50_258))
+        self.assertLess(tokenized.token_ids.index(50_258), tokenized.token_ids.index(50_259))
 
     def test_non_rsft_padding_id_is_rejected_on_decode(self) -> None:
         encoding = tokenizer.ReasoningGPT2Encoder(
