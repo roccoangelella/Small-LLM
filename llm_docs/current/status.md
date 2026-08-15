@@ -113,12 +113,14 @@ validation loss 3.722389 before failing as an incomplete checkpoint staging
 directory was created. A clean RTX5090 retry subsequently failed before the
 trainer command. The active segment therefore uses the supported RTX4090 lane,
 resumed exact HF `step-00003000`, and advanced through at least step 3,009 with
-finite loss 3.639936. The same RTX4090 segment has since advanced through at
-least step 4,430 with finite loss 3.139167, about 32,876 target tokens/s, zero
-overflow events, and W&B `running`. Beam showed exactly one running GPU
-container. The active path keeps
-Triton compilation on container-local scratch, makes the VPS preseed guard
-initialize fail-closed, and retries Beam Volume `EAGAIN` during CPU staging.
+finite loss 3.639936. The RTX4090 segment advanced through step 4,535 before
+the container stopped around 14:30 UTC. Checkpoint `step-00004500` was verified
+intact on Hugging Face (validation loss 3.440967, perplexity 31.217146). The run
+was cleanly relaunched on Beam RTX4090 from pinned commit `1f9dff9`, exact-restoring
+`step-00004500` with 71,794 planned steps remaining and resuming W&B online
+telemetry in `running` state. The active path keeps Triton compilation on
+container-local scratch, makes the VPS preseed guard initialize fail-closed, and
+retries Beam Volume `EAGAIN` during CPU staging.
 Canonical launch evidence is
 [`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
 The step-250 checkpoint incident and verified resume are recorded in
@@ -128,6 +130,8 @@ The later worker disappearance and verified step-1,500 recovery are recorded in
 The step-3,250 failure, failed RTX5090 startup retry, and verified RTX4090
 step-3,000 failover are recorded in
 [`../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md).
+The step-4,535 container exit and verified step-4,500 resume are recorded in
+[`../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
