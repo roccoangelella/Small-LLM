@@ -21,6 +21,8 @@ class ConfigAndScheduleTests(unittest.TestCase):
             decay_tokens=20,
             minimum_lr_ratio=0.1,
         )
+        self.assertNotIn("schedule_anchor_tokens", config.as_dict())
+        self.assertNotIn("cooldown_start_tokens", config.as_dict())
         optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=config.learning_rate)
         schedule = TokenLRScheduler(optimizer, config)
         warm = schedule.prepare_step(5)
@@ -47,6 +49,9 @@ class ConfigAndScheduleTests(unittest.TestCase):
             schedule_anchor_tokens=anchor,
             cooldown_start_tokens=cooldown_start,
         )
+        serialized = config.as_dict()
+        self.assertEqual(serialized["schedule_anchor_tokens"], anchor)
+        self.assertEqual(serialized["cooldown_start_tokens"], cooldown_start)
         optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=config.learning_rate)
         schedule = TokenLRScheduler(optimizer, config)
 
