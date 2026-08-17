@@ -11,29 +11,40 @@ The fresh 20M/2B data-scaling run is complete at `step-00061066` / 2,001,000,448
 
 The intrinsic scaling result is clear: 20M still gains from 500M→2B, but unevenly; 100M/2B improves all retained clusters and all context-position buckets relative to 20M/2B. Treat 20M as capacity-constrained by the 2B endpoint unless later evidence overturns that interpretation.
 
-## Active scaling gate — step-15,500 controlled cooldown probe
+## Active scaling trajectory — step-15,500 WSqD-style continuation through 10B
 
-ADR 0091 supersedes the unrecoverable step-12,500 probe in ADR 0090. A read-only source inspection found that the Beam run Volume now retains checkpoints from step 15,500 onward, while the rolling latest-only Hugging Face model-repository tree retains only the current step 23,500. Step 15,500 is therefore the earliest exact recoverable fork and is the authorized diagnostic source.
+ADR 0092 replaces the original long flat-`3e-4` WSD trajectory. The new main continuation must fork the exact uncooled `100m-10b-data-001/checkpoints/step-00015500` state and use `beam/wsqd_10b_from_15500.py` under the separate run ID `100m-10b-wsqd-from-step15500`.
 
-Run the temporary `100m-10b-decay-probe-step15500` branch with `beam/decay_probe_15500.py`. It must preserve the step-15,500 model, optimizer, scaler, RNG, and data cursor and change only the LR scheduler. The controlled cooldown is:
+Preserve the step-15,500 model, optimizer, scaler, RNG, data cursor, exact 10B corpus order, frozen 16-block validation prefix, microbatch 4, FP16, GDN-2, and hybrid Muon+AdamW. Change only the LR scheduler.
+
+The accepted schedule is:
 
 ```text
-source step:               15,500
-source consumed targets:   2,031,616,000
-start LR:                  3e-4
-minimum LR ratio:          0.1
-final LR:                  3e-5
-requested cooldown:        400,000,000 targets
-block-aligned decay span:  400,031,744 targets
-cooldown updates:          3,052
-final step:                18,552
+anchor step:                 15,500
+anchor targets:              2,031,616,000
+anchor LR:                   3e-4
+base:                        3e-4 * sqrt(2,031,616,000 / committed_targets)
+cooldown start step:         73,242
+cooldown start targets:      9,599,975,424
+LR at cooldown start:        ~1.38009e-4
+terminal cooldown:           linear
+cooldown updates:            3,052
+cooldown targets:            400,031,744
+minimum LR ratio:            0.1
+final LR:                    3e-5
+final step:                  76,294
+final targets:               10,000,007,168
 ```
 
-Implement the cooldown with WSD in absolute committed-token space using `warmup_tokens=0`, `stable_tokens=2,031,616,000`, and `decay_tokens=400,031,744`. LR is therefore exactly `3e-4` at the fork and begins cosine decay on the next successful optimizer update. The data remain the 10B corpus from the exact checkpoint cursor; frozen 16-block validation, microbatch 4, FP16, GDN-2, and hybrid Muon+AdamW remain unchanged.
+This is WSqD-style rather than a literal paper reproduction: the inverse-square-root base and terminal linear cooldown are retained, but the project keeps its explicit nonzero minimum-LR floor. The base LR therefore decreases immediately after step 15,500 instead of remaining at `3e-4` until late in training.
 
-The launcher fails closed if `step-00015500` is absent and CPU-stages/verifies the required dataset window before GPU allocation. It uses separate W&B and Hugging Face model-repository checkpoint namespaces so the original `100m-10b-data-001` state is not mutated. `beam/decay_probe_12500.py` is only a compatibility redirect to the new launcher.
+The launcher must fail closed if the exact original step-15,500 source is unavailable, CPU-stage and verify the checkpoint-aligned dataset window before GPU allocation, and keep local/W&B/HF checkpoint namespaces separate from both the original run and the cooldown probe.
 
-After the probe completes, compare its validation trajectory and full `eval_core_v1` result against the completed 100M/2B endpoint. Do not reauthorize the remaining 10B stable-phase compute until that comparison is recorded.
+## Active diagnostic — 400M cooldown fork
+
+ADR 0091's `100m-10b-decay-probe-step15500` branch remains useful evidence and should be allowed to finish at step 18,552. Its early validation loss already fell below the original flat-LR trajectory within roughly 500 cooldown updates, motivating ADR 0092.
+
+Do not promote the cooled step-18,552 endpoint into the long 10B run and do not reheat it. The 10B WSqD-style continuation always starts from the original uncooled step-15,500 checkpoint. After the probe finishes, run the frozen full evaluation and retain the result as schedule evidence.
 
 ## Completed engineering lane — 100M / 10B data path
 
@@ -48,7 +59,7 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - single-GPU Beam topology with microbatch 4 and the frozen 64-sequence optimizer block;
 - model checkpoints in the HF model repository and dataset shards in the HF dataset Storage Bucket.
 
-The original full-run 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized to continue automatically while ADR 0091 is the active scaling gate.
+The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0092.
 
 Operational full-run history: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md).
 
@@ -58,15 +69,15 @@ The first 20M/500M S0 SFT is behaviorally failed despite lower held-out SFT loss
 
 ## Open decisions
 
-- Does the step-15,500 controlled-cooldown probe materially beat the completed 100M/2B endpoint after cooldown?
-- If it does, what extended-training scheduler/horizon should replace the original fixed-fraction 10B WSD plan?
-- If it does not, should the next scaling axis be model capacity, data quality/mixture, architecture, or post-training rather than more fixed-100M tokens?
+- How does the completed step-15,500 400M cooldown probe compare with the completed 100M/2B endpoint under frozen `eval_core_v1`?
+- Does the WSqD-style 10B continuation preserve its early schedule advantage through the long inverse-square-root base phase?
+- Which pre-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?
 - What controlled SFT recipe follows the failed S0 qualification?
 - Which external standardized zero-shot tasks enter the first public scorecard?
 
 ## Frozen boundaries still in force
 
-- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADR 0091 is an explicit diagnostic fork exception.
+- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091 and 0092 are explicit continuation/diagnostic exceptions.
 - Context remains 2,048 for these comparisons.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
 - Kaggle DDP evaluation does not change the single-GPU Beam training topology.
