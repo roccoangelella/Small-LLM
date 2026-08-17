@@ -12,7 +12,7 @@ import math
 from typing import Literal
 
 Precision = Literal["fp32", "fp16", "bf16"]
-ScheduleKind = Literal["constant", "wsd"]
+ScheduleKind = Literal["constant", "wsd", "wsqd"]
 OptimizerKind = Literal["adamw", "hybrid_muon_adamw"]
 
 
@@ -38,6 +38,8 @@ class TrainerConfig:
     stable_tokens: int = 0
     decay_tokens: int = 0
     minimum_lr_ratio: float = 0.1
+    schedule_anchor_tokens: int = 0
+    cooldown_start_tokens: int = 0
     seed: int = 17
     max_overflow_retries: int = 3
     checkpoint_every_steps: int = 0
@@ -50,6 +52,8 @@ class TrainerConfig:
             "warmup_tokens",
             "stable_tokens",
             "decay_tokens",
+            "schedule_anchor_tokens",
+            "cooldown_start_tokens",
             "max_overflow_retries",
             "checkpoint_every_steps",
             "evaluation_every_steps",
@@ -111,14 +115,44 @@ class TrainerConfig:
             raise ValueError("optimizer must be adamw or hybrid_muon_adamw")
         if self.precision not in {"fp32", "fp16", "bf16"}:
             raise ValueError("precision must be fp32, fp16, or bf16")
-        if self.schedule not in {"constant", "wsd"}:
-            raise ValueError("schedule must be constant or wsd")
-        if self.schedule == "constant" and any(
-            (self.warmup_tokens, self.stable_tokens, self.decay_tokens)
-        ):
-            raise ValueError("constant schedule cannot define warmup/stable/decay tokens")
-        if self.schedule == "wsd" and self.decay_tokens <= 0:
-            raise ValueError("wsd schedule requires a positive decay_tokens value")
+        if self.schedule not in {"constant", "wsd", "wsqd"}:
+            raise ValueError("schedule must be constant, wsd, or wsqd")
+
+        if self.schedule == "constant":
+            if any(
+                (
+                    self.warmup_tokens,
+                    self.stable_tokens,
+                    self.decay_tokens,
+                    self.schedule_anchor_tokens,
+                    self.cooldown_start_tokens,
+                )
+            ):
+                raise ValueError("constant schedule cannot define schedule token spans")
+            return
+
+        if self.schedule == "wsd":
+            if self.decay_tokens <= 0:
+                raise ValueError("wsd schedule requires a positive decay_tokens value")
+            if self.schedule_anchor_tokens or self.cooldown_start_tokens:
+                raise ValueError("wsd schedule cannot define WSqD anchor/cooldown tokens")
+            return
+
+        if self.warmup_tokens or self.stable_tokens:
+            raise ValueError("wsqd continuation schedule does not use warmup/stable tokens")
+        if self.schedule_anchor_tokens <= 0:
+            raise ValueError("wsqd schedule requires positive schedule_anchor_tokens")
+        if self.cooldown_start_tokens <= self.schedule_anchor_tokens:
+            raise ValueError("wsqd cooldown_start_tokens must exceed its anchor")
+        if self.decay_tokens <= 0:
+            raise ValueError("wsqd schedule requires a positive decay_tokens value")
+        base_ratio_at_cooldown = math.sqrt(
+            self.schedule_anchor_tokens / self.cooldown_start_tokens
+        )
+        if self.minimum_lr_ratio > base_ratio_at_cooldown:
+            raise ValueError(
+                "wsqd minimum_lr_ratio cannot exceed the inverse-sqrt base ratio at cooldown start"
+            )
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
