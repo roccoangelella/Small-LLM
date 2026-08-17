@@ -12,7 +12,7 @@ import math
 from typing import Literal
 
 Precision = Literal["fp32", "fp16", "bf16"]
-ScheduleKind = Literal["constant", "wsd"]
+ScheduleKind = Literal["constant", "wsd", "wsqd"]
 OptimizerKind = Literal["adamw", "hybrid_muon_adamw"]
 
 
@@ -38,6 +38,10 @@ class TrainerConfig:
     stable_tokens: int = 0
     decay_tokens: int = 0
     minimum_lr_ratio: float = 0.1
+    schedule_anchor_tokens: int = 0
+    cooldown_start_tokens: int = 0
+    settle_tokens: int = 0
+    settle_lr_ratio: float = 1.0
     seed: int = 17
     max_overflow_retries: int = 3
     checkpoint_every_steps: int = 0
@@ -50,6 +54,9 @@ class TrainerConfig:
             "warmup_tokens",
             "stable_tokens",
             "decay_tokens",
+            "schedule_anchor_tokens",
+            "cooldown_start_tokens",
+            "settle_tokens",
             "max_overflow_retries",
             "checkpoint_every_steps",
             "evaluation_every_steps",
@@ -107,21 +114,88 @@ class TrainerConfig:
             or not 0 <= float(self.minimum_lr_ratio) <= 1
         ):
             raise ValueError("minimum_lr_ratio must be finite and in [0, 1]")
+        if (
+            isinstance(self.settle_lr_ratio, bool)
+            or not isinstance(self.settle_lr_ratio, (int, float))
+            or not math.isfinite(float(self.settle_lr_ratio))
+            or not 0 < float(self.settle_lr_ratio) <= 1
+        ):
+            raise ValueError("settle_lr_ratio must be finite and in (0, 1]")
         if self.optimizer not in {"adamw", "hybrid_muon_adamw"}:
             raise ValueError("optimizer must be adamw or hybrid_muon_adamw")
         if self.precision not in {"fp32", "fp16", "bf16"}:
             raise ValueError("precision must be fp32, fp16, or bf16")
-        if self.schedule not in {"constant", "wsd"}:
-            raise ValueError("schedule must be constant or wsd")
-        if self.schedule == "constant" and any(
-            (self.warmup_tokens, self.stable_tokens, self.decay_tokens)
-        ):
-            raise ValueError("constant schedule cannot define warmup/stable/decay tokens")
-        if self.schedule == "wsd" and self.decay_tokens <= 0:
-            raise ValueError("wsd schedule requires a positive decay_tokens value")
+        if self.schedule not in {"constant", "wsd", "wsqd"}:
+            raise ValueError("schedule must be constant, wsd, or wsqd")
+
+        if self.schedule == "constant":
+            if any(
+                (
+                    self.warmup_tokens,
+                    self.stable_tokens,
+                    self.decay_tokens,
+                    self.schedule_anchor_tokens,
+                    self.cooldown_start_tokens,
+                    self.settle_tokens,
+                )
+            ) or self.settle_lr_ratio != 1.0:
+                raise ValueError("constant schedule cannot define schedule token spans")
+            return
+
+        if self.schedule == "wsd":
+            if self.decay_tokens <= 0:
+                raise ValueError("wsd schedule requires a positive decay_tokens value")
+            if (
+                self.schedule_anchor_tokens
+                or self.cooldown_start_tokens
+                or self.settle_tokens
+                or self.settle_lr_ratio != 1.0
+            ):
+                raise ValueError("wsd schedule cannot define WSqD continuation parameters")
+            return
+
+        if self.warmup_tokens or self.stable_tokens:
+            raise ValueError("wsqd continuation schedule does not use warmup/stable tokens")
+        if self.schedule_anchor_tokens <= 0:
+            raise ValueError("wsqd schedule requires positive schedule_anchor_tokens")
+        if self.cooldown_start_tokens <= self.schedule_anchor_tokens:
+            raise ValueError("wsqd cooldown_start_tokens must exceed its anchor")
+        if self.decay_tokens <= 0:
+            raise ValueError("wsqd schedule requires a positive decay_tokens value")
+        if self.settle_tokens:
+            settle_end = self.schedule_anchor_tokens + self.settle_tokens
+            if settle_end >= self.cooldown_start_tokens:
+                raise ValueError("wsqd settling phase must end before terminal cooldown")
+            base_anchor = settle_end
+            base_scale = float(self.settle_lr_ratio)
+        else:
+            if self.settle_lr_ratio != 1.0:
+                raise ValueError("wsqd settle_lr_ratio requires positive settle_tokens")
+            base_anchor = self.schedule_anchor_tokens
+            base_scale = 1.0
+        base_ratio_at_cooldown = base_scale * math.sqrt(
+            base_anchor / self.cooldown_start_tokens
+        )
+        if self.minimum_lr_ratio > base_ratio_at_cooldown:
+            raise ValueError(
+                "wsqd minimum_lr_ratio cannot exceed the base LR ratio at cooldown start"
+            )
 
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        payload = asdict(self)
+        # These fields were introduced after the long-lived WSD checkpoints were
+        # written. Omitting their defaults outside WSqD preserves exact identity
+        # and resume compatibility for historical constant/WSD checkpoints.
+        if self.schedule != "wsqd":
+            payload.pop("schedule_anchor_tokens", None)
+            payload.pop("cooldown_start_tokens", None)
+            payload.pop("settle_tokens", None)
+            payload.pop("settle_lr_ratio", None)
+        elif not self.settle_tokens:
+            # Preserve the serialized identity of the first WSqD implementation.
+            payload.pop("settle_tokens", None)
+            payload.pop("settle_lr_ratio", None)
+        return payload
 
 
 __all__ = ["OptimizerKind", "Precision", "ScheduleKind", "TrainerConfig"]
