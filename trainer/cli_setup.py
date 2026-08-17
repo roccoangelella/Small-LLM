@@ -126,6 +126,8 @@ def setup(args: object):
         stable_tokens=args.stable_tokens,
         decay_tokens=args.decay_tokens,
         minimum_lr_ratio=args.minimum_lr_ratio,
+        schedule_anchor_tokens=args.schedule_anchor_tokens,
+        cooldown_start_tokens=args.cooldown_start_tokens,
         checkpoint_every_steps=args.checkpoint_every_steps,
         evaluation_every_steps=args.evaluation_every_steps,
         seed=args.seed,
