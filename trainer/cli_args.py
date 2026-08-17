@@ -94,6 +94,18 @@ def parser() -> argparse.ArgumentParser:
         default=0,
         help="For wsqd continuation, absolute committed-token point where terminal decay begins.",
     )
+    p.add_argument(
+        "--settle-tokens",
+        type=int,
+        default=0,
+        help="Optional WSqD cosine settling span immediately after the continuation anchor.",
+    )
+    p.add_argument(
+        "--settle-lr-ratio",
+        type=float,
+        default=1.0,
+        help="WSqD settling target as a fraction of --learning-rate; requires --settle-tokens.",
+    )
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
