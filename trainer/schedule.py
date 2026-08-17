@@ -42,18 +42,33 @@ class TokenLRScheduler:
             return minimum if tokens >= decay_end else lr
 
         # Continuation-oriented WSqD variant. The exact fork point is an LR
-        # anchor rather than a new warmup: the base LR falls as 1/sqrt(tokens)
-        # from the anchor until the committed terminal cooldown begins. The
-        # final linear cooldown retains the project's explicit minimum LR floor.
+        # anchor rather than a new warmup. An optional short cosine settling
+        # phase can reduce LR quickly before the long inverse-sqrt base. The
+        # terminal cooldown remains linear to the configured nonzero floor.
         anchor = self.config.schedule_anchor_tokens
         cooldown_start = self.config.cooldown_start_tokens
         decay_end = cooldown_start + self.config.decay_tokens
         if tokens <= anchor:
             return peak
-        base = peak * math.sqrt(anchor / tokens)
+
+        settle_tokens = self.config.settle_tokens
+        if settle_tokens:
+            settle_end = anchor + settle_tokens
+            settle_lr = peak * self.config.settle_lr_ratio
+            if tokens <= settle_end:
+                progress = min(1.0, max(0.0, (tokens - anchor) / settle_tokens))
+                cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+                return settle_lr + (peak - settle_lr) * cosine
+            base_anchor = settle_end
+            base_peak = settle_lr
+        else:
+            base_anchor = anchor
+            base_peak = peak
+
+        base = base_peak * math.sqrt(base_anchor / tokens)
         if tokens <= cooldown_start:
             return base
-        cooldown_base = peak * math.sqrt(anchor / cooldown_start)
+        cooldown_base = base_peak * math.sqrt(base_anchor / cooldown_start)
         minimum = peak * self.config.minimum_lr_ratio
         progress = min(
             1.0,
