@@ -1,0 +1,4 @@
+# Local qualification corpora are intentionally never committed.
+*
+!.gitignore
+!README.md

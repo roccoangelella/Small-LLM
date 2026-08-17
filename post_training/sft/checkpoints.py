@@ -14,6 +14,7 @@ from dataset.src.remote import sha256_path
 from model.config import ModelConfig
 from model.model import SmallLLM
 from trainer.identity import canonical_hash
+from trainer.model_artifact import download_verified_model_artifact
 from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
 from trainer.state import load_trainer_state_file, release_host_memory
 
@@ -86,6 +87,10 @@ def load_verified_native_checkpoint(
     return model, config, identity
 
 
+def _is_missing_live_pointer(error: RuntimeError) -> bool:
+    return str(error).startswith("Hugging Face pointer is missing:")
+
+
 def download_parent_checkpoint(
     *,
     repo_id: str,
@@ -95,7 +100,15 @@ def download_parent_checkpoint(
     revision: str | None = None,
     destination: Path | str | None = None,
 ) -> tuple[Path, dict[str, object]]:
-    """Download one verified published parent checkpoint."""
+    """Download one verified published parent checkpoint.
+
+    Historical SFT parents use the live two-phase ``run/<run_id>/<pointer>.json``
+    namespace. Completed parents may instead be promoted to the stable
+    ``models/<run_id>/artifact.json`` namespace. Preserve the requested live
+    pointer when it exists, but fall back to the verified stable artifact when
+    that pointer is absent. Integrity/transport failures are never silently
+    converted into a fallback.
+    """
 
     if pointer not in {"best", "latest"}:
         raise ValueError("parent pointer must be best or latest")
@@ -104,15 +117,31 @@ def download_parent_checkpoint(
     else:
         destination_path = Path(destination)
         destination_path.mkdir(parents=True, exist_ok=True)
-    root, remote = download_verified_checkpoint(
+    try:
+        root, remote = download_verified_checkpoint(
+            repo_id=repo_id,
+            run_id=run_id,
+            token=token,
+            revision=revision,
+            pointer_name=pointer,
+            destination=destination_path,
+        )
+        return root, dict(remote)
+    except RuntimeError as error:
+        if not _is_missing_live_pointer(error):
+            raise
+
+    root, remote = download_verified_model_artifact(
         repo_id=repo_id,
         run_id=run_id,
         token=token,
         revision=revision,
-        pointer_name=pointer,
         destination=destination_path,
     )
-    return root, dict(remote)
+    info = dict(remote)
+    info["requested_parent_pointer"] = pointer
+    info["parent_resolution"] = "stable_model_artifact_fallback"
+    return root, info
 
 
 def sft_checkpoint_hashes(
