@@ -11,40 +11,48 @@ The fresh 20M/2B data-scaling run is complete at `step-00061066` / 2,001,000,448
 
 The intrinsic scaling result is clear: 20M still gains from 500M→2B, but unevenly; 100M/2B improves all retained clusters and all context-position buckets relative to 20M/2B. Treat 20M as capacity-constrained by the 2B endpoint unless later evidence overturns that interpretation.
 
-## Active scaling trajectory — step-15,500 WSqD-style continuation through 10B
+## Active scaling trajectory — aggressive step-15,500 continuation through 10B
 
-ADR 0092 replaces the original long flat-`3e-4` WSD trajectory. The new main continuation must fork the exact uncooled `100m-10b-data-001/checkpoints/step-00015500` state and use `beam/wsqd_10b_from_15500.py` under the separate run ID `100m-10b-wsqd-from-step15500`.
+ADR 0093 supersedes ADR 0092 and the original long flat-`3e-4` WSD trajectory. The main continuation must fork the exact uncooled `100m-10b-data-001/checkpoints/step-00015500` state and use `beam/aggressive_wsqd_10b_from_15500.py` under the separate run ID `100m-10b-aggressive-wsqd-from-step15500`.
 
 Preserve the step-15,500 model, optimizer, scaler, RNG, data cursor, exact 10B corpus order, frozen 16-block validation prefix, microbatch 4, FP16, GDN-2, and hybrid Muon+AdamW. Change only the LR scheduler.
 
 The accepted schedule is:
 
 ```text
-anchor step:                 15,500
-anchor targets:              2,031,616,000
-anchor LR:                   3e-4
-base:                        3e-4 * sqrt(2,031,616,000 / committed_targets)
+source step:                 15,500
+source targets:              2,031,616,000
+source LR:                   3.0e-4
+
+phase 1:                     cosine settle
+settle span:                 300,023,808 targets / 2,289 updates
+settle end step:             17,789
+settle end targets:          2,331,639,808
+settle end LR:               1.5e-4
+
+phase 2:                     inverse-square-root base
+formula:                     1.5e-4 * sqrt(2,331,639,808 / committed_targets)
 cooldown start step:         73,242
 cooldown start targets:      9,599,975,424
-LR at cooldown start:        ~1.38009e-4
-terminal cooldown:           linear
-cooldown updates:            3,052
-cooldown targets:            400,031,744
-minimum LR ratio:            0.1
-final LR:                    3e-5
+LR at cooldown start:        ~7.39243e-5
+
+phase 3:                     linear terminal cooldown
+cooldown span:               400,031,744 targets / 3,052 updates
+terminal LR ratio:           0.05
+final LR:                    1.5e-5
 final step:                  76,294
 final targets:               10,000,007,168
 ```
 
-This is WSqD-style rather than a literal paper reproduction: the inverse-square-root base and terminal linear cooldown are retained, but the project keeps its explicit nonzero minimum-LR floor. The base LR therefore decreases immediately after step 15,500 instead of remaining at `3e-4` until late in training.
+The first approximately 300M targets deliberately reduce LR faster than pure inverse-square-root decay. Around 500 updates after the fork this schedule is near `2.83e-4`, close to the successful diagnostic cooldown at the same point. It then stops the fast settle at `1.5e-4` and transitions into a long decreasing base so the remaining fresh data are not trained at near-terminal LR.
 
 The launcher must fail closed if the exact original step-15,500 source is unavailable, CPU-stage and verify the checkpoint-aligned dataset window before GPU allocation, and keep local/W&B/HF checkpoint namespaces separate from both the original run and the cooldown probe.
 
 ## Active diagnostic — 400M cooldown fork
 
-ADR 0091's `100m-10b-decay-probe-step15500` branch remains useful evidence and should be allowed to finish at step 18,552. Its early validation loss already fell below the original flat-LR trajectory within roughly 500 cooldown updates, motivating ADR 0092.
+ADR 0091's `100m-10b-decay-probe-step15500` branch remains useful evidence and should be allowed to finish at step 18,552. Its early validation loss already fell below the original flat-LR trajectory within roughly 500 cooldown updates, motivating the more aggressive main schedule.
 
-Do not promote the cooled step-18,552 endpoint into the long 10B run and do not reheat it. The 10B WSqD-style continuation always starts from the original uncooled step-15,500 checkpoint. After the probe finishes, run the frozen full evaluation and retain the result as schedule evidence.
+Do not promote the cooled step-18,552 endpoint into the long 10B run and do not reheat it. The 10B continuation always starts from the original uncooled step-15,500 checkpoint. After the probe finishes, run the frozen full evaluation and retain the result as schedule evidence.
 
 ## Completed engineering lane — 100M / 10B data path
 
@@ -59,7 +67,7 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - single-GPU Beam topology with microbatch 4 and the frozen 64-sequence optimizer block;
 - model checkpoints in the HF model repository and dataset shards in the HF dataset Storage Bucket.
 
-The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0092.
+The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0093.
 
 Operational full-run history: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md).
 
@@ -70,14 +78,14 @@ The first 20M/500M S0 SFT is behaviorally failed despite lower held-out SFT loss
 ## Open decisions
 
 - How does the completed step-15,500 400M cooldown probe compare with the completed 100M/2B endpoint under frozen `eval_core_v1`?
-- Does the WSqD-style 10B continuation preserve its early schedule advantage through the long inverse-square-root base phase?
-- Which pre-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?
+- Does the aggressive 10B continuation retain its advantage after the 300M settling phase and through the long inverse-square-root middle?
+- Which pre-terminal-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?
 - What controlled SFT recipe follows the failed S0 qualification?
 - Which external standardized zero-shot tasks enter the first public scorecard?
 
 ## Frozen boundaries still in force
 
-- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091 and 0092 are explicit continuation/diagnostic exceptions.
+- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091 and 0093 are explicit continuation/diagnostic exceptions.
 - Context remains 2,048 for these comparisons.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
 - Kaggle DDP evaluation does not change the single-GPU Beam training topology.
