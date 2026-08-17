@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from typing import Sequence
 
 KAGGLE_DIR = Path(__file__).resolve().parent
@@ -217,20 +218,27 @@ def _uv_prefix(
     return command
 
 
-def _find_bundle(explicit: str | None) -> Path:
+def _find_bundle(explicit: str | None, profile: SFTProfileSpec | None = None) -> Path:
     if explicit:
         root = Path(explicit).expanduser().resolve()
         if not (root / "bundle-manifest.json").is_file():
             raise RuntimeFailure(f"not an SFT bundle: {root}")
         return root
-    if not INPUT.is_dir():
-        raise RuntimeFailure(
-            "no implicit SFT input root is available; pass --dataset-dir or set SMALL_LLM_INPUT_DIR"
-        )
-    matches = sorted({path.parent.resolve() for path in INPUT.rglob("bundle-manifest.json") if path.is_file()})
-    if len(matches) != 1:
-        raise RuntimeFailure(f"expected exactly one attached SFT bundle; found {len(matches)}: {matches}")
-    return matches[0]
+    if profile is not None:
+        if profile.default_bundle.is_dir() and (profile.default_bundle / "bundle-manifest.json").is_file():
+            return profile.default_bundle
+        candidate = REPO / "tests" / "test_datasets" / profile.dataset_slug
+        if candidate.is_dir() and (candidate / "bundle-manifest.json").is_file():
+            return candidate.resolve()
+    if INPUT.is_dir():
+        matches = sorted({path.parent.resolve() for path in INPUT.rglob("bundle-manifest.json") if path.is_file()})
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise RuntimeFailure(f"expected exactly one attached SFT bundle; found {len(matches)}: {matches}")
+    raise RuntimeFailure(
+        "no implicit SFT input root is available; pass --dataset-dir or set SMALL_LLM_INPUT_DIR"
+    )
 
 
 def _resolve_replay_root(value: str) -> Path:
@@ -463,43 +471,67 @@ def train(
 def evaluate(
     profile: SFTProfileSpec,
     *,
-    dataset_dir: str | None,
-    eval_dir: str | None,
-    parent_repo_id: str | None,
-    checkpoint_repo_id: str | None,
-    output: str | None,
-    suite: str,
+    dataset_dir: str | None = None,
+    eval_dir: str | None = None,
+    parent_repo_id: str | None = None,
+    checkpoint_repo_id: str | None = None,
+    parent_checkpoint_dir: str | None = None,
+    sft_checkpoint_dir: str | None = None,
+    output: str | None = None,
+    suite: str = "full",
+    device: str = "auto",
+    precision: str = "auto",
+    batch_size: int = 1,
+    validation_blocks: int = 32,
+    test_blocks: int = 32,
 ) -> int:
-    worktree = _prepare_worktree(profile)
-    bundle = _find_bundle(dataset_dir)
-    parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_HF_REPO_ID")
+    bundle = _find_bundle(dataset_dir, profile)
+    parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_PARENT_HF_REPO_ID") or os.environ.get("SMALL_LLM_HF_REPO_ID")
     checkpoint_repo = checkpoint_repo_id or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID", parent_repo)
-    if not parent_repo or not checkpoint_repo:
-        raise RuntimeFailure("evaluation requires parent and SFT checkpoint repository IDs")
-    selected_eval_dir = Path(eval_dir).expanduser().resolve() if eval_dir else WORK / "eval_core_v1"
+    if not parent_checkpoint_dir and not parent_repo:
+        raise RuntimeFailure("evaluation requires parent checkpoint repository ID or local directory")
+    if not sft_checkpoint_dir and not checkpoint_repo:
+        raise RuntimeFailure("evaluation requires SFT checkpoint repository ID or local directory")
+    if eval_dir:
+        selected_eval_dir = Path(eval_dir).expanduser().resolve()
+    else:
+        test_eval = REPO / "tests" / "test_datasets" / "eval_core_v1"
+        selected_eval_dir = test_eval.resolve() if (test_eval / "manifest.json").is_file() else (WORK / "eval_core_v1")
+
     selected_output = (
         Path(output).expanduser().resolve()
         if output
         else profile.run_root / f"post-sft-{suite}-qualification.json"
     )
-    return _run(
-        _uv_prefix() + [
-            "python", "-m", "post_training.sft.eval_suite",
-            "--dataset-dir", str(bundle),
-            "--eval-dir", str(selected_eval_dir),
-            "--suite", suite,
-            "--device", "cuda",
-            "--precision", "fp16",
-            "--output", str(selected_output),
+    cmd = [
+        sys.executable, "-m", "post_training.sft.eval_suite",
+        "--dataset-dir", str(bundle),
+        "--eval-dir", str(selected_eval_dir),
+        "--suite", suite,
+        "--device", device,
+        "--precision", precision,
+        "--batch-size", str(batch_size),
+        "--validation-blocks", str(validation_blocks),
+        "--test-blocks", str(test_blocks),
+        "--output", str(selected_output),
+    ]
+    if parent_checkpoint_dir:
+        cmd += ["--parent-checkpoint-dir", str(Path(parent_checkpoint_dir).expanduser().resolve())]
+    else:
+        cmd += [
             "--parent-repo-id", parent_repo,
             "--parent-run-id", profile.parent_run_id,
             "--parent-pointer", "best",
+        ]
+    if sft_checkpoint_dir:
+        cmd += ["--sft-checkpoint-dir", str(Path(sft_checkpoint_dir).expanduser().resolve())]
+    else:
+        cmd += [
             "--sft-repo-id", checkpoint_repo,
             "--sft-run-id", profile.sft_run_id,
             "--sft-pointer", "latest",
-        ],
-        cwd=worktree,
-    )
+        ]
+    return _run(_uv_prefix() + cmd, cwd=REPO)
 
 
 __all__ = [

@@ -32,7 +32,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(profile.microbatch_size, 2)
         self.assertEqual(
             profile.launch_commit,
-            "fac40563b7ccaf8b4880e8c4853bc27f0ff337fa",
+            "ca16b22905ebedc5925ab0abb9c40125254f1e1c",
         )
         self.assertEqual(profile.requested_sft_targets, 80_040_017)
         self.assertEqual(

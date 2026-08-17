@@ -13,6 +13,7 @@ import sft_runtime
 import sft_scaled_runtime
 from sft_100m import PROFILE as PROFILE_100M_2B
 
+REPO = Path(__file__).resolve().parents[1]
 LEGACY_IMPLEMENTATION_COMMIT = "806411edc1a93a32ce913e4e73b15452619f5579"
 _PARENT_RUNS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
@@ -20,6 +21,25 @@ _PARENT_RUNS = {
 }
 
 parse_quantity = pretraining_launch.parse_quantity
+
+
+def _load_dotenv(path: Path = REPO / ".env") -> None:
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not key or not key.replace("_", "").isalnum():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
 
 
 def positive_int(value: str) -> int:
@@ -82,8 +102,17 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--eval-dir")
     evaluate.add_argument("--parent-repo-id")
     evaluate.add_argument("--checkpoint-repo-id")
+    evaluate.add_argument("--parent-checkpoint-dir")
+    evaluate.add_argument("--sft-checkpoint-dir")
     evaluate.add_argument("--output")
     evaluate.add_argument("--suite", choices=("fast", "full"), default="full")
+    evaluate.add_argument("--device", default="auto")
+    evaluate.add_argument(
+        "--precision", choices=("auto", "fp32", "fp16", "bf16"), default="auto"
+    )
+    evaluate.add_argument("--batch-size", type=positive_int, default=1)
+    evaluate.add_argument("--validation-blocks", type=positive_int, default=32)
+    evaluate.add_argument("--test-blocks", type=positive_int, default=32)
 
     subs.add_parser("profiles")
     return parser
@@ -161,24 +190,29 @@ def _discover_eval_dir(explicit: str | None) -> str | None:
     if explicit:
         return str(Path(explicit).expanduser().resolve())
     root = Path(os.environ.get("SMALL_LLM_INPUT_DIR", "/kaggle/input"))
-    if not root.is_dir():
-        return None
-    matches: set[Path] = set()
-    for manifest in root.rglob("manifest.json"):
-        try:
-            payload = json.loads(manifest.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            continue
-        if isinstance(payload, dict) and payload.get("name") == "eval_core_v1":
-            matches.add(manifest.parent.resolve())
-    if len(matches) > 1:
-        raise sft_runtime.RuntimeFailure(
-            f"expected at most one attached eval_core_v1 corpus; found {sorted(matches)}"
-        )
-    return str(next(iter(matches))) if matches else None
+    if root.is_dir():
+        matches: set[Path] = set()
+        for manifest in root.rglob("manifest.json"):
+            try:
+                payload = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if isinstance(payload, dict) and payload.get("name") == "eval_core_v1":
+                matches.add(manifest.parent.resolve())
+        if len(matches) > 1:
+            raise sft_runtime.RuntimeFailure(
+                f"expected at most one attached eval_core_v1 corpus; found {sorted(matches)}"
+            )
+        if matches:
+            return str(next(iter(matches)))
+    candidate = REPO / "tests" / "test_datasets" / "eval_core_v1"
+    if candidate.is_dir() and (candidate / "manifest.json").is_file():
+        return str(candidate.resolve())
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.action == "profiles":
@@ -238,8 +272,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         eval_dir=eval_dir,
         parent_repo_id=args.parent_repo_id,
         checkpoint_repo_id=args.checkpoint_repo_id,
+        parent_checkpoint_dir=args.parent_checkpoint_dir,
+        sft_checkpoint_dir=args.sft_checkpoint_dir,
         output=args.output,
         suite=args.suite,
+        device=args.device,
+        precision=args.precision,
+        batch_size=args.batch_size,
+        validation_blocks=args.validation_blocks,
+        test_blocks=args.test_blocks,
     )
 
 

@@ -399,6 +399,7 @@ def run_prompt_cases(
     top_k: int,
     seed: int,
     samples_per_prompt: int,
+    max_new_tokens: int | None = None,
 ) -> list[dict[str, object]]:
     """Run the existing prompt definitions and print every answer."""
     try:
@@ -418,10 +419,15 @@ def run_prompt_cases(
             raise RuntimeError(f"prompt {case.name!r} exceeds model context")
         for sample_index in range(samples_per_prompt):
             sample_seed = seed + case_index * 1_000 + sample_index
+            budget = (
+                case.max_new_tokens
+                if max_new_tokens is None
+                else min(case.max_new_tokens, max_new_tokens)
+            )
             generated_ids = sample_token_ids(
                 model,
                 prompt_ids,
-                max_new_tokens=case.max_new_tokens,
+                max_new_tokens=budget,
                 max_seq_len=model_max_seq_len,
                 eos_token_id=encoding.eot_token,
                 temperature=temperature,
@@ -487,6 +493,7 @@ def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--samples-per-prompt", type=int, default=1)
+    parser.add_argument("--max-new-tokens", type=int)
     parser.add_argument("--questions-only", action="store_true")
     parser.add_argument("--max-cases", type=int)
     parser.add_argument(
@@ -503,6 +510,8 @@ def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--bootstrap-samples cannot be negative")
     if args.samples_per_prompt <= 0:
         parser.error("--samples-per-prompt must be positive")
+    if args.max_new_tokens is not None and args.max_new_tokens <= 0:
+        parser.error("--max-new-tokens must be positive")
     return args
 
 
@@ -565,6 +574,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "perplexity": metrics["perplexity"],
                     "bits_per_byte": metrics["bits_per_byte"],
                     "top_k_accuracy": metrics["top_k_accuracy"],
+                    "calibration": metrics["calibration"],
                     "cluster_macro_loss": metrics["cluster_macro_loss"],
                     "cluster_mixture_weighted_loss": metrics[
                         "cluster_mixture_weighted_loss"
@@ -594,6 +604,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 top_k=args.top_k,
                 seed=args.seed,
                 samples_per_prompt=args.samples_per_prompt,
+                max_new_tokens=args.max_new_tokens,
             )
         )
         result: dict[str, object] = {

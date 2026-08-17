@@ -27,7 +27,16 @@ def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive")
-    return parsed
+def _resolve_device(device: str) -> torch.device:
+    if device == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(device)
+
+
+def _resolve_precision(precision: str, device: torch.device) -> str:
+    if precision == "auto":
+        return "fp16" if device.type == "cuda" else "fp32"
+    return precision
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,8 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--eval-dir", type=Path, required=True)
     parser.add_argument("--suite", choices=("fast", "full"), default="full")
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--precision", choices=("fp32", "fp16", "bf16"), default="fp16")
+    parser.add_argument("--device", default="auto")
+    parser.add_argument("--precision", choices=("auto", "fp32", "fp16", "bf16"), default="auto")
     parser.add_argument("--batch-size", type=_positive_int, default=1)
     parser.add_argument("--validation-blocks", type=_positive_int, default=32)
     parser.add_argument("--test-blocks", type=_positive_int, default=32)
@@ -94,6 +103,7 @@ def _masked_split(
     bundle_root: Path,
     split: str,
     maximum_blocks: int,
+    microbatch_size: int = 4,
 ) -> dict[str, object]:
     if split not in {"validation", "test"}:
         raise ValueError("masked SFT evaluation split must be validation or test")
@@ -109,11 +119,13 @@ def _masked_split(
         engine,
         reader.iter_from_start(),
         maximum_batches=maximum_blocks,
-        microbatch_size=1,
+        microbatch_size=microbatch_size,
     )
 
 
-def _base_prompts(model, *, max_seq_len: int, precision: str, suite: str) -> list[dict[str, object]]:
+def _base_prompts_greedy_32(
+    model, *, max_seq_len: int, precision: str, suite: str
+) -> list[dict[str, object]]:
     return run_prompt_cases(
         model,
         model_max_seq_len=max_seq_len,
@@ -125,6 +137,33 @@ def _base_prompts(model, *, max_seq_len: int, precision: str, suite: str) -> lis
         top_k=0,
         seed=17,
         samples_per_prompt=1,
+        max_new_tokens=32,
+    )
+
+
+def _base_prompts_sampled(
+    model, *, max_seq_len: int, precision: str, suite: str
+) -> list[dict[str, object]]:
+    return run_prompt_cases(
+        model,
+        model_max_seq_len=max_seq_len,
+        precision=precision,
+        questions_only=False,
+        max_cases=8 if suite == "fast" else None,
+        temperature=1.0,
+        top_p=0.9,
+        top_k=20,
+        seed=17,
+        samples_per_prompt=1,
+        max_new_tokens=None,
+    )
+
+
+def _base_prompts(
+    model, *, max_seq_len: int, precision: str, suite: str
+) -> list[dict[str, object]]:
+    return _base_prompts_greedy_32(
+        model, max_seq_len=max_seq_len, precision=precision, suite=suite
     )
 
 
@@ -156,6 +195,7 @@ def _score_one(
         bundle_root=bundle_root,
         split="validation",
         maximum_blocks=validation_blocks,
+        microbatch_size=max(1, batch_size),
     )
     test = (
         _masked_split(
@@ -165,6 +205,7 @@ def _score_one(
             bundle_root=bundle_root,
             split="test",
             maximum_blocks=test_blocks,
+            microbatch_size=max(1, batch_size),
         )
         if suite == "full"
         else None
@@ -175,7 +216,13 @@ def _score_one(
         max_seq_len=model_config.max_seq_len,
         max_cases=16 if suite == "fast" else None,
     )
-    qualitative = _base_prompts(
+    prompts_greedy_32 = _base_prompts_greedy_32(
+        model,
+        max_seq_len=model_config.max_seq_len,
+        precision=precision,
+        suite=suite,
+    )
+    prompts_sampled = _base_prompts_sampled(
         model,
         max_seq_len=model_config.max_seq_len,
         precision=precision,
@@ -186,7 +233,9 @@ def _score_one(
         "sft_validation": validation,
         "sft_test": test,
         "instruction_behavior": behavior,
-        "base_qualitative_prompts": qualitative,
+        "base_qualitative_prompts": prompts_greedy_32,
+        "qualitative_greedy_32": prompts_greedy_32,
+        "qualitative_sampled": prompts_sampled,
     }
 
 
@@ -352,8 +401,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     bundle_verification = verify_bundle(bundle_root)
     eval_dir = ensure_eval_core(args.eval_dir)
     token = os.environ.get(args.token_env)
-    device = torch.device(args.device)
-    if args.precision == "fp16" and device.type != "cuda":
+    device = _resolve_device(args.device)
+    precision = _resolve_precision(args.precision, device)
+    if precision == "fp16" and device.type != "cuda":
         raise RuntimeError("fp16 comprehensive evaluation requires CUDA")
 
     parent_root, parent_transport = _resolve(
@@ -385,7 +435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         bundle_root=bundle_root,
         eval_dir=eval_dir,
         suite=args.suite,
-        precision=args.precision,
+        precision=precision,
         batch_size=args.batch_size,
         validation_blocks=args.validation_blocks,
         test_blocks=args.test_blocks,
@@ -405,7 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         bundle_root=bundle_root,
         eval_dir=eval_dir,
         suite=args.suite,
-        precision=args.precision,
+        precision=precision,
         batch_size=args.batch_size,
         validation_blocks=args.validation_blocks,
         test_blocks=args.test_blocks,
