@@ -77,11 +77,23 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--muon-update-rms", type=float, default=0.18)
     p.add_argument("--muon-weight-decay", type=float, default=0.1)
     p.add_argument("--max-grad-norm", type=float, default=1.0)
-    p.add_argument("--schedule", choices=("constant", "wsd"), default="constant")
+    p.add_argument("--schedule", choices=("constant", "wsd", "wsqd"), default="constant")
     p.add_argument("--warmup-tokens", type=int, default=0)
     p.add_argument("--stable-tokens", type=int, default=0)
     p.add_argument("--decay-tokens", type=int, default=0)
     p.add_argument("--minimum-lr-ratio", type=float, default=0.1)
+    p.add_argument(
+        "--schedule-anchor-tokens",
+        type=int,
+        default=0,
+        help="For wsqd continuation, committed-token point whose LR equals --learning-rate.",
+    )
+    p.add_argument(
+        "--cooldown-start-tokens",
+        type=int,
+        default=0,
+        help="For wsqd continuation, absolute committed-token point where terminal decay begins.",
+    )
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
