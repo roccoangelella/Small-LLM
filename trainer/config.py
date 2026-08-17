@@ -155,7 +155,14 @@ class TrainerConfig:
             )
 
     def as_dict(self) -> dict[str, object]:
-        return asdict(self)
+        payload = asdict(self)
+        # These fields were introduced after the long-lived WSD checkpoints were
+        # written. Omitting their zero defaults from non-WSqD configs preserves
+        # exact checkpoint identity/resume compatibility for historical runs.
+        if self.schedule != "wsqd":
+            payload.pop("schedule_anchor_tokens", None)
+            payload.pop("cooldown_start_tokens", None)
+        return payload
 
 
 __all__ = ["OptimizerKind", "Precision", "ScheduleKind", "TrainerConfig"]
