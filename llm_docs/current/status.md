@@ -144,10 +144,14 @@ published. That old-account estimate is no longer used. At
 Beam account, recorded `$0.00` since reset, and relaunched a fresh bounded
 segment from `step-00015500` under the `$30` notional cap. The account-cost
 basis remains `$0.00`; the notional RTX4090/CPU/RAM estimate remains the hard
-stop. The hourly job continues to stop an active task at the cap and relaunch
-from the latest HF checkpoint after a crash while budget remains.
+stop. On 2026-08-17, the user stopped the run and requested that supervision
+also stop. A stale live-VPS cron entry nevertheless launched one more bounded
+3,769-step resume after a task error while budget remained; that task was
+stopped and the cron entry was removed. No Beam task or local launcher is now
+active.
 See [`../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md`](../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md)
-and [`../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md`](../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md).
+[`../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md`](../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md),
+and [`../evidence/scaling/100m_10b_beam_monitor_shutdown_2026-08-17.md`](../evidence/scaling/100m_10b_beam_monitor_shutdown_2026-08-17.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
