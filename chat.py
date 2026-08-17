@@ -6,10 +6,10 @@
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 # --sft: select the completed SFT artifact when both pretrained and SFT runs exist
 
-TEMPERATURE = 0.8
-TOP_K = 50
-TOP_P = 0.95
-MAX_NEW_TOKENS = 256
+TEMPERATURE = 1.0
+TOP_K = 20
+TOP_P = 0.90
+MAX_NEW_TOKENS = 64
 SEED = 17
 
 import argparse

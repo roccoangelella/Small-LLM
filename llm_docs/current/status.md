@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-14
+last_reviewed: 2026-08-16
 ---
 
 # Current project status
@@ -132,6 +132,22 @@ step-3,000 failover are recorded in
 [`../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md).
 The step-4,535 container exit and verified step-4,500 resume are recorded in
 [`../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md).
+After a Beam account/workspace change, the exact HF `step-00015500` resume was
+restarted on 2026-08-16 in the new workspace. Fresh Beam volumes required a
+one-time runtime-contract seed before the RTX4090 task could start; the seed
+did not change scientific identity or checkpoint bytes. The resumed task ran
+from source `1f9dff920ecc45ce2fdb43fd875514a18391273d` with microbatch 4, then
+an earlier pre-reset billing baseline caused the deterministic notional cap to
+stop the first attempt at an estimated `$51.28` before any new checkpoint was
+published. That old-account estimate is no longer used. At
+`2026-08-16T15:13:23Z`, the supervisor reset its billing baseline for the new
+Beam account, recorded `$0.00` since reset, and relaunched a fresh bounded
+segment from `step-00015500` under the `$30` notional cap. The account-cost
+basis remains `$0.00`; the notional RTX4090/CPU/RAM estimate remains the hard
+stop. The hourly job continues to stop an active task at the cap and relaunch
+from the latest HF checkpoint after a crash while budget remains.
+See [`../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md`](../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md)
+and [`../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md`](../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
