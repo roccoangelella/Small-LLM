@@ -32,17 +32,18 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
             },
         )
 
-    def test_canonical_run_ids_are_arm_specific(self) -> None:
+    def test_historical_pilot_run_ids_are_arm_specific(self) -> None:
         self.assertEqual(
-            rsft_runtime.default_run_id("atomic"),
+            rsft_runtime.default_pilot_run_id("atomic"),
             "100m-2b-rsft-r0-atomic-pilot-001",
         )
         self.assertEqual(
-            rsft_runtime.default_run_id("textual"),
+            rsft_runtime.default_pilot_run_id("textual"),
             "100m-2b-rsft-r0-textual-pilot-001",
         )
+        self.assertEqual(rsft_runtime.PRODUCTION_RUN_ID, "100m-2b-rsft-r0-001")
 
-    def test_auto_preparation_plan_uses_committed_corpus_and_small_pilot_blocks(self) -> None:
+    def test_auto_preparation_plan_is_pilot_only_and_uses_small_blocks(self) -> None:
         plan = rsft_prepare.preparation_plan(worktree=REPO)
         self.assertEqual(
             Path(str(plan["reasoning_jsonl"])),
@@ -59,10 +60,10 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
             "roccoangelella/small-llm-100m-2b-sft-s0-001",
         )
 
-    def test_minimal_atomic_cli_dry_run_requires_no_manual_dataset_arguments(self) -> None:
+    def test_minimal_atomic_ablation_dry_run_requires_no_manual_dataset_arguments(self) -> None:
         result = rsft_cli.main(
             [
-                "train",
+                "ablation",
                 "--model",
                 "100M",
                 "--tokens",
