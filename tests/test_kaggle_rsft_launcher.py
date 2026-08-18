@@ -123,6 +123,15 @@ def test_profile_is_fixed_to_100m_2b() -> None:
         )
 
 
+def test_repeat_experiment_gets_epoch_specific_run_id() -> None:
+    assert rsft_runtime.default_experiment_run_id("atomic", num_epochs=1) == (
+        "100m-2b-rsft-r0-atomic-pilot-001"
+    )
+    assert rsft_runtime.default_experiment_run_id("atomic", num_epochs=10) == (
+        "100m-2b-rsft-r0-atomic-repeat-e10-001"
+    )
+
+
 def test_bundle_budget_is_exact_not_parent_fraction(tmp_path: Path) -> None:
     adapter = _load_dual_adapter()
     bundle = _bundle(tmp_path, targets=77_777)
@@ -151,9 +160,18 @@ def test_pipeline_identity_keeps_historical_ablation_distinct(tmp_path: Path) ->
     }
     atomic = adapter.rsft_pipeline_identity(delimiter_format="atomic", **common)
     textual = adapter.rsft_pipeline_identity(delimiter_format="textual", **common)
+    repeated = adapter.rsft_pipeline_identity(
+        delimiter_format="atomic",
+        num_epochs=10,
+        **common,
+    )
     assert atomic["stage"] == "r_sft_r0"
     assert atomic["template_identity"] != textual["template_identity"]
     assert atomic["reasoning_tokenizer"] == textual["reasoning_tokenizer"]
+    assert "num_epochs" not in atomic
+    assert repeated["num_epochs"] == 10
+    assert repeated["repeat_identity"] == "exact-block-replay-v1"
+    assert repeated != atomic
 
 
 def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
@@ -182,10 +200,12 @@ def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     assert '"contract": "atomic-production-v1"' in output
     assert '"delimiter_format": "atomic"' in output
     assert '"run_id": "100m-2b-rsft-r0-001"' in output
-    assert '"bundle_target_tokens": 63000' in output
+    assert '"bundle_target_tokens_one_pass": 63000' in output
+    assert '"num_epochs": 1' in output
     assert "torch.distributed.run" in output
     assert "--nproc-per-node=2" in output
     assert "dual_t4_rsft.py" in output
+    assert "--rsft-num-epochs" in output
 
 
 def test_production_rejects_textual_bundle(tmp_path: Path) -> None:
@@ -230,6 +250,29 @@ def test_production_rejects_pilot_optimizer_geometry(tmp_path: Path) -> None:
         )
 
 
+def test_production_rejects_repeat_epochs(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path)
+    with pytest.raises(SystemExit):
+        rsft_cli.main(
+            [
+                "train",
+                "--model",
+                "100M",
+                "--tokens",
+                "2B",
+                "--dataset-dir",
+                str(bundle),
+                "--num-epochs",
+                "10",
+                "--parent-repo-id",
+                "owner/parent",
+                "--checkpoint-repo-id",
+                "owner/checkpoints",
+                "--dry-run",
+            ]
+        )
+
+
 def test_historical_ablation_still_has_explicit_textual_arm(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -254,3 +297,36 @@ def test_historical_ablation_still_has_explicit_textual_arm(
     assert '"contract": "pilot-ablation-v1"' in output
     assert '"delimiter_format": "textual"' in output
     assert '"run_id": "100m-2b-rsft-r0-textual-pilot-001"' in output
+    assert '"num_epochs": 1' in output
+
+
+def test_atomic_repeat_dry_run_is_10_exact_passes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = rsft_cli.main(
+        [
+            "ablation",
+            "--model",
+            "100M",
+            "--tokens",
+            "2B",
+            "--delimiter-format",
+            "atomic",
+            "--num-epochs",
+            "10",
+            "--parent-repo-id",
+            "owner/parent",
+            "--checkpoint-repo-id",
+            "owner/checkpoints",
+            "--dry-run",
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"contract": "pilot-repeat-v1"' in output
+    assert '"delimiter_format": "atomic"' in output
+    assert '"run_id": "100m-2b-rsft-r0-atomic-repeat-e10-001"' in output
+    assert '"num_epochs": 10' in output
+    assert '"budget_mode": "bundle-exact-repeat"' in output
+    assert "--rsft-num-epochs" in output
+    assert "100m-2b-rsft-r0-atomic-repeat-e10-001" in output
