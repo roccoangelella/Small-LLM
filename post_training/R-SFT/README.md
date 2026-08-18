@@ -1,18 +1,12 @@
 # R-SFT R0 data lane
 
-This folder owns the first reasoning-SFT dataset path: Gemini generation, strict JSON parsing, the R0 skill/difficulty matrix, matched delimiter serialization, S0 instruction retention, the extended tokenizer, and immutable bundles consumed by the Kaggle trainer.
+This folder owns reasoning-SFT dataset production, the extended GPT-2 tokenizer,
+S0 instruction retention, immutable bundles, and the historical delimiter
+ablation.
 
-## Current frozen pilot
+## Production token contract
 
-The committed corpus is:
-
-```text
-artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl
-```
-
-It contains 630 Gemini-generated examples: 7 skills x 3 difficulty bands x 30 examples. The generation manifest beside it records the exact source identity. The 30 examples in each cell are deterministically partitioned as 28 train, 1 validation, and 1 test, so both held-out splits cover all 21 cells.
-
-The reasoning control-token spellings are now frozen in `reasoning-tokens.json`:
+Production R-SFT is atomic-only:
 
 ```text
 50257  <think>
@@ -20,64 +14,62 @@ The reasoning control-token spellings are now frozen in `reasoning-tokens.json`:
 50259  <answer>
 ```
 
-The atomic arm emits those three IDs exactly once per reasoning example. The matched textual arm uses ordinary GPT-2-tokenized `Reasoning:` / `Answer:` boundaries and does not emit IDs 50257-50259, while retaining the same promoted 50,260-vocabulary model geometry.
+These are control symbols, not ordinary natural-language delimiters. The
+historical textual `Reasoning:` / `Answer:` arm remains reproducible only as
+ablation evidence and is not a production serialization option.
 
-## Kaggle: canonical pilot training
+## Build a production atomic bundle
 
-For the first 100M/2B pilot, do not manually tokenize `reasoning.jsonl` and do not attach a separately built R-SFT bundle. The Kaggle launcher builds the matched native bundles automatically from the committed corpus.
+Once a production reasoning JSONL is frozen, build exactly one native atomic
+bundle with:
 
-Dry-run:
+```bash
+python post_training/R-SFT/build_atomic.py \
+  --reasoning-jsonl /path/to/reasoning.jsonl \
+  --s0-bundle /path/to/100m-2b-sft-s0-bundle \
+  --output-dir /path/to/rsft-r0-production \
+  --heldout-per-cell <N>
+```
+
+The builder:
+
+- infers and verifies a uniform record count across all 7 x 3 R0 cells;
+- uses the frozen `<think>`, `</think>`, `<answer>` special-token mapping only;
+- deterministically partitions every cell into train/validation/test;
+- computes the 10% S0 retention target from the atomic reasoning-token count;
+- samples exact tokenized S0 instruction records while preserving the S0
+  instruction-source stratification and excluding ClimbMix replay;
+- defaults to 32,768 loss-bearing target tokens per optimizer block;
+- writes and verifies a native bundle marked `rsft.contract=atomic-production-v1`.
+
+`--heldout-per-cell` is deliberately required because production held-out scale
+has not yet been frozen. The builder refuses to infer that choice from the small
+630-example pilot.
+
+## Kaggle production training
+
+Production training uses:
 
 ```bash
 python kaggle/launch_r_sft.py train \
   --model 100M \
   --tokens 2B \
-  --delimiter-format atomic \
-  --dry-run
+  --dataset-dir /kaggle/input/rsft-r0-production
 ```
 
-Atomic arm:
-
-```bash
-python kaggle/launch_r_sft.py train \
-  --model 100M \
-  --tokens 2B \
-  --delimiter-format atomic
-```
-
-Textual comparison arm:
-
-```bash
-python kaggle/launch_r_sft.py train \
-  --model 100M \
-  --tokens 2B \
-  --delimiter-format textual
-```
-
-The launcher automatically:
-
-1. reads the committed 630-example corpus and frozen token spec from the pinned git worktree;
-2. resolves the completed 100M/2B S0 dataset bundle for the 10% retention lane, preferring an already attached Kaggle input and otherwise downloading private dataset `roccoangelella/small-llm-100m-2b-sft-s0-001`;
-3. samples only S0 instruction records, preserving the S0 instruction-source stratification and excluding ClimbMix replay;
-4. materializes and verifies both matched native bundles under `/kaggle/working`;
-5. selects the requested arm and launches the qualified 2xTesla-T4 DDP trainer;
-6. promotes the S0 model vocabulary from 50,257 to 50,260 semantic rows, initializing only the three new control rows;
-7. trains exactly one pass over the frozen arm bundle with checkpointing, W&B and verified remote publication inherited from S0.
-
-For this small delimiter ablation only, automatic Kaggle preparation uses 2,048 loss-bearing target tokens per optimizer block. The generic R-SFT bundle builder retains its 32,768-target default for larger runs. Both ablation arms use the same 2,048-target geometry.
-
-Canonical arm run IDs are generated automatically:
+The default production run ID is:
 
 ```text
-atomic   100m-2b-rsft-r0-atomic-pilot-001
-textual  100m-2b-rsft-r0-textual-pilot-001
+100m-2b-rsft-r0-001
 ```
 
-Manual `--dataset-dir`, `--s0-bundle`, `--token-spec`, and `--run-id` remain available only as explicit overrides.
+The launcher fails closed unless the bundle is `atomic-production-v1`, uses the
+exact frozen token metadata, and uses the 32,768-target production optimizer
+geometry. The run remains one exact pass over the frozen bundle and reuses the
+qualified 2xTesla-T4 DDP SFT engine, S0 checkpoint loading, row promotion,
+checkpointing, W&B, exact resume and remote publication.
 
-### Kaggle credentials
-
-Live training uses the same post-training credentials as S0:
+Required live-training credentials are the same as S0:
 
 ```text
 GITHUB_TOKEN
@@ -86,27 +78,40 @@ HF_TOKEN
 SMALL_LLM_SFT_HF_REPO_ID
 ```
 
-`SMALL_LLM_SFT_HF_REPO_ID` must contain the completed `100m-2b-sft-s0-001` parent checkpoint. Set `SMALL_LLM_RSFT_HF_REPO_ID` if R-SFT checkpoints should go to a separate repository; otherwise the existing post-training repository fallback is used. `WANDB_ENTITY` is optional.
+Set `SMALL_LLM_RSFT_HF_REPO_ID` to publish R-SFT checkpoints to a separate
+repository; otherwise the existing post-training repository fallback applies.
 
-If the private S0 dataset is not attached to the notebook, automatic Kaggle download may require the notebook's Kaggle credentials. `SMALL_LLM_S0_KAGGLE_DATASET_HANDLE` can override the canonical private dataset handle.
+## Historical 630-example delimiter ablation
 
-## Generic data production
+The frozen pilot corpus is:
 
-The lower-level builder remains available outside the Kaggle pilot launcher:
-
-```bash
-python post_training/R-SFT/produce.py build \
-  --reasoning-jsonl artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl \
-  --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --token-spec post_training/R-SFT/reasoning-tokens.json \
-  --output-dir artifacts/rsft-r0-pilot-630/bundles
+```text
+artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl
 ```
 
-It produces a shared pilot manifest plus `atomic/` and `textual/` native SFT bundles, each with `bundle-manifest.json`, `reasoning-tokens.json`, and train/validation/test shards. Verify them with:
+It contains 630 Gemini examples (7 skills x 3 difficulty bands x 30 examples).
+The pilot used 28 train + 1 validation + 1 test example per cell and a special
+2,048-target optimizer geometry so that the tiny comparison had enough updates.
+
+Reproduce either historical arm with:
 
 ```bash
-python post_training/R-SFT/produce.py verify \
-  --dataset-dir artifacts/rsft-r0-pilot-630/bundles
+python kaggle/launch_r_sft.py ablation \
+  --model 100M --tokens 2B --delimiter-format atomic
+
+python kaggle/launch_r_sft.py ablation \
+  --model 100M --tokens 2B --delimiter-format textual
 ```
 
-The retention sample is identical across the two arms. Since textual delimiters occupy a different number of target tokens from the three atomic delimiters, the builder uses one symmetric retention target derived from the mean reasoning-token totals and records each arm's realized retention share in `pilot-manifest.json`.
+Canonical historical run IDs are:
+
+```text
+atomic   100m-2b-rsft-r0-atomic-pilot-001
+textual  100m-2b-rsft-r0-textual-pilot-001
+```
+
+The two completed pilot summaries used the same S0 parent and shared source
+manifest. Textual reported validation loss 2.0444399 on 1,779 targets; atomic
+reported 2.4455797 on 1,653 targets. Production nevertheless selects atomic
+special tokens by ADR 0099 because reasoning/answer boundaries are a semantic
+machine protocol and must not be conflated with ordinary language tokens.
