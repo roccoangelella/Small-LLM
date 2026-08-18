@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -31,6 +32,66 @@ import deep_decay_10b_from_15500_impl as _impl
 for _name in dir(_impl):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_impl, _name))
+
+HF_HUB_VERSION = "1.5.0"
+HF_BUCKET_METHODS = (
+    "create_bucket",
+    "list_bucket_tree",
+    "download_bucket_files",
+    "batch_bucket_files",
+)
+
+
+def _hf_bucket_api_available() -> bool:
+    try:
+        from huggingface_hub import HfApi
+    except ImportError:
+        return False
+    return all(callable(getattr(HfApi, name, None)) for name in HF_BUCKET_METHODS)
+
+
+def _ensure_host_hf_bucket_runtime(argv: Sequence[str]) -> None:
+    """Re-exec with a private HF 1.5 runtime when Kaggle ships an older client."""
+
+    if _hf_bucket_api_available():
+        return
+
+    runtime = _impl.WORK_ROOT / ".runtime" / f"huggingface-hub-{HF_HUB_VERSION}"
+    marker = runtime / ".complete"
+    if not marker.is_file():
+        staging = runtime.with_name(runtime.name + ".tmp")
+        shutil.rmtree(staging, ignore_errors=True)
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "--disable-pip-version-check",
+                "--target",
+                str(staging),
+                f"huggingface_hub=={HF_HUB_VERSION}",
+            ]
+        )
+        (staging / ".complete").write_text(HF_HUB_VERSION + "\n", encoding="utf-8")
+        shutil.rmtree(runtime, ignore_errors=True)
+        os.replace(staging, runtime)
+
+    env = dict(os.environ)
+    previous = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(runtime) + (os.pathsep + previous if previous else "")
+    print(
+        f"[kaggle-deep-decay] Kaggle host lacks HF Storage Buckets API; "
+        f"restarting with private huggingface_hub=={HF_HUB_VERSION}",
+        flush=True,
+    )
+    os.execve(
+        sys.executable,
+        [sys.executable, str(Path(__file__).resolve()), *list(argv)],
+        env,
+    )
 
 
 def _scientific_checkpoint_drift(config: Mapping[str, object]) -> dict[str, tuple[object, object]]:
@@ -265,6 +326,7 @@ def _migrate_existing_deep_decay_checkpoint(runtime_base: Any) -> bool:
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--dry-run" not in args:
+        _ensure_host_hf_bucket_runtime(args)
         runtime_base = _impl._beam_runtime()
         _migrate_existing_deep_decay_checkpoint(runtime_base)
     return int(_impl.main(args))
