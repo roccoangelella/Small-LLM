@@ -83,7 +83,7 @@ def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
     assert "32 sequences/rank" in source
 
 
-def test_block64_long_cadence_waits_use_cpu_gloo_group() -> None:
+def test_block64_startup_is_monitored_then_long_cadence_uses_gloo() -> None:
     module = _load("small_llm_kaggle_block64_control_test", KAGGLE / "dual_t4_train_block64.py")
     distributed = mock.Mock()
     group = object()
@@ -95,8 +95,19 @@ def test_block64_long_cadence_waits_use_cpu_gloo_group() -> None:
     assert kwargs["timeout"].total_seconds() == module.CONTROL_GROUP_TIMEOUT_SECONDS
 
     original_barrier = mock.Mock()
+    monitored_barrier = mock.Mock()
     distributed.barrier = original_barrier
+    distributed.monitored_barrier = monitored_barrier
     module._install_control_barrier(distributed, group)
+
+    distributed.barrier()
+    monitored_barrier.assert_called_once()
+    startup_kwargs = monitored_barrier.call_args.kwargs
+    assert startup_kwargs["group"] is group
+    assert startup_kwargs["wait_all_ranks"] is True
+    assert startup_kwargs["timeout"].total_seconds() == module.STARTUP_BARRIER_TIMEOUT_SECONDS
+    original_barrier.assert_not_called()
+
     distributed.barrier()
     original_barrier.assert_called_once_with(group=group)
 
