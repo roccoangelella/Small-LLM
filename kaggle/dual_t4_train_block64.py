@@ -11,7 +11,9 @@ T4 path:
   complete real optimizer updates with material memory headroom;
 - route long cadence/prewarm/final rendezvous through a one-hour CPU/Gloo
   control group so rank zero validation/checkpoint/publication cannot trip the
-  default ten-minute NCCL watchdog observed in the 100M SFT path.
+  default ten-minute NCCL watchdog observed in the 100M SFT path;
+- preseed a manifest-verified portable Triton cache before importing Torch when
+  a compatible cache dataset is attached, otherwise use normal JIT fallback.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ import sys
 from typing import Any, Sequence
 
 import dual_t4_train as base
+import triton_cache
 
 SEQUENCES_PER_BLOCK = 64
 MICROBATCH_SIZE = 2
@@ -76,6 +79,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ["TRITON_CACHE_AUTOTUNING"] = "1"
     os.environ["FLA_CACHE_RESULTS"] = "1"
+
+    # torchrun starts two Python processes. The cache helper serializes seed
+    # installation with a filesystem lock, so only one rank extracts the
+    # dataset while the other observes the atomically installed cache.
+    triton_cache.prepare_environment()
 
     import torch
     import torch.distributed as dist
