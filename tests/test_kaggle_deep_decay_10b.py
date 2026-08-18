@@ -66,8 +66,26 @@ def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
     assert "base.SEQUENCES_PER_BLOCK = SEQUENCES_PER_BLOCK" in source
     assert "base.MICROBATCH_SIZE = MICROBATCH_SIZE" in source
     assert "microbatch_size: int = MICROBATCH_SIZE" in source
-    assert "return base.main(argv)" in source
+    assert "base._install_pinned_trainer_ddp" in source
     assert "32 sequences/rank" in source
+
+
+def test_block64_long_cadence_waits_use_cpu_gloo_group() -> None:
+    module = _load("small_llm_kaggle_block64_control_test", KAGGLE / "dual_t4_train_block64.py")
+    distributed = mock.Mock()
+    group = object()
+    distributed.new_group.return_value = group
+
+    assert module._new_control_group(distributed) is group
+    kwargs = distributed.new_group.call_args.kwargs
+    assert kwargs["backend"] == "gloo"
+    assert kwargs["timeout"].total_seconds() == module.CONTROL_GROUP_TIMEOUT_SECONDS
+
+    original_barrier = mock.Mock()
+    distributed.barrier = original_barrier
+    module._install_control_barrier(distributed, group)
+    distributed.barrier()
+    original_barrier.assert_called_once_with(group=group)
 
 
 def test_source_fork_changes_only_execution_slicing_plus_authorized_schedule() -> None:
