@@ -26,6 +26,7 @@ class ConfigAndScheduleTests(unittest.TestCase):
         self.assertNotIn("cooldown_start_tokens", serialized)
         self.assertNotIn("settle_tokens", serialized)
         self.assertNotIn("settle_lr_ratio", serialized)
+        self.assertNotIn("base_power", serialized)
         optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=config.learning_rate)
         schedule = TokenLRScheduler(optimizer, config)
         warm = schedule.prepare_step(5)
@@ -57,6 +58,7 @@ class ConfigAndScheduleTests(unittest.TestCase):
         self.assertEqual(serialized["cooldown_start_tokens"], cooldown_start)
         self.assertNotIn("settle_tokens", serialized)
         self.assertNotIn("settle_lr_ratio", serialized)
+        self.assertNotIn("base_power", serialized)
         optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=config.learning_rate)
         schedule = TokenLRScheduler(optimizer, config)
 
@@ -67,7 +69,7 @@ class ConfigAndScheduleTests(unittest.TestCase):
 
         cooldown_lr = schedule.prepare_step(cooldown_start)
         expected_cooldown_lr = 3e-4 * math.sqrt(anchor / cooldown_start)
-        self.assertTrue(math.isclose(cooldown_lr, expected_cooldown_lr, rel_tol=1e-12))
+        self.assertTrue(math.isclose(schedule.prepare_step(cooldown_start), expected_cooldown_lr, rel_tol=1e-12))
 
         halfway = cooldown_start + decay // 2
         expected_halfway = 3e-5 + (expected_cooldown_lr - 3e-5) * 0.5
@@ -119,6 +121,39 @@ class ConfigAndScheduleTests(unittest.TestCase):
         self.assertTrue(
             math.isclose(schedule.prepare_step(cooldown_start + decay), 1.5e-5, rel_tol=1e-12)
         )
+
+    def test_calibrated_power_decay_hits_1e5_then_5e6(self):
+        anchor = 2_031_616_000
+        settle = 300_023_808
+        settle_end = anchor + settle
+        cooldown_start = 9_599_975_424
+        decay = 400_031_744
+        settle_lr = 1e-4
+        cooldown_lr = 1e-5
+        terminal_lr = 5e-6
+        power = math.log(settle_lr / cooldown_lr) / math.log(cooldown_start / settle_end)
+        config = TrainerConfig(
+            precision="fp32",
+            schedule="wsqd",
+            learning_rate=3e-4,
+            decay_tokens=decay,
+            minimum_lr_ratio=terminal_lr / 3e-4,
+            schedule_anchor_tokens=anchor,
+            cooldown_start_tokens=cooldown_start,
+            settle_tokens=settle,
+            settle_lr_ratio=settle_lr / 3e-4,
+            base_power=power,
+        )
+        serialized = config.as_dict()
+        self.assertTrue(math.isclose(serialized["base_power"], power, rel_tol=1e-12))
+        optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=config.learning_rate)
+        schedule = TokenLRScheduler(optimizer, config)
+
+        self.assertTrue(math.isclose(schedule.prepare_step(settle_end), settle_lr, rel_tol=1e-12))
+        self.assertTrue(math.isclose(schedule.prepare_step(cooldown_start), cooldown_lr, rel_tol=1e-12))
+        halfway = cooldown_start + decay // 2
+        self.assertTrue(math.isclose(schedule.prepare_step(halfway), 7.5e-6, rel_tol=1e-12))
+        self.assertTrue(math.isclose(schedule.prepare_step(cooldown_start + decay), terminal_lr, rel_tol=1e-12))
 
     def test_wsqd_validation_rejects_rising_terminal_floor(self):
         with self.assertRaises(ValueError):
