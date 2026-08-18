@@ -1,0 +1,5 @@
+{
+  "reasoning_start": "<think>",
+  "reasoning_end": "</think>",
+  "answer_start": "<answer>"
+}
