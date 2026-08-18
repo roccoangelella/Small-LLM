@@ -3,19 +3,21 @@
 
 The base ``dual_t4_sft.py`` remains responsible for the qualified Kaggle T4
 runtime, exact global-token optimizer step, FP16 prewarm, DDP synchronization,
-checkpoint cadence, resume, W&B, and remote publication.  This adapter changes
+checkpoint cadence, resume, W&B, and remote publication. This adapter changes
 only R-SFT semantics immediately before the shared trainer is entered:
 
 * the completed S0 checkpoint is accepted as the parent;
 * the three padded rows are promoted to semantic reasoning-token rows;
-* the immutable bundle's requested target count is the exact one-pass budget;
-* R-SFT tokenizer/delimiter identity is carried in checkpoints;
+* the immutable bundle can be replayed for an explicit number of experimental epochs;
+* repeated epochs use logical block IDs so exact checkpoint/resume remains valid;
+* R-SFT tokenizer/delimiter/repeat identity is carried in checkpoints;
 * the S0 behavior probe is marked skipped until the R-SFT suite is frozen.
 """
 from __future__ import annotations
 
 import argparse
 import builtins
+from dataclasses import replace
 import importlib.util
 import json
 import os
@@ -28,11 +30,19 @@ RSFT_STAGE = "r_sft_r0"
 DELIMITER_FORMATS = ("atomic", "textual")
 
 
-def _arguments(argv: Sequence[str] | None) -> tuple[Path, str, Path, list[str]]:
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
+def _arguments(argv: Sequence[str] | None) -> tuple[Path, str, Path, int, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--worktree", type=Path, required=True)
     parser.add_argument("--rsft-delimiter-format", choices=DELIMITER_FORMATS, required=True)
     parser.add_argument("--rsft-token-spec", type=Path, required=True)
+    parser.add_argument("--rsft-num-epochs", type=_positive_int, default=1)
     args, trainer_argv = parser.parse_known_args(argv)
     worktree = args.worktree.resolve()
     if not (worktree / "trainer").is_dir() or not (worktree / "post_training" / "R-SFT").is_dir():
@@ -40,7 +50,13 @@ def _arguments(argv: Sequence[str] | None) -> tuple[Path, str, Path, list[str]]:
     token_spec = args.rsft_token_spec.expanduser().resolve()
     if not token_spec.is_file() or token_spec.is_symlink():
         raise SystemExit(f"R-SFT token spec is missing or unsafe: {token_spec}")
-    return worktree, str(args.rsft_delimiter_format), token_spec, list(trainer_argv)
+    return (
+        worktree,
+        str(args.rsft_delimiter_format),
+        token_spec,
+        int(args.rsft_num_epochs),
+        list(trainer_argv),
+    )
 
 
 def _argument_value(argv: Sequence[str], flag: str, *, default: str | None = None) -> str:
@@ -124,10 +140,13 @@ def rsft_pipeline_identity(
     bundle_manifest: Mapping[str, object],
     delimiter_format: str,
     token_metadata: Mapping[str, object],
+    num_epochs: int = 1,
 ) -> dict[str, object]:
     if delimiter_format not in DELIMITER_FORMATS:
         raise ValueError(f"unsupported R-SFT delimiter format: {delimiter_format}")
-    return {
+    if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise ValueError("num_epochs must be a positive integer")
+    identity: dict[str, object] = {
         "stage": RSFT_STAGE,
         "parent_checkpoint_identity": parent_identity["identity_sha256"],
         "bundle_manifest_identity": bundle_manifest["manifest_sha256"],
@@ -136,6 +155,12 @@ def rsft_pipeline_identity(
         "delimiter_format": delimiter_format,
         "reasoning_tokenizer": dict(token_metadata),
     }
+    # Keep epoch=1 identity byte-compatible with the completed pilot so old
+    # one-pass checkpoints remain resumable. Repeat experiments are distinct.
+    if num_epochs != 1:
+        identity["num_epochs"] = num_epochs
+        identity["repeat_identity"] = "exact-block-replay-v1"
+    return identity
 
 
 def _skipped_behavior() -> dict[str, object]:
@@ -155,7 +180,8 @@ def _skipped_behavior() -> dict[str, object]:
 def _rewrite_training_summary(
     checkpoint_dir: Path,
     *,
-    exact_targets: int,
+    one_pass_targets: int,
+    num_epochs: int,
     delimiter_format: str,
     token_metadata: Mapping[str, object],
 ) -> dict[str, object]:
@@ -175,9 +201,11 @@ def _rewrite_training_summary(
     if not isinstance(budget, dict):
         budget = {}
         payload["budget"] = budget
-    budget["mode"] = "bundle-exact-one-pass"
+    budget["mode"] = "bundle-exact-one-pass" if num_epochs == 1 else "bundle-exact-repeat"
     budget["fraction"] = None
-    budget["requested_loss_bearing_target_tokens"] = exact_targets
+    budget["num_epochs"] = num_epochs
+    budget["one_pass_loss_bearing_target_tokens"] = one_pass_targets
+    budget["requested_loss_bearing_target_tokens"] = one_pass_targets * num_epochs
     payload["behavior"] = _skipped_behavior()["summary"]
     rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
     source.write_text(rendered, encoding="utf-8")
@@ -192,6 +220,7 @@ def _run_shared_trainer(
     worktree: Path,
     delimiter_format: str,
     token_spec_path: Path,
+    num_epochs: int,
 ) -> int:
     import post_training.sft.checkpoints as sft_checkpoints
     import post_training.sft.train_cli as sft_train
@@ -204,12 +233,52 @@ def _run_shared_trainer(
     dataset_dir = Path(_argument_value(trainer_argv, "--dataset-dir")).resolve()
     checkpoint_dir = Path(_argument_value(trainer_argv, "--checkpoint-dir")).resolve()
     seed = int(_argument_value(trainer_argv, "--seed", default="17"))
-    exact_targets = bundle_target_budget(dataset_dir)
+    one_pass_targets = bundle_target_budget(dataset_dir)
 
     base_reader = sft_train.SFTShardReader
     current_print = sft_train.print
 
     class RSFTShardReader(base_reader):
+        """Replay verified train blocks with logical IDs while preserving exact resume."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._rsft_num_epochs = num_epochs if self.split == "train" else 1
+            if self.split == "train" and not self._blocks:
+                raise RuntimeError("R-SFT train reader has no blocks")
+
+        @property
+        def block_count(self) -> int:
+            return len(self._blocks) * self._rsft_num_epochs
+
+        @property
+        def block_target_counts(self) -> tuple[int, ...]:
+            base_counts = tuple(item.target_token_count for item in self._blocks)
+            return base_counts * self._rsft_num_epochs
+
+        def next_batch(self, timeout: float | None = None):
+            if self._rsft_num_epochs == 1:
+                return super().next_batch(timeout=timeout)
+            del timeout
+            if self._outstanding is not None:
+                raise RuntimeError("the previous R-SFT block has not been acknowledged")
+            logical_id = self.last_acknowledged_block_id + 1
+            if logical_id >= self.block_count:
+                raise StopIteration
+            item = self._blocks[logical_id % len(self._blocks)]
+            batch = replace(self._read(item), block_id=logical_id)
+            self._outstanding = batch
+            return batch
+
+        def acknowledge(self, block_id: int) -> None:
+            if self._rsft_num_epochs == 1:
+                super().acknowledge(block_id)
+                return
+            if self._outstanding is None or self._outstanding.block_id != block_id:
+                raise ValueError("only the current repeated R-SFT block may be acknowledged")
+            self.last_acknowledged_block_id = block_id
+            self._outstanding = None
+
         def pipeline_state(self) -> dict[str, object]:
             state = dict(super().pipeline_state())
             state[tokenizer.TOKENIZER_METADATA_KEY] = token_metadata
@@ -218,10 +287,41 @@ def _run_shared_trainer(
                 "stage": RSFT_STAGE,
                 "delimiter_format": delimiter_format,
             }
+            if self._rsft_num_epochs != 1:
+                state["rsft_num_epochs"] = self._rsft_num_epochs
+                state["rsft_one_pass_block_count"] = len(self._blocks)
+                state["consumer"] = {
+                    "kind": "rsft_repeating_sft_shard_reader",
+                    "manifest_identity": self.manifest_identity,
+                    "split": self.split,
+                    "num_epochs": self._rsft_num_epochs,
+                }
             return state
 
+        def load_pipeline_state(self, state: Mapping[str, object]) -> None:
+            if self._rsft_num_epochs == 1:
+                super().load_pipeline_state(state)
+                return
+            if state.get("manifest_identity") != self.manifest_identity:
+                raise RuntimeError("R-SFT resume manifest identity mismatch")
+            if state.get("split") != self.split:
+                raise RuntimeError("R-SFT resume split mismatch")
+            if state.get("rsft_num_epochs") != self._rsft_num_epochs:
+                raise RuntimeError("R-SFT resume epoch count mismatch")
+            if state.get("rsft_one_pass_block_count") != len(self._blocks):
+                raise RuntimeError("R-SFT resume one-pass block geometry mismatch")
+            cursor = state.get("last_consumed_block_id")
+            if isinstance(cursor, bool) or not isinstance(cursor, int) or cursor < -1:
+                raise RuntimeError("R-SFT resume cursor is invalid")
+            if cursor >= self.block_count:
+                raise RuntimeError("R-SFT resume cursor is beyond the repeated training stream")
+            self.last_acknowledged_block_id = cursor
+            self._outstanding = None
+
     def exact_budget(_: int, **__: Any) -> int:
-        return exact_targets
+        # This is the immutable bundle-integrity gate in the shared trainer.
+        # The repeated schedule itself is defined by block_target_counts above.
+        return one_pass_targets
 
     def promoted_loader(root: Path | str, *, device: Any = "cpu"):
         parent_model, parent_config, parent_identity = sft_checkpoints.load_verified_native_checkpoint(
@@ -247,6 +347,7 @@ def _run_shared_trainer(
             bundle_manifest=bundle_manifest,
             delimiter_format=delimiter_format,
             token_metadata=token_metadata,
+            num_epochs=num_epochs,
         )
 
     def rsft_behavior(*args: Any, **kwargs: Any) -> dict[str, object]:
@@ -278,7 +379,8 @@ def _run_shared_trainer(
     if int(os.environ.get("RANK", "0")) == 0 and exit_code == 0:
         summary = _rewrite_training_summary(
             checkpoint_dir,
-            exact_targets=exact_targets,
+            one_pass_targets=one_pass_targets,
+            num_epochs=num_epochs,
             delimiter_format=delimiter_format,
             token_metadata=token_metadata,
         )
@@ -287,7 +389,7 @@ def _run_shared_trainer(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    worktree, delimiter_format, token_spec_path, trainer_argv = _arguments(argv)
+    worktree, delimiter_format, token_spec_path, num_epochs, trainer_argv = _arguments(argv)
     sys.path.insert(0, str(worktree))
 
     import dual_t4_sft as shared
@@ -301,7 +403,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args and isinstance(args[0], str) and args[0].startswith("[kaggle-sft-ddp] execution:"):
             builtins.print(
                 "[kaggle-rsft-ddp] execution: 2x Tesla T4, shared exact-token SFT engine, "
-                f"delimiter_format={delimiter_format}, bundle-exact one-pass budget",
+                f"delimiter_format={delimiter_format}, num_epochs={num_epochs}, "
+                "bundle-exact replay budget",
                 flush=True,
             )
             return
@@ -314,11 +417,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             worktree=worktree,
             delimiter_format=delimiter_format,
             token_spec_path=token_spec_path,
+            num_epochs=num_epochs,
         )
 
     # The underlying DDP wrapper requires a syntactically valid fraction even
-    # though R-SFT replaces the budget at trainer entry. Keep it private and
-    # prevent its post-run fraction rewrite from touching the R-SFT summary.
+    # though R-SFT replaces the budget-integrity gate at trainer entry. Keep it
+    # private and prevent its post-run fraction rewrite from touching R-SFT.
     sft_train.main = proxy_main
     shared._rewrite_summary_fraction = lambda *args, **kwargs: None
     shared.print = shared_print
