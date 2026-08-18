@@ -8,16 +8,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import dual_t4_runtime
+import rsft_prepare
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# This commit contains the R-SFT launcher, DDP adapter, tokenizer/model transition,
-# and shared SFT runtime contract consumed inside the detached Kaggle worktree.
+# Re-pinned after the auto-preparation implementation is complete.
 IMPLEMENTATION_COMMIT = "96a8fc399fd919f54e73d8b9c4689e698e476cc7"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 DEFAULT_MICROBATCH_SIZE = 2
 DEFAULT_CADENCE_STEPS = 250
 DEFAULT_LEARNING_RATE = 3e-5
+DEFAULT_RUN_IDS = {
+    "atomic": "100m-2b-rsft-r0-atomic-pilot-001",
+    "textual": "100m-2b-rsft-r0-textual-pilot-001",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,9 +32,14 @@ class RSFTProfile(base.SFTProfileSpec):
 
     @property
     def default_bundle(self) -> Path:
-        # Production R-SFT bundles are attached explicitly. This property only
-        # keeps the inherited profile contract complete.
         return base.WORK / f"{self.sft_run_id}-bundle"
+
+
+def default_run_id(delimiter_format: str) -> str:
+    try:
+        return DEFAULT_RUN_IDS[delimiter_format]
+    except KeyError as error:
+        raise base.RuntimeFailure("--delimiter-format must be atomic or textual") from error
 
 
 def resolve_profile(
@@ -83,6 +92,25 @@ def _bundle_target_budget(bundle: Path) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise base.RuntimeFailure("R-SFT bundle has no positive train_target_tokens_requested")
     return value
+
+
+def _resolve_token_spec(
+    explicit: str | None,
+    *,
+    bundle: Path,
+    worktree: Path,
+) -> Path:
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit).expanduser().resolve())
+    candidates.append(bundle / "reasoning-tokens.json")
+    candidates.append((worktree / rsft_prepare.TOKEN_SPEC_RELATIVE_PATH).resolve())
+    for candidate in candidates:
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate
+    raise base.RuntimeFailure(
+        "R-SFT token spec is missing; the canonical spec should exist in the bundle or pinned worktree"
+    )
 
 
 def build_train_command(
@@ -148,21 +176,16 @@ def build_train_command(
 def train(
     profile: RSFTProfile,
     *,
-    dataset_dir: str,
+    dataset_dir: str | None,
     delimiter_format: str,
-    token_spec: str,
+    token_spec: str | None,
+    s0_bundle: str | None,
     parent_repo_id: str | None,
     checkpoint_repo_id: str | None,
     max_steps_this_session: int | None,
     wandb_entity: str | None,
     dry_run: bool = False,
 ) -> int:
-    bundle = base._find_bundle(dataset_dir)
-    exact_targets = _bundle_target_budget(bundle)
-    token_spec_path = Path(token_spec).expanduser().resolve()
-    if not token_spec_path.is_file() or token_spec_path.is_symlink():
-        raise base.RuntimeFailure(f"R-SFT token spec is missing or unsafe: {token_spec_path}")
-
     parent_repo = (
         parent_repo_id
         or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
@@ -187,10 +210,30 @@ def train(
         )
     entity = wandb_entity or os.environ.get("WANDB_ENTITY")
 
-    if dry_run:
-        worktree = base.REPO
+    worktree = base.REPO if dry_run else base._prepare_worktree(profile)
+    preparation: dict[str, object] | None = None
+    if dataset_dir:
+        bundle = base._find_bundle(dataset_dir)
+        exact_targets: int | None = _bundle_target_budget(bundle)
+    elif dry_run:
+        preparation = rsft_prepare.preparation_plan(worktree=worktree, s0_bundle=s0_bundle)
+        bundle = Path(str(preparation[f"{delimiter_format}_bundle"]))
+        exact_targets = None
     else:
-        worktree = base._prepare_worktree(profile)
+        matched_root = rsft_prepare.prepare_pilot_bundles(
+            worktree=worktree,
+            s0_bundle=s0_bundle,
+        )
+        bundle = base._find_bundle(str(matched_root / delimiter_format))
+        exact_targets = _bundle_target_budget(bundle)
+
+    token_spec_path = _resolve_token_spec(
+        token_spec,
+        bundle=bundle,
+        worktree=worktree,
+    )
+
+    if not dry_run:
         base._wandb_preflight(profile, worktree=worktree, entity=entity)
 
     command = build_train_command(
@@ -208,7 +251,7 @@ def train(
         print(
             json.dumps(
                 {
-                    "schema": "small-llm-rsft-kaggle-dry-run-v1",
+                    "schema": "small-llm-rsft-kaggle-dry-run-v2",
                     "topology": "2xTesla-T4-DDP",
                     "stage": "r_sft_r0",
                     "parent_run_id": profile.parent_run_id,
@@ -219,6 +262,7 @@ def train(
                     "budget_mode": "bundle-exact-one-pass",
                     "microbatch_size_per_rank": profile.microbatch_size,
                     "learning_rate": profile.learning_rate,
+                    "auto_preparation": preparation,
                     "command": command,
                 },
                 indent=2,
@@ -233,10 +277,12 @@ __all__ = [
     "DEFAULT_CADENCE_STEPS",
     "DEFAULT_LEARNING_RATE",
     "DEFAULT_MICROBATCH_SIZE",
+    "DEFAULT_RUN_IDS",
     "IMPLEMENTATION_COMMIT",
     "PARENT_RUN_ID",
     "RSFTProfile",
     "build_train_command",
+    "default_run_id",
     "resolve_profile",
     "train",
 ]
