@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """Single human entry point for Small-LLM reasoning SFT on Kaggle.
 
-The first 630-example pilot is committed to the repository. Kaggle builds the
-matched native bundle automatically from that corpus plus the completed S0
-instruction bundle, then trains the selected arm on the qualified 2xT4 path.
+Canonical production R-SFT is atomic-only and consumes a frozen
+``atomic-production-v1`` bundle:
 
-Examples:
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format atomic
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format textual
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format atomic --dry-run
+  python kaggle/launch_r_sft.py train --model 100M --tokens 2B \
+    --dataset-dir /kaggle/input/rsft-r0-production
 
-Pass --dataset-dir, --s0-bundle, --run-id, or --token-spec only as explicit
-overrides; they are not needed for the canonical pilot.
+The completed 630-example delimiter experiment remains reproducible separately:
+
+  python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B \
+    --delimiter-format atomic
+  python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B \
+    --delimiter-format textual
+
+Production ``train`` has no textual mode. It validates the bundle and frozen
+<think>, </think>, <answer> token contract before dual-T4 dispatch.
 """
 from __future__ import annotations
 
