@@ -8,7 +8,7 @@ The default ``pilot`` command performs the whole data-side experiment:
 4. sample the frozen 10% retention lane from the completed S0 instruction bundle;
 5. emit matched atomic and textual native SFT bundles for Kaggle training.
 
-No semantic teacher re-judging is added here.  Generation acceptance remains the
+No semantic teacher re-judging is added here. Generation acceptance remains the
 strict JSON/schema boundary already frozen for R0.
 """
 
@@ -23,6 +23,11 @@ import random
 import sys
 from types import ModuleType
 from typing import Any, Mapping, Sequence
+
+
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 from trainer.identity import canonical_hash
 from post_training.sft.bundle import verify_bundle
@@ -68,7 +73,10 @@ def _sha256_path(path: Path) -> str:
 def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(dict(payload), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(dict(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     temporary.replace(path)
 
 
@@ -117,18 +125,20 @@ def _write_generation_batch(
     request: Any,
     response_text: str,
 ) -> None:
-    # Parse before writing so malformed provider output never becomes resumable state.
+    # Malformed provider output never becomes resumable state.
     schema.parse_teacher_batch(response_text, expected_count=request.count)
-    payload: dict[str, object] = {
-        "schema": GENERATION_BATCH_SCHEMA,
-        "request_index": index,
-        "skill": request.skill,
-        "difficulty": request.difficulty,
-        "count": request.count,
-        "prompt_sha256": _sha256_text(request.prompt),
-        "response": response_text,
-    }
-    _atomic_json(path, payload)
+    _atomic_json(
+        path,
+        {
+            "schema": GENERATION_BATCH_SCHEMA,
+            "request_index": index,
+            "skill": request.skill,
+            "difficulty": request.difficulty,
+            "count": request.count,
+            "prompt_sha256": _sha256_text(request.prompt),
+            "response": response_text,
+        },
+    )
 
 
 def _validate_frozen_reasoning(
@@ -141,6 +151,48 @@ def _validate_frozen_reasoning(
     return records
 
 
+def _validate_completed_generation(
+    root: Path,
+    *,
+    final_path: Path,
+    examples_per_cell: int,
+    batch_size: int,
+    seed: int,
+    total_calls: int,
+) -> dict[str, object]:
+    manifest_path = root / "generation-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeError("frozen reasoning JSONL exists without a valid generation manifest") from error
+    if not isinstance(manifest, Mapping):
+        raise RuntimeError("generation manifest must be a JSON object")
+    supplied = manifest.get("manifest_sha256")
+    without_hash = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    if supplied != canonical_hash(without_hash):
+        raise RuntimeError("generation manifest self-hash mismatch")
+    expected = {
+        "schema": GENERATION_MANIFEST_SCHEMA,
+        "examples_per_cell": examples_per_cell,
+        "batch_size": batch_size,
+        "total_calls": total_calls,
+        "seed": seed,
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise RuntimeError(f"completed generation configuration drifted at {key}")
+    reasoning = manifest.get("reasoning_jsonl")
+    if not isinstance(reasoning, Mapping):
+        raise RuntimeError("generation manifest has no reasoning_jsonl identity")
+    if reasoning.get("path") != final_path.name:
+        raise RuntimeError("generation manifest reasoning path drifted")
+    if reasoning.get("sha256") != _sha256_path(final_path):
+        raise RuntimeError("frozen reasoning JSONL hash drifted")
+    if reasoning.get("byte_size") != final_path.stat().st_size:
+        raise RuntimeError("frozen reasoning JSONL byte size drifted")
+    return dict(manifest)
+
+
 def generate_resumable(
     output_dir: Path | str,
     *,
@@ -151,6 +203,8 @@ def generate_resumable(
 ) -> dict[str, object]:
     """Generate/freeze a uniform R0 corpus, resuming from schema-valid batch files."""
 
+    if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
     root = Path(output_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     final_path = root / "reasoning.jsonl"
@@ -160,15 +214,24 @@ def generate_resumable(
     )
 
     if final_path.is_file():
+        manifest = _validate_completed_generation(
+            root,
+            final_path=final_path,
+            examples_per_cell=examples_per_cell,
+            batch_size=batch_size,
+            seed=seed,
+            total_calls=len(plan),
+        )
         records = _validate_frozen_reasoning(final_path, examples_per_cell=examples_per_cell)
-        manifest_path = root / "generation-manifest.json"
-        if not manifest_path.is_file():
-            raise RuntimeError("frozen reasoning JSONL exists without generation-manifest.json")
+        reasoning_identity = manifest.get("reasoning_jsonl")
+        if not isinstance(reasoning_identity, Mapping) or reasoning_identity.get("records") != len(records):
+            raise RuntimeError("generation manifest reasoning record count drifted")
         return {
             "reasoning_jsonl": str(final_path),
             "records": len(records),
             "calls": len(plan),
             "resumed_complete": True,
+            "manifest_sha256": manifest["manifest_sha256"],
         }
 
     records: list[Any] = []
@@ -258,17 +321,19 @@ def verify_matched_bundles(root: Path | str) -> dict[str, object]:
     if supplied != canonical_hash(without_hash):
         raise RuntimeError("R-SFT pilot manifest self-hash mismatch")
 
+    arms = pilot.get("arms")
+    if not isinstance(arms, Mapping):
+        raise RuntimeError("R-SFT pilot manifest has no arm identities")
     verified: dict[str, object] = {}
     for arm in ("atomic", "textual"):
-        row = pilot.get("arms", {}).get(arm) if isinstance(pilot.get("arms"), Mapping) else None
+        row = arms.get(arm)
         if not isinstance(row, Mapping):
             raise RuntimeError(f"R-SFT pilot manifest has no {arm} arm")
         arm_root = directory / arm
         result = verify_bundle(arm_root)
         if result["bundle_manifest_sha256"] != row.get("bundle_manifest_sha256"):
             raise RuntimeError(f"R-SFT {arm} bundle identity mismatch")
-        token_path = arm_root / "reasoning-tokens.json"
-        bundle.load_reasoning_token_spec(token_path)
+        bundle.load_reasoning_token_spec(arm_root / "reasoning-tokens.json")
         verified[arm] = result
     return {
         "status": "verified",
