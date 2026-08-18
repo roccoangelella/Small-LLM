@@ -23,7 +23,8 @@ def test_deep_decay_schedule_and_exact_source_are_frozen() -> None:
     assert module.SOURCE_CHECKPOINT_ID == "step-00015500"
     assert module.SOURCE_EXPECTED_TOKENS == 2_031_616_000
     assert module.SEQUENCES_PER_BLOCK == 64
-    assert module.MICROBATCH_SIZE == 4
+    assert module.SOURCE_MICROBATCH_SIZE == 4
+    assert module.MICROBATCH_SIZE == 2
     assert module.SETTLE_END_STEP == 17_789
     assert module.COOLDOWN_START_STEP == 73_242
     assert module.FINAL_STEP == 76_294
@@ -33,7 +34,7 @@ def test_deep_decay_schedule_and_exact_source_are_frozen() -> None:
     assert math.isclose(module._expected_lr(module.TOTAL_TARGETS), 5e-6, rel_tol=1e-12)
 
 
-def test_dual_t4_command_preserves_block64_trainer_flags() -> None:
+def test_dual_t4_command_preserves_block64_and_t4_safe_microbatch() -> None:
     module = _load("small_llm_kaggle_deep_decay_command_test", KAGGLE / "deep_decay_10b_from_15500.py")
     trainer = [
         "/usr/bin/python",
@@ -42,7 +43,7 @@ def test_dual_t4_command_preserves_block64_trainer_flags() -> None:
         "--sequences-per-block",
         "64",
         "--microbatch-size",
-        "4",
+        "2",
         "--schedule",
         "wsqd",
     ]
@@ -52,7 +53,7 @@ def test_dual_t4_command_preserves_block64_trainer_flags() -> None:
     assert "--nproc-per-node=2" in command
     assert str(KAGGLE / "dual_t4_train_block64.py") in command
     assert command[command.index("--sequences-per-block") + 1] == "64"
-    assert command[command.index("--microbatch-size") + 1] == "4"
+    assert command[command.index("--microbatch-size") + 1] == "2"
     assert "torch==2.10.0" in command
     assert "triton==3.6.0" in command
     assert "fla-core==0.5.2" in command
@@ -61,9 +62,21 @@ def test_dual_t4_command_preserves_block64_trainer_flags() -> None:
 def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
     source = (KAGGLE / "dual_t4_train_block64.py").read_text(encoding="utf-8")
     assert "SEQUENCES_PER_BLOCK = 64" in source
+    assert "MICROBATCH_SIZE = 2" in source
     assert "base.SEQUENCES_PER_BLOCK = SEQUENCES_PER_BLOCK" in source
+    assert "base.MICROBATCH_SIZE = MICROBATCH_SIZE" in source
+    assert "microbatch_size: int = MICROBATCH_SIZE" in source
     assert "return base.main(argv)" in source
     assert "32 sequences/rank" in source
+
+
+def test_source_fork_changes_only_execution_slicing_plus_authorized_schedule() -> None:
+    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    assert 'if config.get("microbatch_size") != SOURCE_MICROBATCH_SIZE' in source
+    assert "microbatch_size=MICROBATCH_SIZE" in source
+    assert 'schedule="wsqd"' in source
+    assert 'schedule_anchor_tokens=SOURCE_EXPECTED_TOKENS' in source
+    assert 'base_power=BASE_POWER' in source
 
 
 def test_canonical_launcher_exposes_only_100m_10b_deep_decay_action() -> None:
@@ -82,7 +95,8 @@ def test_dry_run_describes_exact_global_optimizer_geometry() -> None:
     assert payload["world_size"] == 2
     assert payload["sequences_per_block"] == 64
     assert payload["sequences_per_rank"] == 32
-    assert payload["microbatch_size"] == 4
-    assert payload["local_microbatches_per_rank"] == 8
+    assert payload["source_microbatch_size"] == 4
+    assert payload["microbatch_size"] == 2
+    assert payload["local_microbatches_per_rank"] == 16
     assert payload["remote_checkpoint_every"] == 250
     assert payload["source_checkpoint_id"] == "step-00015500"
