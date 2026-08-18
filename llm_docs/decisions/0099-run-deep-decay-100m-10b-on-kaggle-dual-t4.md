@@ -12,7 +12,7 @@ ADR 0095 authorized the scientific trajectory that forks the exact original unco
 
 The repository already has an exact-batch Kaggle DDP implementation qualified under ADR 0056. That implementation keeps the raw model checkpoint topology-neutral, synchronizes non-finite/overflow decisions before either replica can step, compensates DDP gradient averaging, and confines validation/checkpoint/Hugging Face/W&B side effects to rank zero. The 100M/10B trajectory, however, is frozen to a 64-sequence global optimizer block rather than the historical 16-sequence DDP qualification geometry.
 
-There is also direct 100M/T4 hardware evidence: the first 100M/2B SFT dual-T4 start OOMed during a no-step backward prewarm at local shape `4x2048`, reaching 13.79 GiB allocated on a 14.56-GiB Tesla T4. That evidence explicitly ruled out per-rank execution microbatch four and moved the same 100M model to microbatch two. Because execution microbatch only slices the same accumulated global optimizer block, it can be changed for the Kaggle topology without changing the optimizer batch or token schedule.
+Direct 100M/T4 hardware evidence resolves the execution microbatch choice. Microbatch four OOMed during a no-step `4x2048` backward prewarm on a 14.56-GiB Tesla T4. Microbatch two then passed prewarm and completed 250 real optimizer updates, reaching peak allocated 8.35 GiB and peak reserved 11.70 GiB. The later failure was not memory-related: rank one waited in the default NCCL barrier while rank zero performed long cadence side effects and hit the ten-minute watchdog. The SFT path fixed that exact failure class by moving control-plane rendezvous to a one-hour Gloo group while retaining NCCL for DDP math.
 
 ## Decision
 
@@ -43,10 +43,11 @@ Preserve model, optimizer and optimizer state, scaler, RNG, data cursor, exact c
 
 For two-T4 execution:
 
-- use two replicated ranks with NCCL;
+- use two replicated ranks with NCCL for DDP gradient collectives;
 - split each ordered 64-sequence global block 32/32 across ranks;
 - use microbatch two, therefore sixteen local microbatches per rank;
 - retain the existing DDP `no_sync`/final-sync, loss scaling, clipping, synchronized overflow, raw-model checkpoint, and rank-zero-side-effect semantics from ADR 0056;
+- route prewarm, cadence, and final rendezvous through a one-hour CPU/Gloo control group so long rank-zero validation/checkpoint/publication work cannot trip the NCCL watchdog;
 - pin PyTorch 2.10.0 + CUDA 12.8 wheels, Triton 3.6.0, and `fla-core==0.5.2`, matching the qualified Kaggle T4 runtime;
 - treat DDP and finer accumulation reduction-order differences as numerically equivalent execution differences, not bitwise identity with one-GPU microbatch-four accumulation;
 - publish live continuation checkpoints to the existing Hugging Face model-repository namespace every 250 successful updates on Kaggle so notebook/session loss costs at most one durability interval;
@@ -68,26 +69,28 @@ Rerunning the same command after a Kaggle interruption automatically restores th
 
 - Both Kaggle T4 GPUs are used while the 64-sequence scientific optimizer batch remains unchanged.
 - The topology-neutral checkpoint format permits migration from the original one-GPU state without translating model keys or optimizer state.
-- The execution microbatch is selected from direct 100M/T4 memory evidence rather than assuming that the 4090 microbatch fits a 14.56-GiB T4.
+- Microbatch two is chosen from completed 100M/T4 optimizer-update evidence rather than from guesswork; microbatch one would add accumulation overhead without a demonstrated need.
+- Long rank-zero side effects no longer hold an NCCL collective open, removing a failure mode already observed live on the same 100M/two-T4 class of workload.
 - The main human launcher remains `kaggle/launch.py`; the 10B rolling-data semantics stay in a dedicated continuation module instead of being forced into the finite-data profile table.
 - Hugging Face remains the cross-session durability boundary, so Kaggle notebook restarts do not require Beam state.
 
 ### Limits and gates
 
 - ADR 0056's parity/throughput qualification was measured on the 16-sequence 20M/2B geometry. The synchronization algebra is reused, but the first 64-sequence 100M/10B Kaggle segment remains a live execution gate rather than prior measured proof of throughput.
-- The 100M/T4 microbatch-two evidence comes from SFT prewarm, not this exact pretraining path. It strongly constrains memory fit but does not replace the first live pretraining gate.
-- A first bounded segment should confirm two Tesla T4 devices, correct `64 -> 32/32 -> microbatch 2` geometry, exact step-15,500 restore/fork, finite loss and gradients, correct LR, rank-zero-only W&B, and a verified remote checkpoint before relying on long unattended Kaggle sessions.
+- The microbatch-two memory evidence comes from the 100M SFT path, not this exact pretraining path. It is strong hardware evidence but does not replace the first live pretraining gate.
+- A first bounded segment should confirm two Tesla T4 devices, correct `64 -> 32/32 -> microbatch 2` geometry, exact step-15,500 restore/fork, finite loss and gradients, correct LR, Gloo cadence rendezvous, rank-zero-only W&B, and a verified remote checkpoint before relying on long unattended Kaggle sessions.
 - Kaggle session limits may interrupt the run; exact resume is therefore operationally expected rather than exceptional.
 
 ## Implementation
 
 - `kaggle/launch.py` exposes the dedicated `deep-decay` action.
 - `kaggle/deep_decay_10b_from_15500.py` owns exact source/continuation restore, the execution-microbatch rewrite, rolling dataset staging, the frozen ADR-0095 scheduler, and two-T4 command construction.
-- `kaggle/dual_t4_train_block64.py` reuses the qualified shared DDP engine with global block 64 and local microbatch two.
+- `kaggle/dual_t4_train_block64.py` reuses the shared exact-batch DDP engine with global block 64 and local microbatch two, while moving control barriers to Gloo.
 
 ## Evidence
 
 - [`../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md`](../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md)
+- [`../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md)
 
 ## Links
 
