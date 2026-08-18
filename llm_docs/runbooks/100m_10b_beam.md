@@ -1,6 +1,6 @@
 # 100M / 10B Beam runbook
 
-_Last reviewed: 2026-08-14_
+_Last reviewed: 2026-08-17_
 
 This is the active operator procedure for the ADR-0071 full fresh trajectory.
 HF remains the authoritative dataset and checkpoint backend; the Beam cache
@@ -91,3 +91,40 @@ does not issue local-disk power-loss barriers against Beam's distributed
 Volume. Do not remove this provider-specific setting: the first step-250 save
 completed its final rename and then blocked indefinitely on the parent
 directory `fsync`.
+
+## Aggressive WSqD continuation from step 15,500
+
+The separate continuation uses:
+
+```bash
+python beam/aggressive_wsqd_10b_from_15500.py --gpu RTX4090
+```
+
+It starts only from the exact uncooled parent `step-00015500`, but every new
+GPU-worker start resolves the highest locally manifest-verified checkpoint in
+`100m-10b-aggressive-wsqd-from-step15500/checkpoints` before invoking the
+trainer. This is required because Beam may retry a lost worker with the
+original function arguments. Confirm the CPU preflight's
+`resume_checkpoint_id` and the GPU `aggressive_wsqd_10b_gpu_resume_resolved`
+event name the same newest valid checkpoint; never accept a retry that silently
+returns to step 15,500 after later continuation checkpoints exist.
+
+The crash/billing supervisor uses the same RTX4090 command. It records a GPU
+rate handoff before any lane change so the `$30` cap includes time already spent
+on a prior allocation; do not reset the billing baseline just to change GPU.
+
+The automated guard is configured in the user's UTC crontab every five minutes:
+
+```cron
+CRON_TZ=UTC
+*/5 * * * * cd /home/ubuntu/Projects/Small-LLM && set -a && . ./.env && set +a && SMALL_LLM_BEAM_BILLING_MODE=account_zero SMALL_LLM_BEAM_CAP_BASIS=notional /home/ubuntu/Projects/Small-LLM/.venv/bin/python ops/monitor_aggressive_wsqd_10b_beam.py >> /tmp/small-llm-aggressive-monitor/hourly.log 2>&1
+```
+
+The monitor applies a 10% safety factor to the notional estimate and stops
+matching active Beam tasks when that estimate reaches the `$30` budget. A
+control-plane error blocks relaunch and is written to the same log.
+
+This host does not permit a cron daemon to create its PID file, so the active
+enforcement loop runs in the persistent tmux session
+`small-llm-billing-guard` with the same five-minute cadence. The crontab entry
+remains useful if the process is moved to a normal host with cron enabled.

@@ -9,3 +9,9 @@ To investigate this phenomenon, we're gonna run a small test: take the 100M snap
 
 Unfortunately, the 12500 update is gone: we made HF squash the commits to keep only best and last update, but Beam still has 15500 one, which is close enough to test this anyway. We'll start the LR cooldown from there and see what happens.
 
+---
+The 15500 proved our point:
+![alt text](image-3.png)
+
+LR during most of the run has been too high for running a fair training, pushing the weights away from the minimum. 
+To solve this, we'll changing our LR scheduling policy: once the warmup ends, a gentle decay starts, bringing the lr down to around -60% with until roughly the 10% of the remaining update stepd. At that point another decay starts, aiming at lowering the lr down to roughly -90% compared  to the initial value.

@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-16
+last_reviewed: 2026-08-17
 ---
 
 # Current project status
@@ -132,26 +132,36 @@ step-3,000 failover are recorded in
 [`../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md).
 The step-4,535 container exit and verified step-4,500 resume are recorded in
 [`../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md).
-After a Beam account/workspace change, the exact HF `step-00015500` resume was
-restarted on 2026-08-16 in the new workspace. Fresh Beam volumes required a
-one-time runtime-contract seed before the RTX4090 task could start; the seed
-did not change scientific identity or checkpoint bytes. The resumed task ran
-from source `1f9dff920ecc45ce2fdb43fd875514a18391273d` with microbatch 4, then
-an earlier pre-reset billing baseline caused the deterministic notional cap to
-stop the first attempt at an estimated `$51.28` before any new checkpoint was
-published. That old-account estimate is no longer used. At
-`2026-08-16T15:13:23Z`, the supervisor reset its billing baseline for the new
-Beam account, recorded `$0.00` since reset, and relaunched a fresh bounded
-segment from `step-00015500` under the `$30` notional cap. The account-cost
-basis remains `$0.00`; the notional RTX4090/CPU/RAM estimate remains the hard
-stop. On 2026-08-17, the user stopped the run and requested that supervision
-also stop. A stale live-VPS cron entry nevertheless launched one more bounded
-3,769-step resume after a task error while budget remained; that task was
-stopped and the cron entry was removed. No Beam task or local launcher is now
-active.
-See [`../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md`](../evidence/scaling/100m_10b_beam_account_zero_resume_2026-08-16.md)
-[`../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md`](../evidence/scaling/100m_10b_beam_billing_reset_2026-08-16.md),
-and [`../evidence/scaling/100m_10b_beam_monitor_shutdown_2026-08-17.md`](../evidence/scaling/100m_10b_beam_monitor_shutdown_2026-08-17.md).
+On 2026-08-17, the exact uncooled `step-00015500` checkpoint was found in the
+old Beam `jourme` workspace and copied into the active workspace with all five
+files present: the four manifests plus the 871.54 MiB `trainer_state.pkl`.
+The local and remote checkpoint identities were verified before allocation.
+The initial aggressive GPU worker progressed through locally valid
+`step-00016750`; Hugging Face had fully published `step-00016500`. The worker
+was lost during `step-00017000` staging, leaving only an ignored incomplete
+`.step-00017000...` directory. Beam retried that same GPU invocation with its
+original immutable `step-00015500` argument, so the duplicate retry was stopped
+at step 15,630 rather than allowed to repeat work. The launcher now resolves
+the highest manifest-verified continuation checkpoint inside every GPU worker
+start, before it invokes the trainer. The prior replacement task ran from clean
+local commit `af0ff1ea207ba775e23278fc86217ae8c86e2a67`; its CPU and visibility
+gates and GPU-side retry resolver selected exact `step-00016750`, leaving
+59,544 steps. The function requested RTX4090, but Beam's live worker reports
+`NVIDIA A10G` in the trainer telemetry tag; this allocation mismatch remains
+visible rather than being hidden by the requested label. It runs in tmux
+session `aggressive-wsqd-10b`. The A10G worker later reached step 16,785, but
+was intentionally cancelled before its next checkpoint cadence to switch lanes;
+`step-00016750` remains the highest valid durable restart point. The queued
+RTX5090 task `73070b42-8257-462d-a038-b64aeba02018` was superseded by an
+immediate RTX4090 switch at the user's direction. The
+account-zero billing baseline was reset at `2026-08-17T12:04:26Z`; the monitor
+recorded the A10G interval and retains a conservative RTX5090-equivalent rate
+after the RTX4090 switch, preserving the `$30` notional hard stop. The dedicated
+`ops/monitor_aggressive_wsqd_10b_beam.py` runs every five minutes in the
+persistent `small-llm-billing-guard` tmux supervisor, recognizes only this
+aggressive task, stops it at the cap, and relaunches the same RTX4090 tmux
+command after a crash when control-plane state is readable. A matching UTC
+crontab entry is retained for hosts with a running cron daemon.
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 

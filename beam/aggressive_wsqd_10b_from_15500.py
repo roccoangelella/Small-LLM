@@ -383,8 +383,38 @@ def _train_impl(
     from model_repo_checkpoint import install_model_repo_checkpoint_transport
     from profiles import resolve_presets
 
+    dispatched_resume_checkpoint_id = resume_checkpoint_id
+    try:
+        dispatched_step = int(dispatched_resume_checkpoint_id.removeprefix("step-"))
+    except ValueError as error:
+        raise RuntimeError("GPU dispatch carried an invalid resume checkpoint") from error
+    latest_id, latest_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+    if latest_id is None or latest_step < SOURCE_STEP:
+        raise RuntimeError("GPU worker found no valid aggressive continuation checkpoint")
+    if latest_step > FINAL_STEP:
+        raise RuntimeError(f"continuation checkpoint step {latest_step} exceeds {FINAL_STEP}")
+    if latest_step < dispatched_step:
+        raise RuntimeError(
+            "GPU worker checkpoint regressed below its CPU-authorized resume point: "
+            f"{latest_step} < {dispatched_step}"
+        )
+    resume_checkpoint_id = latest_id
+    remaining_steps = FINAL_STEP - latest_step
     if remaining_steps <= 0:
         raise RuntimeError("GPU was allocated with no remaining work")
+    print(
+        json.dumps(
+            {
+                "beam_stage": "aggressive_wsqd_10b_gpu_resume_resolved",
+                "dispatched_resume_checkpoint_id": dispatched_resume_checkpoint_id,
+                "resume_checkpoint_id": resume_checkpoint_id,
+                "completed_steps": latest_step,
+                "remaining_steps": remaining_steps,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     dataset = Path(dataset_dir).resolve(strict=True)
     model_preset, token_preset = resolve_presets("100M", "10B")
     if token_preset.dataset_profile != DATASET_PROFILE:
