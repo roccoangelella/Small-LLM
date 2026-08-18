@@ -12,8 +12,9 @@ import rsft_prepare
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# Re-pinned after the auto-preparation implementation is complete.
-IMPLEMENTATION_COMMIT = "96a8fc399fd919f54e73d8b9c4689e698e476cc7"
+# This pinned commit contains the committed 630-example corpus, frozen token
+# spec, auto-preparation helper, matched bundle builder, and 2xT4 R-SFT adapter.
+IMPLEMENTATION_COMMIT = "d6ca7e0ae2ff0026203dc60e88efb39ffd6e27cf"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 DEFAULT_MICROBATCH_SIZE = 2
 DEFAULT_CADENCE_STEPS = 250
