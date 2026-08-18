@@ -1,6 +1,6 @@
 # Local chat CLI
 
-Use the root-level `chat.py` to download an explicitly registered completed Small-LLM artifact from Hugging Face and run an interactive local chat loop. The CLI supports completed SFT trajectories, selected stable pretrained artifacts, and completed R-SFT trajectories once they have a frozen registered run identity.
+Use the root-level `chat.py` to download an explicitly registered completed Small-LLM artifact from Hugging Face and run an interactive local chat loop. The CLI supports completed SFT trajectories, selected stable pretrained artifacts, and the accepted completed R-SFT trajectory.
 
 ## Prerequisites
 
@@ -23,7 +23,13 @@ If post-training checkpoints live in a separate repository, set it explicitly:
 export SMALL_LLM_SFT_HF_REPO_ID=owner/sft-repository
 ```
 
-SFT/R-SFT profiles prefer `SMALL_LLM_SFT_HF_REPO_ID` and fall back to `SMALL_LLM_HF_REPO_ID`. Stable pretrained artifacts always use `SMALL_LLM_HF_REPO_ID`.
+R-SFT can use its own repository:
+
+```bash
+export SMALL_LLM_RSFT_HF_REPO_ID=owner/rsft-repository
+```
+
+R-SFT profiles prefer `SMALL_LLM_RSFT_HF_REPO_ID`, then `SMALL_LLM_SFT_HF_REPO_ID`, then `SMALL_LLM_HF_REPO_ID`. SFT profiles prefer `SMALL_LLM_SFT_HF_REPO_ID` and fall back to `SMALL_LLM_HF_REPO_ID`. Stable pretrained artifacts always use `SMALL_LLM_HF_REPO_ID`.
 
 ## Mandatory stage selection
 
@@ -65,13 +71,13 @@ python chat.py --model_params 100M --num_tokens 2B --pre-trained
 
 The pretrained 100M / 2B entry resolves the stable Hugging Face model artifact for run `100m-2b-data-001`. It is a pretrained base model, not an SFT/instruction-tuned model.
 
-Once a completed R-SFT artifact has a frozen run ID and is explicitly registered in `chat.py`, use:
+Accepted 100M / 2B atomic R-SFT R0:
 
 ```bash
 python chat.py --model_params 100M --num_tokens 2B --r-sft
 ```
 
-No R-SFT run ID is invented in advance. Until one is frozen and registered, `--r-sft` fails closed with `none registered yet`.
+This resolves the completed run `100m-2b-rsft-r0-atomic-pilot-001`. The artifact was originally produced as the atomic arm of the delimiter pilot and is now the accepted R0 R-SFT artifact; it is not renamed or retrained.
 
 Hyphenated spellings remain aliases for the profile arguments, and `--pretrained` aliases `--pre-trained`:
 
@@ -93,12 +99,12 @@ semantic_vocab_size = 50,257
 
 ```text
 semantic_vocab_size = 50,260
-reasoning-start ID = 50,257
-reasoning-end ID   = 50,258
-answer-start ID    = 50,259
+reasoning-start ID = 50,257  <think>
+reasoning-end ID   = 50,258  </think>
+answer-start ID    = 50,259  <answer>
 ```
 
-The exact three marker strings are intentionally not hardcoded yet. The verified R-SFT checkpoint must carry them in:
+The three marker strings are now part of the accepted atomic R-SFT protocol. The verified R-SFT checkpoint must carry them in:
 
 ```text
 checkpoint.json
@@ -106,7 +112,15 @@ checkpoint.json
     reasoning_tokenizer
 ```
 
-The metadata records the GPT-2 base encoding, semantic vocabulary size, each marker string, and its fixed ID. `chat.py` reconstructs the extended encoder from this metadata. Missing/malformed metadata, wrong IDs, or a model/tokenizer vocabulary mismatch aborts loading.
+and must identify its serialization as:
+
+```text
+pipeline_state.rsft_format.version = 1
+pipeline_state.rsft_format.stage = r_sft_r0
+pipeline_state.rsft_format.delimiter_format = atomic
+```
+
+The reasoning-tokenizer metadata records the GPT-2 base encoding, semantic vocabulary size, each marker string, and its fixed ID. `chat.py` reconstructs the extended encoder from this metadata. Missing/malformed metadata, wrong IDs, noncanonical marker spellings, a textual R-SFT format, or a model/tokenizer vocabulary mismatch aborts loading.
 
 The extended encoder treats each configured marker as one atomic token, but delegates all ordinary text to the existing GPT-2 encoding. Its decoder and single-token byte decoder also understand the promoted IDs, so streamed output and retained assistant history round-trip through the same token contract.
 
@@ -134,7 +148,7 @@ For SFT profiles, the CLI downloads the verified Hugging Face `latest` checkpoin
 4. `consumed_tokens == warmup_tokens + stable_tokens + decay_tokens`;
 5. `semantic_vocab_size=50_257`.
 
-For R-SFT profiles, the same verified post-training checkpoint path is used, but the loader additionally requires the artifact-carried reasoning-tokenizer contract and `semantic_vocab_size=50_260`.
+For R-SFT profiles, the same verified post-training checkpoint path is used, but the loader additionally requires the atomic `r_sft_r0` format, the exact `<think>`, `</think>`, `<answer>` reasoning-token contract, and `semantic_vocab_size=50_260`.
 
 For the 100M / 2B pretrained profile, the CLI uses the canonical stable `models/100m-2b-data-001/...` artifact path, verifies its native `local_manifest.json`, requires the same embedded WSD schedule-completion equality, and requires the ordinary 50,257-token vocabulary before loading the weights.
 
