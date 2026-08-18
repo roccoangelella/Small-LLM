@@ -1,0 +1,583 @@
+{
+  "batch_size": 10,
+  "batches": [
+    {
+      "byte_size": 5577,
+      "difficulty": "L1",
+      "path": "batches/001-INF-L1.json",
+      "records": 10,
+      "request_index": 1,
+      "sha256": "5abcfca59e0395dc30317bb35db8b625fb7a1d75960e640224521084ccc12cd9",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 7170,
+      "difficulty": "L1",
+      "path": "batches/002-INF-L1.json",
+      "records": 10,
+      "request_index": 2,
+      "sha256": "4485d011dbd5afdf8d248ff2d455df947511ad709093fa0955a276c864283275",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 6133,
+      "difficulty": "L1",
+      "path": "batches/003-INF-L1.json",
+      "records": 10,
+      "request_index": 3,
+      "sha256": "837b9d1c9db12a9ff5c67a7692485ac66837024c4a5d84292e7ca378f54860e1",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 7231,
+      "difficulty": "L2",
+      "path": "batches/004-INF-L2.json",
+      "records": 10,
+      "request_index": 4,
+      "sha256": "9ade40156b7bffaab5142fbb941d338ff4f590fa2960b4dd763052d463e5dea8",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 7346,
+      "difficulty": "L2",
+      "path": "batches/005-INF-L2.json",
+      "records": 10,
+      "request_index": 5,
+      "sha256": "b5fb33b28c2ff56223cfddac1218ae9693b3c4da16105de83c5cecf4ff5c5070",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 6678,
+      "difficulty": "L2",
+      "path": "batches/006-INF-L2.json",
+      "records": 10,
+      "request_index": 6,
+      "sha256": "2fa666a8cc053ed5853b07810d6f7a0fa770605a3601e11ad009b5c92b7a3e3d",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 6421,
+      "difficulty": "L3",
+      "path": "batches/007-INF-L3.json",
+      "records": 10,
+      "request_index": 7,
+      "sha256": "e93d0d3bd4392af585e3b93e39d334dd83983fcfd9dc4046d476c1d589002f85",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 7133,
+      "difficulty": "L3",
+      "path": "batches/008-INF-L3.json",
+      "records": 10,
+      "request_index": 8,
+      "sha256": "303159a7776dfa9c75a28d89b022a1a9f235aad12565447a7f188f6c369faea8",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 5527,
+      "difficulty": "L3",
+      "path": "batches/009-INF-L3.json",
+      "records": 10,
+      "request_index": 9,
+      "sha256": "f597418c7ae48fa852b9c6f299d92f543e04fe862e096188b43980e80505ef42",
+      "skill": "INF"
+    },
+    {
+      "byte_size": 5473,
+      "difficulty": "L1",
+      "path": "batches/010-DED-L1.json",
+      "records": 10,
+      "request_index": 10,
+      "sha256": "49c01929626befaf6e2de50fcdf62499b328b344f90bfae081d2d274d020970d",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 6166,
+      "difficulty": "L1",
+      "path": "batches/011-DED-L1.json",
+      "records": 10,
+      "request_index": 11,
+      "sha256": "eb3c01aaeae1010ec5edf8ba0caab0da75bcd8718a364be1e5a137caf39b9b31",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 4989,
+      "difficulty": "L1",
+      "path": "batches/012-DED-L1.json",
+      "records": 10,
+      "request_index": 12,
+      "sha256": "72afc21e6137f45d968d1faa65fabe362dc9e72605ec89f1446b3902b894fdbd",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 7096,
+      "difficulty": "L2",
+      "path": "batches/013-DED-L2.json",
+      "records": 10,
+      "request_index": 13,
+      "sha256": "db01a1a83a2d54ea1821007bc215e5065fab1090ec160e345209536d27c248b6",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 8007,
+      "difficulty": "L2",
+      "path": "batches/014-DED-L2.json",
+      "records": 10,
+      "request_index": 14,
+      "sha256": "e72eff8844c3c8cabda5bc81b28fbb3381ab05297012f233466913313146ac8a",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 6957,
+      "difficulty": "L2",
+      "path": "batches/015-DED-L2.json",
+      "records": 10,
+      "request_index": 15,
+      "sha256": "2a49d5d99fd1b64170f2186d6a7694be1f487cb7a0099c38169b9c5a9360bfeb",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 8181,
+      "difficulty": "L3",
+      "path": "batches/016-DED-L3.json",
+      "records": 10,
+      "request_index": 16,
+      "sha256": "bb9b89a650d515c767b10a6ad31ccf100bc50f995e3e5816d53053401d74fc7c",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 7764,
+      "difficulty": "L3",
+      "path": "batches/017-DED-L3.json",
+      "records": 10,
+      "request_index": 17,
+      "sha256": "72d9e586e3b60a6a41495b27abd2f7c3559d66c3ea7deff74c045289d321aaac",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 8375,
+      "difficulty": "L3",
+      "path": "batches/018-DED-L3.json",
+      "records": 10,
+      "request_index": 18,
+      "sha256": "c5196c8aee1d3b0cac66de936cdf1c0108799ff3cef402727298974d29eb6bb0",
+      "skill": "DED"
+    },
+    {
+      "byte_size": 5776,
+      "difficulty": "L1",
+      "path": "batches/019-REL-L1.json",
+      "records": 10,
+      "request_index": 19,
+      "sha256": "94fb1069ad30d866ffda9b97820bc871b4ea136f9542f915cbdbc7f153ceafb1",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 5474,
+      "difficulty": "L1",
+      "path": "batches/020-REL-L1.json",
+      "records": 10,
+      "request_index": 20,
+      "sha256": "a6b0958d193d4656696b3e58d6ab2d322c648808d293bb6cb4ea2df07123e3ba",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 5163,
+      "difficulty": "L1",
+      "path": "batches/021-REL-L1.json",
+      "records": 10,
+      "request_index": 21,
+      "sha256": "51f15b7e7b0b344c648d00a308ff01d479a51df8ba07660d61fb962476145bbd",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 9793,
+      "difficulty": "L2",
+      "path": "batches/022-REL-L2.json",
+      "records": 10,
+      "request_index": 22,
+      "sha256": "352c091e57a6fb31fa2513584583bfd218309b099e6177d2fdbec5dd56d6bb8c",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 6591,
+      "difficulty": "L2",
+      "path": "batches/023-REL-L2.json",
+      "records": 10,
+      "request_index": 23,
+      "sha256": "5a8ecc77c71bbeb66b6d6eab478bcc10b870e8301a01e6dfd92812650c3d13ca",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 6748,
+      "difficulty": "L2",
+      "path": "batches/024-REL-L2.json",
+      "records": 10,
+      "request_index": 24,
+      "sha256": "43a94342f18db0083cc1f1bb410090b8ea0e2549e79963f6c64746024dae7077",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 10727,
+      "difficulty": "L3",
+      "path": "batches/025-REL-L3.json",
+      "records": 10,
+      "request_index": 25,
+      "sha256": "3dca45e110be483fe50efe0c88052447757da04feed71460359dc1e2581e5073",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 10445,
+      "difficulty": "L3",
+      "path": "batches/026-REL-L3.json",
+      "records": 10,
+      "request_index": 26,
+      "sha256": "f38a36e5867c57a84106f96a919b871ef7664f7984ab1bd2b7e1e99046d54fb8",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 9064,
+      "difficulty": "L3",
+      "path": "batches/027-REL-L3.json",
+      "records": 10,
+      "request_index": 27,
+      "sha256": "0f1df124115070c84eeb4319a7c90d3fdb436e2fc160edb7b8d6e6d20e4790ca",
+      "skill": "REL"
+    },
+    {
+      "byte_size": 5927,
+      "difficulty": "L1",
+      "path": "batches/028-CSP-L1.json",
+      "records": 10,
+      "request_index": 28,
+      "sha256": "e854f2b372aa8c5a3e808b32eedf2f75f3c53e32774b3cc1b2acb35de36841ac",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 5437,
+      "difficulty": "L1",
+      "path": "batches/029-CSP-L1.json",
+      "records": 10,
+      "request_index": 29,
+      "sha256": "1646bf5c03444743b68636d029d50fc9244ebb15434ab1afa648ba3f94665196",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 9096,
+      "difficulty": "L1",
+      "path": "batches/030-CSP-L1.json",
+      "records": 10,
+      "request_index": 30,
+      "sha256": "29a48dc62f9321a56d215a84560e706e2ee4e301ea4485750663641de01ae8c4",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 9446,
+      "difficulty": "L2",
+      "path": "batches/031-CSP-L2.json",
+      "records": 10,
+      "request_index": 31,
+      "sha256": "a5f50bec49b67ec66d454e302cbdf17432c920111f70507cb072b38818474e13",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 5961,
+      "difficulty": "L2",
+      "path": "batches/032-CSP-L2.json",
+      "records": 10,
+      "request_index": 32,
+      "sha256": "5e773000581e1014534bdedd15d024730d68db11496992a165835bf6afa35294",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 8541,
+      "difficulty": "L2",
+      "path": "batches/033-CSP-L2.json",
+      "records": 10,
+      "request_index": 33,
+      "sha256": "1d4e5e65d922d9a4e138b5ff71a5af3a63d30a3b41dce4c2bc1789784e3a30cb",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 8493,
+      "difficulty": "L3",
+      "path": "batches/034-CSP-L3.json",
+      "records": 10,
+      "request_index": 34,
+      "sha256": "b9218f75ee844f22b1b474d53f616e2ebdaa4c7d3abe6ac98b19406524c7f640",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 6338,
+      "difficulty": "L3",
+      "path": "batches/035-CSP-L3.json",
+      "records": 10,
+      "request_index": 35,
+      "sha256": "9fdb834570f4ed80fe111445f221ea60aaece00d742115066a837940e0c2370f",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 4624,
+      "difficulty": "L3",
+      "path": "batches/036-CSP-L3.json",
+      "records": 10,
+      "request_index": 36,
+      "sha256": "fd978225756e9844adbca66968869866fea26958d7959cd0e60d737b5cf494b7",
+      "skill": "CSP"
+    },
+    {
+      "byte_size": 15053,
+      "difficulty": "L1",
+      "path": "batches/037-IND-L1.json",
+      "records": 10,
+      "request_index": 37,
+      "sha256": "10d8e609143fad20842e8413cb4b1cb85db01609ca6976735c2e0327e61a215f",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 5641,
+      "difficulty": "L1",
+      "path": "batches/038-IND-L1.json",
+      "records": 10,
+      "request_index": 38,
+      "sha256": "8e4fdc8a78a0ba2b57553cb021041b353070fcfb3ad5e785f41ff2e4c34e2250",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 7345,
+      "difficulty": "L1",
+      "path": "batches/039-IND-L1.json",
+      "records": 10,
+      "request_index": 39,
+      "sha256": "d85266274b98f3dd59b25c8ee208989d0d5a350e840b7a076cdc5cda373487f2",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 10054,
+      "difficulty": "L2",
+      "path": "batches/040-IND-L2.json",
+      "records": 10,
+      "request_index": 40,
+      "sha256": "24f9205a8e22f1da5566535582ad5bd24ffd51ba7a56e2a21ebe68472c0407ae",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 7548,
+      "difficulty": "L2",
+      "path": "batches/041-IND-L2.json",
+      "records": 10,
+      "request_index": 41,
+      "sha256": "f8cb298a3476703a20b463b056fe60343a54959ec7a5d8bda15f79f13f56fcb0",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 10100,
+      "difficulty": "L2",
+      "path": "batches/042-IND-L2.json",
+      "records": 10,
+      "request_index": 42,
+      "sha256": "bf0e0051a0bd4d7554ad635ed7c6b28ec007dc0fc0ee16c3f20d5972976fd3e1",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 9981,
+      "difficulty": "L3",
+      "path": "batches/043-IND-L3.json",
+      "records": 10,
+      "request_index": 43,
+      "sha256": "4cfaec9d23f12c24c8e8026cff7e6c6c3d8db8f1d71e153c29d6473b6ec1a6e5",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 7502,
+      "difficulty": "L3",
+      "path": "batches/044-IND-L3.json",
+      "records": 10,
+      "request_index": 44,
+      "sha256": "d5d616e02cc428fb1d1f6f686c84c72e6f4d1a1e93de23d0485859ba531a43a4",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 9156,
+      "difficulty": "L3",
+      "path": "batches/045-IND-L3.json",
+      "records": 10,
+      "request_index": 45,
+      "sha256": "80177248a93049fccdc97583a2ceef75a32ace0331668160d0e06277453d77b0",
+      "skill": "IND"
+    },
+    {
+      "byte_size": 6319,
+      "difficulty": "L1",
+      "path": "batches/046-ABD-L1.json",
+      "records": 10,
+      "request_index": 46,
+      "sha256": "1d0e457c2434403d0622eee434b6e77b0f2597cdeda7b5cb7f6d40fe46c892bf",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 7428,
+      "difficulty": "L1",
+      "path": "batches/047-ABD-L1.json",
+      "records": 10,
+      "request_index": 47,
+      "sha256": "599287a31ee74f4f4a3f8e8856701b0dc4609e662dbe121dcedafb09b105b130",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 7416,
+      "difficulty": "L1",
+      "path": "batches/048-ABD-L1.json",
+      "records": 10,
+      "request_index": 48,
+      "sha256": "cab11690585a7c15618df3ca0c42d5be8ae5ea7126d8f5d7b5643f78bd758416",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 8164,
+      "difficulty": "L2",
+      "path": "batches/049-ABD-L2.json",
+      "records": 10,
+      "request_index": 49,
+      "sha256": "6eee95ae04f601d97a6d9ff00cddbf09226cea63f2b44ba80eae549005cd3ac4",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 9132,
+      "difficulty": "L2",
+      "path": "batches/050-ABD-L2.json",
+      "records": 10,
+      "request_index": 50,
+      "sha256": "20c77e54332731f682d8494769730a4aeff42090c6b794d0ed151928b9f46b8f",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 10134,
+      "difficulty": "L2",
+      "path": "batches/051-ABD-L2.json",
+      "records": 10,
+      "request_index": 51,
+      "sha256": "94bc7ba63598dfd9edfb2b7d0a401d48af3600ab7e0731f4e819b8c6987a9a7a",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 10107,
+      "difficulty": "L3",
+      "path": "batches/052-ABD-L3.json",
+      "records": 10,
+      "request_index": 52,
+      "sha256": "d3ebfe2c26f4b278054226e9f591e3f5ca909cc2c879c26cf9df84ff6ea9544e",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 9038,
+      "difficulty": "L3",
+      "path": "batches/053-ABD-L3.json",
+      "records": 10,
+      "request_index": 53,
+      "sha256": "436be5ecfbcff934acd59a628e7a809babf0bbfe19fc70eb3cbbfa8c6e675dfa",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 9975,
+      "difficulty": "L3",
+      "path": "batches/054-ABD-L3.json",
+      "records": 10,
+      "request_index": 54,
+      "sha256": "f06edbe038d2cd8a4f392dbba51e57a2c99cb2a025ee8b0bcc1bee771dcfc2b3",
+      "skill": "ABD"
+    },
+    {
+      "byte_size": 6647,
+      "difficulty": "L1",
+      "path": "batches/055-MAG-L1.json",
+      "records": 10,
+      "request_index": 55,
+      "sha256": "db1e6487070bb6207bae7d4dadc79b1e30d9dd1f6200a190eda90df94bf1f94d",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 4104,
+      "difficulty": "L1",
+      "path": "batches/056-MAG-L1.json",
+      "records": 10,
+      "request_index": 56,
+      "sha256": "07a380064f1a7539dbf743c67edefaa0eadad1382a65402ecd44255bc03b8264",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 6650,
+      "difficulty": "L1",
+      "path": "batches/057-MAG-L1.json",
+      "records": 10,
+      "request_index": 57,
+      "sha256": "ad675a0136cad466caa9dde9694b0ce37c4bfb6acc0176bb2c323d188de15b6d",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 7855,
+      "difficulty": "L2",
+      "path": "batches/058-MAG-L2.json",
+      "records": 10,
+      "request_index": 58,
+      "sha256": "e125d5ebb21b4976887380f9aeebea1f9079d14c6032d3af668fcc2c977c9932",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 7737,
+      "difficulty": "L2",
+      "path": "batches/059-MAG-L2.json",
+      "records": 10,
+      "request_index": 59,
+      "sha256": "26bcc6a5adf4b84d3a5227fb4cbc277e08f455e17460239d5ce0c0c528888182",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 6450,
+      "difficulty": "L2",
+      "path": "batches/060-MAG-L2.json",
+      "records": 10,
+      "request_index": 60,
+      "sha256": "d8522aabfeb56167cbac138f0567f74af6426bb2d69a1d341c4ffa04dcefe4e0",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 7728,
+      "difficulty": "L3",
+      "path": "batches/061-MAG-L3.json",
+      "records": 10,
+      "request_index": 61,
+      "sha256": "f990aabf66bfa5124abb5cb6bb6cf16573db2f16814da72107989d489e5f2427",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 9431,
+      "difficulty": "L3",
+      "path": "batches/062-MAG-L3.json",
+      "records": 10,
+      "request_index": 62,
+      "sha256": "6b293eaa56c1b3a9646a98707622218c26a0390191c0ecb81ff3fdd81f7bdb5b",
+      "skill": "MAG"
+    },
+    {
+      "byte_size": 10110,
+      "difficulty": "L3",
+      "path": "batches/063-MAG-L3.json",
+      "records": 10,
+      "request_index": 63,
+      "sha256": "3783bfee2415ba6dcf306373ae5b3ec7568853f1d0a57a10138beb28e578db23",
+      "skill": "MAG"
+    }
+  ],
+  "examples_per_cell": 30,
+  "manifest_sha256": "4f395d1e7285dfd05ec408bffec649b2bb32a2e0115a7408b64acd671d5cd32d",
+  "reasoning_jsonl": {
+    "byte_size": 479011,
+    "path": "reasoning.jsonl",
+    "records": 630,
+    "sha256": "4692d82160c3d107732440bf9a4e30e685feef2400f7ad6ca575a1cd06efb113"
+  },
+  "schema": "small-llm-rsft-generation-manifest-v1",
+  "seed": 17,
+  "total_calls": 63
+}
