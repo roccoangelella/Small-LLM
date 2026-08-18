@@ -6,7 +6,7 @@
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
-TEMPERATURE = 1.0
+TEMPERATURE = 0.5
 TOP_K = 20
 TOP_P = 0.90
 MAX_NEW_TOKENS = 64
@@ -23,7 +23,9 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Mapping, Sequence
+from dotenv import load_dotenv
 
+load_dotenv()
 
 _SOURCE_SFT = "sft"
 _SOURCE_STABLE_MODEL = "stable_model"

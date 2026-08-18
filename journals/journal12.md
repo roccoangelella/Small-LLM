@@ -15,3 +15,16 @@ The 15500 proved our point:
 
 LR during most of the run has been too high for running a fair training, pushing the weights away from the minimum. 
 To solve this, we'll changing our LR scheduling policy: once the warmup ends, a gentle decay starts, bringing the lr down to around -60% with until roughly the 10% of the remaining update stepd. At that point another decay starts, aiming at lowering the lr down to roughly -90% compared  to the initial value.
+---
+Appearently we celebrated too early:
+![alt text](image-4.png)
+
+The rise of loss coincides with the end of "fast" weight decay. This suggests we need a more aggressive decay. This 10B run is cosing us two/three Beam accounts, lol. Anyway, since this topic will come back sooner or later, I started another run with a much more aggressive decay, and we'll see how fur it goes. That's kinda science right?
+
+---
+
+With all this mess I almost forgot that we had the fine tuned 100M 2B model waiting for us. I tested it, and it's quite fun to play with!  
+![alt text](<2026-08-15 10-16-29.gif>)
+
+Better than how i expected! And also very fast after you compile triton kernels for the first time on any device.
+ 
