@@ -38,24 +38,64 @@ def _load_dual_adapter():
     return module
 
 
-def _bundle(tmp_path: Path, targets: int = 12_345) -> Path:
-    root = tmp_path / "bundle"
+def _token_metadata() -> dict[str, object]:
+    return {
+        "version": 1,
+        "base_encoding": "gpt2",
+        "semantic_vocab_size": 50_260,
+        "special_tokens": {
+            "reasoning_start": {"id": 50_257, "text": "<think>"},
+            "reasoning_end": {"id": 50_258, "text": "</think>"},
+            "answer_start": {"id": 50_259, "text": "<answer>"},
+        },
+    }
+
+
+def _bundle(
+    tmp_path: Path,
+    *,
+    targets: int = 63_000,
+    delimiter: str = "atomic",
+    contract: str | None = "atomic-production-v1",
+    optimizer_target_tokens: int = 32_768,
+) -> Path:
+    root = tmp_path / f"bundle-{delimiter}-{contract or 'pilot'}"
     root.mkdir()
+    rsft = {
+        "stage": "r_sft_r0",
+        "delimiter_format": delimiter,
+        "reasoning_tokenizer": _token_metadata(),
+        "reasoning_share_requested": 0.9,
+        "retention_share_requested": 0.1,
+    }
+    if contract is not None:
+        rsft["contract"] = contract
     (root / "bundle-manifest.json").write_text(
-        json.dumps({"train_target_tokens_requested": targets}),
+        json.dumps(
+            {
+                "schema": "small-llm-sft-bundle",
+                "train_target_tokens_requested": targets,
+                "optimizer_target_tokens": optimizer_target_tokens,
+                "rsft": rsft,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "reasoning-tokens.json").write_text(
+        json.dumps(_token_metadata()),
         encoding="utf-8",
     )
     return root
 
 
-def _token_spec(tmp_path: Path) -> Path:
-    path = tmp_path / "reasoning-tokens.json"
+def _compact_token_spec(tmp_path: Path) -> Path:
+    path = tmp_path / "reasoning-tokens-compact.json"
     path.write_text(
         json.dumps(
             {
-                "reasoning_start": "<|reasoning|>",
-                "reasoning_end": "<|end_reasoning|>",
-                "answer_start": "<|answer|>",
+                "reasoning_start": "<think>",
+                "reasoning_end": "</think>",
+                "answer_start": "<answer>",
             }
         ),
         encoding="utf-8",
@@ -67,11 +107,12 @@ def test_profile_is_fixed_to_100m_2b() -> None:
     profile = rsft_runtime.resolve_profile(
         100_000_000,
         2_000_000_000,
-        run_id="100m-2b-rsft-r0-test",
+        run_id=rsft_runtime.PRODUCTION_RUN_ID,
         delimiter_format="atomic",
     )
     assert profile.parent_run_id == "100m-2b-sft-s0-001"
     assert profile.microbatch_size == 2
+    assert profile.sft_run_id == "100m-2b-rsft-r0-001"
 
     with pytest.raises(rsft_runtime.base.RuntimeFailure):
         rsft_runtime.resolve_profile(
@@ -91,18 +132,18 @@ def test_bundle_budget_is_exact_not_parent_fraction(tmp_path: Path) -> None:
 def test_compact_reasoning_token_spec_uses_fixed_promoted_ids(tmp_path: Path) -> None:
     adapter = _load_dual_adapter()
     tokenizer = _load_rsft_module("tokenizer")
-    spec = adapter.load_reasoning_token_spec(_token_spec(tmp_path), tokenizer)
+    spec = adapter.load_reasoning_token_spec(_compact_token_spec(tmp_path), tokenizer)
     assert spec.special_tokens == {
-        "<|reasoning|>": 50_257,
-        "<|end_reasoning|>": 50_258,
-        "<|answer|>": 50_259,
+        "<think>": 50_257,
+        "</think>": 50_258,
+        "<answer>": 50_259,
     }
 
 
-def test_pipeline_identity_separates_atomic_and_textual_arms(tmp_path: Path) -> None:
+def test_pipeline_identity_keeps_historical_ablation_distinct(tmp_path: Path) -> None:
     adapter = _load_dual_adapter()
     tokenizer = _load_rsft_module("tokenizer")
-    token_spec = adapter.load_reasoning_token_spec(_token_spec(tmp_path), tokenizer)
+    token_spec = adapter.load_reasoning_token_spec(_compact_token_spec(tmp_path), tokenizer)
     common = {
         "parent_identity": {"identity_sha256": "a" * 64},
         "bundle_manifest": {"manifest_sha256": "b" * 64},
@@ -115,12 +156,11 @@ def test_pipeline_identity_separates_atomic_and_textual_arms(tmp_path: Path) -> 
     assert atomic["reasoning_tokenizer"] == textual["reasoning_tokenizer"]
 
 
-def test_dry_run_builds_two_t4_torchrun_command(
+def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     bundle = _bundle(tmp_path, targets=63_000)
-    token_spec = _token_spec(tmp_path)
     result = rsft_cli.main(
         [
             "train",
@@ -130,12 +170,6 @@ def test_dry_run_builds_two_t4_torchrun_command(
             "2B",
             "--dataset-dir",
             str(bundle),
-            "--run-id",
-            "100m-2b-rsft-r0-atomic-pilot-test",
-            "--delimiter-format",
-            "atomic",
-            "--token-spec",
-            str(token_spec),
             "--parent-repo-id",
             "owner/parent",
             "--checkpoint-repo-id",
@@ -145,10 +179,78 @@ def test_dry_run_builds_two_t4_torchrun_command(
     )
     assert result == 0
     output = capsys.readouterr().out
-    assert '"topology": "2xTesla-T4-DDP"' in output
+    assert '"contract": "atomic-production-v1"' in output
+    assert '"delimiter_format": "atomic"' in output
+    assert '"run_id": "100m-2b-rsft-r0-001"' in output
     assert '"bundle_target_tokens": 63000' in output
     assert "torch.distributed.run" in output
     assert "--nproc-per-node=2" in output
     assert "dual_t4_rsft.py" in output
-    assert "--rsft-delimiter-format" in output
-    assert "atomic" in output
+
+
+def test_production_rejects_textual_bundle(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, delimiter="textual")
+    with pytest.raises(SystemExit):
+        rsft_cli.main(
+            [
+                "train",
+                "--model",
+                "100M",
+                "--tokens",
+                "2B",
+                "--dataset-dir",
+                str(bundle),
+                "--parent-repo-id",
+                "owner/parent",
+                "--checkpoint-repo-id",
+                "owner/checkpoints",
+                "--dry-run",
+            ]
+        )
+
+
+def test_production_rejects_pilot_optimizer_geometry(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, optimizer_target_tokens=2_048)
+    with pytest.raises(SystemExit):
+        rsft_cli.main(
+            [
+                "train",
+                "--model",
+                "100M",
+                "--tokens",
+                "2B",
+                "--dataset-dir",
+                str(bundle),
+                "--parent-repo-id",
+                "owner/parent",
+                "--checkpoint-repo-id",
+                "owner/checkpoints",
+                "--dry-run",
+            ]
+        )
+
+
+def test_historical_ablation_still_has_explicit_textual_arm(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = rsft_cli.main(
+        [
+            "ablation",
+            "--model",
+            "100M",
+            "--tokens",
+            "2B",
+            "--delimiter-format",
+            "textual",
+            "--parent-repo-id",
+            "owner/parent",
+            "--checkpoint-repo-id",
+            "owner/checkpoints",
+            "--dry-run",
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"contract": "pilot-ablation-v1"' in output
+    assert '"delimiter_format": "textual"' in output
+    assert '"run_id": "100m-2b-rsft-r0-textual-pilot-001"' in output
