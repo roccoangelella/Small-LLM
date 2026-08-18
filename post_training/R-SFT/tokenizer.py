@@ -1,9 +1,11 @@
 """GPT-2-compatible tokenizer extension for R-SFT reasoning control tokens.
 
-The token IDs are fixed by the accepted padded-row promotion contract, while the
-three marker strings remain artifact-provided until the serialization ablation
-freezes their spelling.  This module deliberately wraps the existing GPT-2
-encoding instead of mutating the base S0 tokenizer.
+The token IDs are fixed by the accepted padded-row promotion contract. Production
+R-SFT freezes their spellings to ``<think>``, ``</think>``, and ``<answer>``;
+artifact-carried metadata remains the fail-closed transport contract and also
+allows historical delimiter-ablation checkpoints to stay self-describing.
+This module wraps the existing GPT-2 encoding instead of mutating the base S0
+tokenizer.
 """
 
 from __future__ import annotations
@@ -183,43 +185,36 @@ class ReasoningGPT2Encoder:
         return str(decode(list(token_ids)))
 
     def decode(self, token_ids: Sequence[int]) -> str:
-        """Decode both ordinary GPT-2 IDs and the three promoted reasoning IDs."""
+        """Decode base IDs and promoted reasoning IDs without exposing padding rows."""
 
-        parts: list[str] = []
-        ordinary: list[int] = []
-
-        def flush() -> None:
-            if ordinary:
-                parts.append(self._decode_base(ordinary))
-                ordinary.clear()
-
+        pieces: list[str] = []
+        base_buffer: list[int] = []
         for raw_token_id in token_ids:
-            if isinstance(raw_token_id, bool) or not isinstance(raw_token_id, int):
-                raise ValueError("token IDs must be integers")
-            token = self._id_to_token.get(raw_token_id)
-            if token is not None:
-                flush()
-                parts.append(token)
-                continue
-            if not 0 <= raw_token_id < BASE_SEMANTIC_VOCAB_SIZE:
-                raise ValueError(f"token ID {raw_token_id} is outside the R-SFT vocabulary")
-            ordinary.append(raw_token_id)
-        flush()
-        return "".join(parts)
+            token_id = int(raw_token_id)
+            if token_id in self._id_to_token:
+                if base_buffer:
+                    pieces.append(self._decode_base(base_buffer))
+                    base_buffer.clear()
+                pieces.append(self._id_to_token[token_id])
+            elif 0 <= token_id < BASE_SEMANTIC_VOCAB_SIZE:
+                base_buffer.append(token_id)
+            else:
+                raise ValueError(f"token ID {token_id} is outside the R-SFT semantic vocabulary")
+        if base_buffer:
+            pieces.append(self._decode_base(base_buffer))
+        return "".join(pieces)
 
     def decode_single_token_bytes(self, token_id: int) -> bytes:
-        """Support the chat streamer's byte-exact incremental decoding contract."""
+        """Support the same streaming interface used by ``chat.py``."""
 
-        if isinstance(token_id, bool) or not isinstance(token_id, int):
-            raise ValueError("token ID must be an integer")
-        token = self._id_to_token.get(token_id)
-        if token is not None:
-            return token.encode("utf-8")
+        token_id = int(token_id)
+        if token_id in self._id_to_token:
+            return self._id_to_token[token_id].encode("utf-8")
         if not 0 <= token_id < BASE_SEMANTIC_VOCAB_SIZE:
-            raise ValueError(f"token ID {token_id} is outside the R-SFT vocabulary")
+            raise ValueError(f"token ID {token_id} is outside the R-SFT semantic vocabulary")
         decode_bytes = getattr(self._base, "decode_single_token_bytes", None)
         if not callable(decode_bytes):
-            raise TypeError("base GPT-2 encoding must expose decode_single_token_bytes(token_id)")
+            return self._decode_base([token_id]).encode("utf-8")
         return bytes(decode_bytes(token_id))
 
 
@@ -233,5 +228,6 @@ __all__ = [
     "ReasoningGPT2Encoder",
     "ReasoningTokenSpec",
     "TOKENIZER_METADATA_KEY",
+    "TOKENIZER_METADATA_VERSION",
     "spec_from_pipeline_state",
 ]
