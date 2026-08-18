@@ -173,9 +173,59 @@ class KaggleTritonCacheTests(unittest.TestCase):
 
     def test_cache_dataset_publication_is_private_by_default(self) -> None:
         source = (KAGGLE / "triton_cache.py").read_text(encoding="utf-8")
-        self.assertIn('"datasets",\n            "create"', source)
+        self.assertIn('"datasets",\n                "create"', source)
         self.assertNotIn('"--public"', source)
         self.assertIn('"licenses": [{"name": "other"}]', source)
+
+    def test_publication_stages_legacy_tar_as_opaque_without_repacking(self) -> None:
+        module = _load("small_llm_triton_cache_publish_stage_test", KAGGLE / "triton_cache.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            temp = Path(temporary)
+            built = temp / "built"
+            package = temp / "legacy-package"
+            target = temp / "canonical"
+            built.mkdir()
+            (built / "kernel.cubin").write_bytes(b"opaque-cache-bytes")
+            _stamp(module, built)
+
+            with mock.patch.dict(
+                os.environ,
+                {module.CACHE_DIR_ENV: str(target)},
+                clear=False,
+            ):
+                module.package_cache(cache_root=built, output_dir=package)
+
+                modern_archive = package / module.ARCHIVE_NAME
+                legacy_archive = package / module.LEGACY_ARCHIVE_NAME
+                modern_archive.rename(legacy_archive)
+                manifest_path = package / module.MANIFEST_NAME
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                manifest["archive"]["name"] = module.LEGACY_ARCHIVE_NAME
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                original_sha = module._sha256_path(legacy_archive)
+
+                with module._publication_package(
+                    package,
+                    "roccoangelella/small-llm-t4-triton-cache",
+                ) as staged:
+                    staged_archive = staged / module.ARCHIVE_NAME
+                    staged_manifest = json.loads(
+                        (staged / module.MANIFEST_NAME).read_text(encoding="utf-8")
+                    )
+                    self.assertTrue(staged_archive.is_file())
+                    self.assertEqual(module._sha256_path(staged_archive), original_sha)
+                    self.assertEqual(
+                        staged_manifest["archive"]["name"],
+                        module.ARCHIVE_NAME,
+                    )
+                    self.assertFalse((staged / module.LEGACY_ARCHIVE_NAME).exists())
+
+                self.assertTrue(legacy_archive.is_file())
+                self.assertFalse(modern_archive.exists())
+                self.assertEqual(module._sha256_path(legacy_archive), original_sha)
 
     def test_publish_rejects_kaggle_cli_false_positive(self) -> None:
         module = _load("small_llm_triton_cache_publish_error_test", KAGGLE / "triton_cache.py")
@@ -196,7 +246,13 @@ class KaggleTritonCacheTests(unittest.TestCase):
             ]
             output = io.StringIO()
             with contextlib.ExitStack() as stack:
-                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "_publication_package",
+                        return_value=contextlib.nullcontext(package),
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
                 )
@@ -242,7 +298,13 @@ class KaggleTritonCacheTests(unittest.TestCase):
             ]
             output = io.StringIO()
             with contextlib.ExitStack() as stack:
-                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "_publication_package",
+                        return_value=contextlib.nullcontext(package),
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
                 )
@@ -286,7 +348,13 @@ class KaggleTritonCacheTests(unittest.TestCase):
                 ),
             ]
             with contextlib.ExitStack() as stack:
-                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(
+                        module,
+                        "_publication_package",
+                        return_value=contextlib.nullcontext(package),
+                    )
+                )
                 stack.enter_context(
                     mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
                 )

@@ -54,7 +54,8 @@ import dual_t4_runtime
 SCHEMA_VERSION = 1
 CACHE_ID = "t4-sm75-py313-torch210-cu128-triton360-fla052-100m-gdn2-mb2-ctx2048-v1"
 MANIFEST_NAME = "small_llm_triton_cache_manifest.json"
-ARCHIVE_NAME = "triton-cache.tar"
+ARCHIVE_NAME = "triton-cache.tar.opaque"
+LEGACY_ARCHIVE_NAME = "triton-cache.tar"
 BUILD_STAMP_NAME = ".small_llm_triton_cache_build_stamp.json"
 DEFAULT_CACHE_ROOT = Path("/kaggle/working/small-llm/runtime-cache") / CACHE_ID
 DEFAULT_PACKAGE_DIR = Path("/kaggle/working/small-llm-t4-triton-cache-dataset")
@@ -408,10 +409,10 @@ def _validate_manifest(package_dir: Path) -> tuple[Mapping[str, Any], Path]:
     archive_info = manifest.get("archive")
     if not isinstance(archive_info, Mapping):
         raise TritonCacheError("cache manifest lacks archive metadata")
-    archive_name = archive_info.get("name")
-    if archive_name != ARCHIVE_NAME:
+    archive_name = str(archive_info.get("name", ""))
+    if archive_name not in {ARCHIVE_NAME, LEGACY_ARCHIVE_NAME}:
         raise TritonCacheError("cache manifest archive name drifted")
-    archive = package_dir / ARCHIVE_NAME
+    archive = package_dir / archive_name
     if not archive.is_file():
         raise TritonCacheError(f"cache archive is missing: {archive}")
     if int(archive_info.get("size", -1)) != archive.stat().st_size:
@@ -630,6 +631,29 @@ def _write_dataset_metadata(package_dir: Path, handle: str) -> None:
     _write_json(package_dir / "dataset-metadata.json", metadata)
 
 
+@contextlib.contextmanager
+def _publication_package(package_dir: Path, handle: str):
+    """Stage opaque Kaggle upload files without rebuilding/repacking the cache."""
+
+    manifest, archive = _validate_manifest(package_dir)
+    with tempfile.TemporaryDirectory(prefix="small-llm-triton-publish-") as temporary:
+        staging = Path(temporary)
+        staged_archive = staging / ARCHIVE_NAME
+        try:
+            os.link(archive, staged_archive)
+        except OSError:
+            shutil.copy2(archive, staged_archive)
+
+        staged_manifest = dict(manifest)
+        archive_info = manifest.get("archive")
+        assert isinstance(archive_info, Mapping)
+        staged_manifest["archive"] = {**archive_info, "name": ARCHIVE_NAME}
+        _write_json(staging / MANIFEST_NAME, staged_manifest)
+        _write_dataset_metadata(staging, handle)
+        _validate_manifest(staging)
+        yield staging
+
+
 def _completed_output(result: subprocess.CompletedProcess[str]) -> str:
     return "\n".join(
         part.strip()
@@ -742,62 +766,62 @@ def publish_package(package_dir: Path, handle: str) -> None:
     kaggle = shutil.which("kaggle")
     if not kaggle:
         raise TritonCacheError("Kaggle CLI is required for --publish")
-    _validate_manifest(package_dir)
-    _write_dataset_metadata(package_dir, handle)
-    status = _run_kaggle_capture(
-        [kaggle, "datasets", "status", handle],
-        cwd=package_dir,
-    )
-    if status.returncode == 0:
-        command = [
-            kaggle,
-            "datasets",
-            "version",
-            "-p",
-            str(package_dir),
-            "-m",
-            f"refresh {CACHE_ID}",
-            "-r",
-            "skip",
-        ]
-        action = "version"
-    else:
-        command = [
-            kaggle,
-            "datasets",
-            "create",
-            "-p",
-            str(package_dir),
-            "-r",
-            "skip",
-        ]
-        action = "create"
-    print(f"[triton-cache] Kaggle Dataset {action}: {handle}", flush=True)
-    upload = _run_kaggle_capture(command, cwd=package_dir)
-    output = _completed_output(upload)
-    if output:
-        print(output, flush=True)
-    if upload.returncode != 0:
-        raise TritonCacheError(
-            f"Kaggle Dataset {action} command failed for {handle}: "
-            + (output or f"exit status {upload.returncode}")
-        )
-    if "Dataset creation error:" in output or "Dataset version creation error:" in output:
-        raise TritonCacheError(
-            f"Kaggle Dataset {action} was rejected for {handle}: {output}"
-        )
 
-    _verify_published_dataset(
-        kaggle,
-        package_dir=package_dir,
-        handle=handle,
-    )
-    print(
-        f"[triton-cache] published private dataset {handle}; verified remote files "
-        f"{ARCHIVE_NAME} + {MANIFEST_NAME}; attach it to future Kaggle notebooks "
-        "so launch.py can preseed automatically",
-        flush=True,
-    )
+    with _publication_package(package_dir, handle) as upload_dir:
+        status = _run_kaggle_capture(
+            [kaggle, "datasets", "status", handle],
+            cwd=upload_dir,
+        )
+        if status.returncode == 0:
+            command = [
+                kaggle,
+                "datasets",
+                "version",
+                "-p",
+                str(upload_dir),
+                "-m",
+                f"refresh {CACHE_ID}",
+                "-r",
+                "skip",
+            ]
+            action = "version"
+        else:
+            command = [
+                kaggle,
+                "datasets",
+                "create",
+                "-p",
+                str(upload_dir),
+                "-r",
+                "skip",
+            ]
+            action = "create"
+        print(f"[triton-cache] Kaggle Dataset {action}: {handle}", flush=True)
+        upload = _run_kaggle_capture(command, cwd=upload_dir)
+        output = _completed_output(upload)
+        if output:
+            print(output, flush=True)
+        if upload.returncode != 0:
+            raise TritonCacheError(
+                f"Kaggle Dataset {action} command failed for {handle}: "
+                + (output or f"exit status {upload.returncode}")
+            )
+        if "Dataset creation error:" in output or "Dataset version creation error:" in output:
+            raise TritonCacheError(
+                f"Kaggle Dataset {action} was rejected for {handle}: {output}"
+            )
+
+        _verify_published_dataset(
+            kaggle,
+            package_dir=upload_dir,
+            handle=handle,
+        )
+        print(
+            f"[triton-cache] published private dataset {handle}; verified remote files "
+            f"{ARCHIVE_NAME} + {MANIFEST_NAME}; attach it to future Kaggle notebooks "
+            "so launch.py can preseed automatically",
+            flush=True,
+        )
 
 
 def build_cache(*, output_dir: Path, publish: str | None) -> Path:
