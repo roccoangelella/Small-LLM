@@ -42,6 +42,7 @@ class TrainerConfig:
     cooldown_start_tokens: int = 0
     settle_tokens: int = 0
     settle_lr_ratio: float = 1.0
+    base_power: float = 0.5
     seed: int = 17
     max_overflow_retries: int = 3
     checkpoint_every_steps: int = 0
@@ -79,6 +80,7 @@ class TrainerConfig:
             "muon_lr_multiplier",
             "muon_update_rms",
             "max_grad_norm",
+            "base_power",
         )
         for name in positive_floats:
             value = getattr(self, name)
@@ -138,7 +140,7 @@ class TrainerConfig:
                     self.cooldown_start_tokens,
                     self.settle_tokens,
                 )
-            ) or self.settle_lr_ratio != 1.0:
+            ) or self.settle_lr_ratio != 1.0 or self.base_power != 0.5:
                 raise ValueError("constant schedule cannot define schedule token spans")
             return
 
@@ -150,6 +152,7 @@ class TrainerConfig:
                 or self.cooldown_start_tokens
                 or self.settle_tokens
                 or self.settle_lr_ratio != 1.0
+                or self.base_power != 0.5
             ):
                 raise ValueError("wsd schedule cannot define WSqD continuation parameters")
             return
@@ -173,9 +176,9 @@ class TrainerConfig:
                 raise ValueError("wsqd settle_lr_ratio requires positive settle_tokens")
             base_anchor = self.schedule_anchor_tokens
             base_scale = 1.0
-        base_ratio_at_cooldown = base_scale * math.sqrt(
+        base_ratio_at_cooldown = base_scale * (
             base_anchor / self.cooldown_start_tokens
-        )
+        ) ** float(self.base_power)
         if self.minimum_lr_ratio > base_ratio_at_cooldown:
             raise ValueError(
                 "wsqd minimum_lr_ratio cannot exceed the base LR ratio at cooldown start"
@@ -191,10 +194,15 @@ class TrainerConfig:
             payload.pop("cooldown_start_tokens", None)
             payload.pop("settle_tokens", None)
             payload.pop("settle_lr_ratio", None)
-        elif not self.settle_tokens:
-            # Preserve the serialized identity of the first WSqD implementation.
-            payload.pop("settle_tokens", None)
-            payload.pop("settle_lr_ratio", None)
+            payload.pop("base_power", None)
+        else:
+            if not self.settle_tokens:
+                # Preserve the serialized identity of the first WSqD implementation.
+                payload.pop("settle_tokens", None)
+                payload.pop("settle_lr_ratio", None)
+            if self.base_power == 0.5:
+                # Preserve all pre-power-parameter WSqD checkpoint identities.
+                payload.pop("base_power", None)
         return payload
 
 
