@@ -130,6 +130,7 @@ def setup(args: object):
         cooldown_start_tokens=args.cooldown_start_tokens,
         settle_tokens=args.settle_tokens,
         settle_lr_ratio=args.settle_lr_ratio,
+        base_power=args.base_power,
         checkpoint_every_steps=args.checkpoint_every_steps,
         evaluation_every_steps=args.evaluation_every_steps,
         seed=args.seed,
