@@ -49,18 +49,36 @@ def test_resolve_chat_run_is_stage_explicit_and_fail_closed() -> None:
         "100m-2b-sft-s0-001",
         chat._SOURCE_SFT,
     )
+    assert chat._resolve_chat_run(
+        100_000_000,
+        2_000_000_000,
+        stage=chat._STAGE_R_SFT,
+    ) == (
+        "100m-2b-rsft-r0-atomic-pilot-001",
+        chat._SOURCE_R_SFT,
+    )
     with pytest.raises(RuntimeError, match="no registered pre-trained chat profile"):
         chat._resolve_chat_run(
             100_000_000,
             10_000_000_000,
             stage=chat._STAGE_PRETRAINED,
         )
-    with pytest.raises(RuntimeError, match="none registered yet"):
+    with pytest.raises(RuntimeError, match="no registered r-sft chat profile"):
         chat._resolve_chat_run(
-            100_000_000,
+            20_000_000,
             2_000_000_000,
             stage=chat._STAGE_R_SFT,
         )
+
+
+def test_rsft_repo_resolution_prefers_dedicated_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SMALL_LLM_HF_REPO_ID", "owner/base")
+    monkeypatch.setenv("SMALL_LLM_SFT_HF_REPO_ID", "owner/sft")
+    monkeypatch.setenv("SMALL_LLM_RSFT_HF_REPO_ID", "owner/rsft")
+    assert chat._repo_id(source=chat._SOURCE_R_SFT) == "owner/rsft"
+
+    monkeypatch.delenv("SMALL_LLM_RSFT_HF_REPO_ID")
+    assert chat._repo_id(source=chat._SOURCE_R_SFT) == "owner/sft"
 
 
 def test_chat_stage_flag_is_mandatory_and_mutually_exclusive() -> None:
@@ -177,3 +195,7 @@ def test_rsft_chat_requires_reasoning_token_specification() -> None:
             stage=chat._STAGE_R_SFT,
             base_encoding=_ByteEncoding(),
         )
+
+
+def test_accepted_rsft_protocol_is_atomic_and_canonical() -> None:
+    assert chat._R_SFT_CANONICAL_MARKERS == ("<think>", "</think>", "<answer>")
