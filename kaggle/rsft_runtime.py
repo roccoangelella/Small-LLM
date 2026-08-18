@@ -13,9 +13,8 @@ import rsft_prepare
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# Pinned implementation used by the detached Kaggle worktree. Re-pinned after
-# the repeated-epoch adapter lands.
-IMPLEMENTATION_COMMIT = "28b854b58068ba30d1557c317483da524639a2a0"
+# Pinned repeated-epoch-capable implementation used by the detached Kaggle worktree.
+IMPLEMENTATION_COMMIT = "67c575aa795ff6da09fb92e84d978cf7d823e170"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 PRODUCTION_RUN_ID = "100m-2b-rsft-r0-001"
 PILOT_RUN_IDS = {
