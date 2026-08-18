@@ -31,6 +31,8 @@ DUAL_T4_TORCH_VERSION = "2.10.0"
 DUAL_T4_CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
 DUAL_T4_TRITON_VERSION = "3.6.0"
 DUAL_T4_FLA_VERSION = "0.5.2"
+DEEP_DECAY_MODEL = 100_000_000
+DEEP_DECAY_TOKENS = 10_000_000_000
 
 
 def parse_quantity(value: str) -> int:
@@ -102,6 +104,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_selector(train)
     train.add_argument("--dataset-dir")
     train.add_argument("--max-steps-this-session", type=positive_int)
+
+    deep_decay = subparsers.add_parser(
+        "deep-decay",
+        help="resume the authorized 100M/10B step-15500 deep-decay trajectory on 2xT4",
+    )
+    _add_profile_selector(deep_decay)
+    deep_decay.add_argument("--max-steps-this-session", type=positive_int)
 
     publish = subparsers.add_parser(
         "publish", help="build, verify, and privately publish the finite dataset"
@@ -198,6 +207,7 @@ def _print_profiles() -> None:
             f"  model={profile.model_label:<4} tokens={profile.token_label:<4} "
             f"profile={profile.dataset_profile}"
         )
+    print("  model=100M tokens=10B  profile=modal-10b-b64 action=deep-decay")
 
 
 def _dual_t4_arguments(args: argparse.Namespace) -> list[str]:
@@ -242,6 +252,21 @@ def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
     return int(subprocess.call(_dual_t4_uv_command(args, uv), cwd=REPO))
 
 
+def _deep_decay_command(args: argparse.Namespace) -> list[str]:
+    command = [sys.executable, str(REPO / "kaggle" / "deep_decay_10b_from_15500.py")]
+    if args.max_steps_this_session is not None:
+        command += ["--max-steps-this-session", str(args.max_steps_this_session)]
+    if args.dry_run:
+        command.append("--dry-run")
+    return command
+
+
+def _run_deep_decay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.model != DEEP_DECAY_MODEL or args.tokens != DEEP_DECAY_TOKENS:
+        parser.error("deep-decay is frozen to --model 100M --tokens 10B")
+    return int(subprocess.call(_deep_decay_command(args), cwd=REPO))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -254,6 +279,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "--resume is intentionally unnecessary. Resume is fail-closed and automatic; "
             "rerun the exact same command after an interruption."
         )
+    if args.action == "deep-decay":
+        return _run_deep_decay(args, parser)
+
     try:
         profile = resolve_profile(args)
     except ValueError as error:
