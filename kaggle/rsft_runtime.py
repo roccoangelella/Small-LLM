@@ -13,8 +13,8 @@ import rsft_prepare
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# Pinned atomic-production implementation used by the detached Kaggle worktree.
-IMPLEMENTATION_COMMIT = "28b854b58068ba30d1557c317483da524639a2a0"
+# Pinned repeated-epoch-capable implementation used by the detached Kaggle worktree.
+IMPLEMENTATION_COMMIT = "67c575aa795ff6da09fb92e84d978cf7d823e170"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 PRODUCTION_RUN_ID = "100m-2b-rsft-r0-001"
 PILOT_RUN_IDS = {
@@ -50,6 +50,16 @@ def default_pilot_run_id(delimiter_format: str) -> str:
         raise base.RuntimeFailure("--delimiter-format must be atomic or textual") from error
 
 
+def default_experiment_run_id(delimiter_format: str, *, num_epochs: int) -> str:
+    if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise base.RuntimeFailure("--num-epochs must be a positive integer")
+    if num_epochs == 1:
+        return default_pilot_run_id(delimiter_format)
+    if delimiter_format not in PILOT_RUN_IDS:
+        raise base.RuntimeFailure("--delimiter-format must be atomic or textual")
+    return f"100m-2b-rsft-r0-{delimiter_format}-repeat-e{num_epochs}-001"
+
+
 def resolve_profile(
     model_parameters: int,
     parent_training_tokens: int,
@@ -57,6 +67,7 @@ def resolve_profile(
     run_id: str,
     delimiter_format: str,
     learning_rate: float = DEFAULT_LEARNING_RATE,
+    num_epochs: int = 1,
 ) -> RSFTProfile:
     if (model_parameters, parent_training_tokens) != (100_000_000, 2_000_000_000):
         raise base.RuntimeFailure("the Kaggle R-SFT launcher supports only the 100M/2B parent")
@@ -66,6 +77,8 @@ def resolve_profile(
         raise base.RuntimeFailure("R-SFT delimiter format must be atomic or textual")
     if not isinstance(learning_rate, float) or learning_rate <= 0:
         raise base.RuntimeFailure("R-SFT learning rate must be positive")
+    if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise base.RuntimeFailure("R-SFT --num-epochs must be a positive integer")
     return RSFTProfile(
         model_parameters=model_parameters,
         parent_training_tokens=parent_training_tokens,
@@ -75,7 +88,9 @@ def resolve_profile(
         parent_run_id=PARENT_RUN_ID,
         sft_run_id=run_id,
         wandb_run_id=run_id,
-        wandb_run_name=f"100M / 2B S0 parent / R-SFT R0 / {delimiter_format}",
+        wandb_run_name=(
+            f"100M / 2B S0 parent / R-SFT R0 / {delimiter_format} / epochs={num_epochs}"
+        ),
         dataset_slug=run_id,
         known_parent_consumed_tokens=None,
         launch_commit=IMPLEMENTATION_COMMIT,
@@ -217,6 +232,7 @@ def build_train_command(
     checkpoint_repo_id: str,
     wandb_entity: str | None,
     max_steps_this_session: int | None,
+    num_epochs: int,
 ) -> list[str]:
     trainer_args = [
         "--dataset-dir", str(bundle),
@@ -262,6 +278,8 @@ def build_train_command(
         delimiter_format,
         "--rsft-token-spec",
         str(token_spec),
+        "--rsft-num-epochs",
+        str(num_epochs),
         *trainer_args,
     ]
 
@@ -277,9 +295,17 @@ def train(
     checkpoint_repo_id: str | None,
     max_steps_this_session: int | None,
     wandb_entity: str | None,
+    num_epochs: int = 1,
     production: bool = False,
     dry_run: bool = False,
 ) -> int:
+    if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise base.RuntimeFailure("R-SFT --num-epochs must be a positive integer")
+    if production and num_epochs != 1:
+        raise base.RuntimeFailure(
+            "canonical production R-SFT remains one-pass; use the ablation lane for explicit repeat experiments"
+        )
+
     parent_repo = (
         parent_repo_id
         or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
@@ -351,21 +377,27 @@ def train(
         checkpoint_repo_id=checkpoint_repo,
         wandb_entity=entity,
         max_steps_this_session=max_steps_this_session,
+        num_epochs=num_epochs,
     )
     if dry_run:
+        total_targets = None if exact_targets is None else exact_targets * num_epochs
         print(
             json.dumps(
                 {
-                    "schema": "small-llm-rsft-kaggle-dry-run-v3",
+                    "schema": "small-llm-rsft-kaggle-dry-run-v4",
                     "topology": "2xTesla-T4-DDP",
                     "stage": "r_sft_r0",
-                    "contract": "atomic-production-v1" if production else "pilot-ablation-v1",
+                    "contract": "atomic-production-v1" if production else (
+                        "pilot-ablation-v1" if num_epochs == 1 else "pilot-repeat-v1"
+                    ),
                     "parent_run_id": profile.parent_run_id,
                     "run_id": profile.sft_run_id,
                     "delimiter_format": delimiter_format,
                     "bundle": str(bundle),
-                    "bundle_target_tokens": exact_targets,
-                    "budget_mode": "bundle-exact-one-pass",
+                    "bundle_target_tokens_one_pass": exact_targets,
+                    "requested_target_tokens_all_epochs": total_targets,
+                    "num_epochs": num_epochs,
+                    "budget_mode": "bundle-exact-one-pass" if num_epochs == 1 else "bundle-exact-repeat",
                     "microbatch_size_per_rank": profile.microbatch_size,
                     "learning_rate": profile.learning_rate,
                     "auto_preparation": preparation,
@@ -391,6 +423,7 @@ __all__ = [
     "PRODUCTION_RUN_ID",
     "RSFTProfile",
     "build_train_command",
+    "default_experiment_run_id",
     "default_pilot_run_id",
     "resolve_profile",
     "train",

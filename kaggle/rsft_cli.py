@@ -30,6 +30,12 @@ def _profile_args(parser: argparse.ArgumentParser) -> None:
         type=positive_float,
         default=rsft_runtime.DEFAULT_LEARNING_RATE,
     )
+    parser.add_argument(
+        "--num-epochs",
+        type=positive_int,
+        default=1,
+        help="number of exact passes over the frozen R-SFT train blocks (experimental when >1)",
+    )
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -61,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ablation = subs.add_parser(
         "ablation",
-        help="historical 630-example atomic/textual delimiter experiment",
+        help="historical 630-example delimiter experiment and explicit repeat probes",
     )
     _profile_args(ablation)
     ablation.add_argument(
@@ -80,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ablation.add_argument(
         "--run-id",
-        help="optional stable run identity; defaults to the canonical pilot arm ID",
+        help="optional stable run identity; repeat probes get an epoch-specific ID automatically",
     )
     ablation.add_argument(
         "--token-spec",
@@ -94,12 +100,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     production = args.action == "train"
+    num_epochs = int(args.num_epochs)
     delimiter_format = "atomic" if production else args.delimiter_format
-    run_id = (
-        args.run_id
-        if args.run_id
-        else rsft_runtime.default_pilot_run_id(delimiter_format)
-    )
+    if production:
+        run_id = args.run_id
+    else:
+        run_id = (
+            args.run_id
+            if args.run_id
+            else rsft_runtime.default_experiment_run_id(delimiter_format, num_epochs=num_epochs)
+        )
     try:
         profile = rsft_runtime.resolve_profile(
             args.model,
@@ -107,13 +117,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=run_id,
             delimiter_format=delimiter_format,
             learning_rate=float(args.learning_rate),
+            num_epochs=num_epochs,
+        )
+        contract = "atomic-production-v1" if production else (
+            "pilot-ablation-v1" if num_epochs == 1 else "pilot-repeat-v1"
         )
         print(
             f"[launch-rsft] action={args.action} model={profile.model_label} tokens={profile.token_label} "
             f"parent={profile.parent_run_id} run={profile.sft_run_id} "
-            f"delimiter={delimiter_format} topology=2xT4-DDP "
-            f"contract={'atomic-production-v1' if production else 'pilot-ablation-v1'} "
-            "bundle_exact_one_pass=true",
+            f"delimiter={delimiter_format} epochs={num_epochs} topology=2xT4-DDP "
+            f"contract={contract} bundle_exact_passes={num_epochs}",
             flush=True,
         )
         return rsft_runtime.train(
@@ -126,6 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             checkpoint_repo_id=args.checkpoint_repo_id,
             max_steps_this_session=args.max_steps_this_session,
             wandb_entity=args.wandb_entity,
+            num_epochs=num_epochs,
             production=production,
             dry_run=bool(args.dry_run),
         )

@@ -79,6 +79,36 @@ Textual reported validation loss 2.0444399 on 1,779 targets; atomic reported
 0099/0100 because reasoning/answer boundaries are a semantic machine protocol
 and must not be conflated with ordinary language tokens.
 
+## Repeated-epoch corpus-size diagnostic
+
+ADR 0101 adds an explicit experimental repeat lane. It starts again from the
+completed S0 parent and replays the exact same immutable R-SFT train blocks in
+the same order. This is intended to test whether the 29-update pilot simply had
+too little exposure; it is not a production default.
+
+For the requested ten-pass atomic probe:
+
+```bash
+python kaggle/launch_r_sft.py ablation \
+  --model 100M \
+  --tokens 2B \
+  --delimiter-format atomic \
+  --num-epochs 10
+```
+
+With the current 29-block atomic bundle this produces exactly 290 optimizer
+steps. The automatic run ID is:
+
+```text
+100m-2b-rsft-r0-atomic-repeat-e10-001
+```
+
+The WSD schedule spans the full 10-pass stream rather than resetting each pass.
+Checkpoint/resume uses logical block IDs across epochs, so a resume after (for
+example) step 173 continues at the exact next repeated block. `--num-epochs 1`
+preserves the historical one-pass behavior. The canonical production `train`
+lane rejects `--num-epochs > 1`.
+
 ## Future larger reasoning corpus
 
 `build_atomic.py` remains available for a future **new or larger** reasoning

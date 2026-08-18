@@ -17,6 +17,7 @@ WORLD_SIZE = 2
 TORCH_VERSION = "2.10.0"
 TRITON_VERSION = "3.6.0"
 FLA_VERSION = "0.5.2"
+HF_HUB_VERSION = "1.5.0"
 CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
 
 
@@ -56,6 +57,8 @@ def qualified_runtime_uv_args() -> list[str]:
         f"triton=={TRITON_VERSION}",
         "--with",
         f"fla-core=={FLA_VERSION}",
+        "--with",
+        f"huggingface_hub=={HF_HUB_VERSION}",
         "--with",
         "packaging>=24",
         "--with",
@@ -119,6 +122,7 @@ __all__ = [
     "CUDA_WHEEL_INDEX",
     "DDP_ENTRYPOINT",
     "FLA_VERSION",
+    "HF_HUB_VERSION",
     "TORCH_VERSION",
     "TRITON_VERSION",
     "WORLD_SIZE",

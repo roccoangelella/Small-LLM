@@ -57,6 +57,19 @@ def test_dual_t4_command_preserves_block64_and_t4_safe_microbatch() -> None:
     assert "torch==2.10.0" in command
     assert "triton==3.6.0" in command
     assert "fla-core==0.5.2" in command
+    assert "huggingface_hub==1.5.0" in command
+
+
+def test_host_staging_bootstraps_private_hf_bucket_client() -> None:
+    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    assert 'HF_HUB_VERSION = "1.5.0"' in source
+    assert '"create_bucket"' in source
+    assert '"list_bucket_tree"' in source
+    assert '"download_bucket_files"' in source
+    assert '"batch_bucket_files"' in source
+    assert '"--target"' in source
+    assert 'os.execve(' in source
+    assert '_ensure_host_hf_bucket_runtime(args)' in source
 
 
 def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
@@ -89,12 +102,24 @@ def test_block64_long_cadence_waits_use_cpu_gloo_group() -> None:
 
 
 def test_source_fork_changes_only_execution_slicing_plus_authorized_schedule() -> None:
-    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    source = (KAGGLE / "deep_decay_10b_from_15500_impl.py").read_text(encoding="utf-8")
     assert 'if config.get("microbatch_size") != SOURCE_MICROBATCH_SIZE' in source
     assert "microbatch_size=MICROBATCH_SIZE" in source
     assert 'schedule="wsqd"' in source
     assert 'schedule_anchor_tokens=SOURCE_EXPECTED_TOKENS' in source
     assert 'base_power=BASE_POWER' in source
+
+
+def test_provider_migration_rewrites_only_authorized_execution_slicing() -> None:
+    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    assert "saved_microbatch == MICROBATCH_SIZE" in source
+    assert "saved_microbatch != SOURCE_MICROBATCH_SIZE" in source
+    assert 'patched_config["microbatch_size"] = MICROBATCH_SIZE' in source
+    assert 'patched_scheduler_config["microbatch_size"] = MICROBATCH_SIZE' in source
+    assert '"dataset_configuration_hash": _dataset_configuration_hash(dataset)' in source
+    assert "checkpoint data cursor drifted" in source
+    assert "scientific config drifted" in source
+    assert "_impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)" in source
 
 
 def test_canonical_launcher_exposes_only_100m_10b_deep_decay_action() -> None:
