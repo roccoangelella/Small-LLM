@@ -89,12 +89,24 @@ def test_block64_long_cadence_waits_use_cpu_gloo_group() -> None:
 
 
 def test_source_fork_changes_only_execution_slicing_plus_authorized_schedule() -> None:
-    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    source = (KAGGLE / "deep_decay_10b_from_15500_impl.py").read_text(encoding="utf-8")
     assert 'if config.get("microbatch_size") != SOURCE_MICROBATCH_SIZE' in source
     assert "microbatch_size=MICROBATCH_SIZE" in source
     assert 'schedule="wsqd"' in source
     assert 'schedule_anchor_tokens=SOURCE_EXPECTED_TOKENS' in source
     assert 'base_power=BASE_POWER' in source
+
+
+def test_provider_migration_rewrites_only_authorized_execution_slicing() -> None:
+    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    assert "saved_microbatch == MICROBATCH_SIZE" in source
+    assert "saved_microbatch != SOURCE_MICROBATCH_SIZE" in source
+    assert 'patched_config["microbatch_size"] = MICROBATCH_SIZE' in source
+    assert 'patched_scheduler_config["microbatch_size"] = MICROBATCH_SIZE' in source
+    assert '"dataset_configuration_hash": _dataset_configuration_hash(dataset)' in source
+    assert "checkpoint data cursor drifted" in source
+    assert "scientific config drifted" in source
+    assert "_impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)" in source
 
 
 def test_canonical_launcher_exposes_only_100m_10b_deep_decay_action() -> None:
