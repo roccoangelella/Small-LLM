@@ -305,6 +305,32 @@ class KaggleTritonCacheTests(unittest.TestCase):
                         "roccoangelella/small-llm-t4-triton-cache",
                     )
 
+    def test_publish_subcommand_reuses_existing_package_without_repackaging(self) -> None:
+        module = _load("small_llm_triton_cache_publish_cli_test", KAGGLE / "triton_cache.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary) / "existing-package"
+            package.mkdir()
+            with contextlib.ExitStack() as stack:
+                publish = stack.enter_context(mock.patch.object(module, "publish_package"))
+                package_cache = stack.enter_context(mock.patch.object(module, "package_cache"))
+                build_cache = stack.enter_context(mock.patch.object(module, "build_cache"))
+                result = module.main(
+                    [
+                        "publish",
+                        "roccoangelella/small-llm-t4-triton-cache",
+                        "--package-dir",
+                        str(package),
+                    ]
+                )
+
+            self.assertEqual(result, 0)
+            publish.assert_called_once_with(
+                package.resolve(),
+                "roccoangelella/small-llm-t4-triton-cache",
+            )
+            package_cache.assert_not_called()
+            build_cache.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,10 @@ Optionally create/update a private Kaggle Dataset:
 
     python kaggle/triton_cache.py build --publish OWNER/DATASET-SLUG
 
+Publish an already-packaged cache without rebuilding or repackaging it:
+
+    python kaggle/triton_cache.py publish OWNER/DATASET-SLUG
+
 Future notebooks only need that private dataset attached.  The canonical
 ``kaggle/launch.py deep-decay ...`` path discovers and validates it
 automatically.
@@ -859,6 +863,18 @@ def build_parser() -> argparse.ArgumentParser:
     package.add_argument("--output-dir", type=Path, default=DEFAULT_PACKAGE_DIR)
     package.add_argument("--publish", metavar="OWNER/DATASET-SLUG")
 
+    publish = subparsers.add_parser(
+        "publish",
+        help="publish an existing opaque cache archive + manifest without rebuilding",
+    )
+    publish.add_argument("handle", metavar="OWNER/DATASET-SLUG")
+    publish.add_argument(
+        "--package-dir",
+        type=Path,
+        default=DEFAULT_PACKAGE_DIR,
+        help="existing package directory containing the opaque archive + manifest",
+    )
+
     worker = subparsers.add_parser("_worker", help=argparse.SUPPRESS)
     worker.add_argument("--phase", choices=("compile", "validate"), required=True)
     return parser
@@ -879,6 +895,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         output = package_cache(output_dir=args.output_dir)
         if args.publish:
             publish_package(output, args.publish)
+        return 0
+    if args.action == "publish":
+        publish_package(args.package_dir.expanduser().resolve(), args.handle)
         return 0
     if args.action == "build":
         build_cache(output_dir=args.output_dir, publish=args.publish)
