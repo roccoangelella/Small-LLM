@@ -106,6 +106,12 @@ def parser() -> argparse.ArgumentParser:
         default=1.0,
         help="WSqD settling target as a fraction of --learning-rate; requires --settle-tokens.",
     )
+    p.add_argument(
+        "--base-power",
+        type=float,
+        default=0.5,
+        help="Positive WSqD power-law exponent after settling; 0.5 is inverse square root.",
+    )
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
