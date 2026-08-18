@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Single human entry point for Small-LLM reasoning SFT on Kaggle.
 
+The first 630-example pilot is committed to the repository. Kaggle builds the
+matched native bundle automatically from that corpus plus the completed S0
+instruction bundle, then trains the selected arm on the qualified 2xT4 path.
+
 Examples:
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B \
-    --dataset-dir /kaggle/input/rsft-bundle --run-id 100m-2b-rsft-r0-atomic-pilot-001 \
-    --delimiter-format atomic --token-spec /kaggle/input/rsft-bundle/reasoning-tokens.json
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B \
-    --dataset-dir /kaggle/input/rsft-bundle-text --run-id 100m-2b-rsft-r0-text-pilot-001 \
-    --delimiter-format textual --token-spec /kaggle/input/rsft-bundle-text/reasoning-tokens.json
+  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format atomic
+  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format textual
+  python kaggle/launch_r_sft.py train --model 100M --tokens 2B --delimiter-format atomic --dry-run
+
+Pass --dataset-dir, --s0-bundle, --run-id, or --token-spec only as explicit
+overrides; they are not needed for the canonical pilot.
 """
 from __future__ import annotations
 
