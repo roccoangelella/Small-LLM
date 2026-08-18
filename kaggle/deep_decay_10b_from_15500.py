@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Resume the 100M/10B deep-decay continuation on Kaggle 2xT4.
 
-This is an execution-topology migration of ADR 0095. The scientific state and
-schedule are unchanged: restore the exact original uncooled step-15,500 state,
-fork it into the deep-decay run namespace, stage the checkpoint-aligned rolling
-10B dataset from Hugging Face, and execute the frozen 64-sequence optimizer
-block as 32 ordered sequences per T4 rank with microbatch four.
+This is an execution-topology migration of ADR 0095. Restore the exact original
+uncooled step-15,500 state, fork it into the deep-decay run namespace, stage the
+checkpoint-aligned rolling 10B dataset from Hugging Face, and preserve the
+64-sequence global optimizer block. The original checkpoint used execution
+microbatch four; Kaggle uses microbatch two because the live 100M T4 evidence
+ruled out the local 4x2048 shape on a 14.56-GiB T4.
 
 Usage from repository root:
 
@@ -13,9 +14,10 @@ Usage from repository root:
     python kaggle/deep_decay_10b_from_15500.py
     python kaggle/deep_decay_10b_from_15500.py --max-steps-this-session 250
 
-Rerunning the same command resumes from the newest manifest-verified deep-decay
-checkpoint in the Hugging Face model repository. If the continuation has never
-started, the launcher accepts only the exact source step-00015500 checkpoint.
+Rerunning the same command resumes from the newest manifest-verified Kaggle
+deep-decay checkpoint in the Hugging Face model repository. If the Kaggle
+continuation has never started, the launcher accepts only the exact source
+step-00015500 checkpoint.
 """
 from __future__ import annotations
 
@@ -24,7 +26,6 @@ import json
 import math
 import os
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -46,7 +47,8 @@ SOURCE_CHECKPOINT_ID = f"step-{SOURCE_STEP:08d}"
 RUN_ID = "100m-10b-deep-decay-from-step15500"
 DATASET_PROFILE = "modal-10b-b64"
 DATASET_RUN_ID = "modal-10b-b64-dataset-001"
-MICROBATCH_SIZE = 4
+SOURCE_MICROBATCH_SIZE = 4
+MICROBATCH_SIZE = 2
 SEQUENCES_PER_BLOCK = 64
 CONTEXT_LENGTH = 2048
 TARGETS_PER_FULL_BLOCK = SEQUENCES_PER_BLOCK * CONTEXT_LENGTH
@@ -93,7 +95,6 @@ if COOLDOWN_START_TOKENS + COOLDOWN_TOKENS != TOTAL_TARGETS:
 
 def _beam_runtime() -> Any:
     """Import Beam's provider-neutral runtime helpers without importing Beam SDK."""
-
     beam = str(BEAM)
     if beam in sys.path:
         sys.path.remove(beam)
@@ -117,22 +118,20 @@ def _expected_lr(tokens: int) -> float:
     base_lr = SETTLE_LR * (SETTLE_END_TOKENS / tokens) ** BASE_POWER
     if tokens <= COOLDOWN_START_TOKENS:
         return base_lr
-    progress = min(
-        1.0,
-        max(0.0, (tokens - COOLDOWN_START_TOKENS) / COOLDOWN_TOKENS),
-    )
+    progress = min(1.0, max(0.0, (tokens - COOLDOWN_START_TOKENS) / COOLDOWN_TOKENS))
     return FINAL_LR + (COOLDOWN_START_LR - FINAL_LR) * (1.0 - progress)
 
 
 def _contract() -> dict[str, object]:
     return {
-        "version": 2,
+        "version": 3,
         "kind": "step15500_deep_decay_settle_power_linear_cooldown",
         "execution": "kaggle_dual_t4_ddp_block64",
         "source_run_id": SOURCE_RUN_ID,
         "source_checkpoint_id": SOURCE_CHECKPOINT_ID,
         "source_step": SOURCE_STEP,
         "source_expected_consumed_tokens": SOURCE_EXPECTED_TOKENS,
+        "source_microbatch_size": SOURCE_MICROBATCH_SIZE,
         "run_id": RUN_ID,
         "dataset_profile": DATASET_PROFILE,
         "dataset_run_id": DATASET_RUN_ID,
@@ -140,6 +139,7 @@ def _contract() -> dict[str, object]:
         "world_size": 2,
         "sequences_per_rank": SEQUENCES_PER_BLOCK // 2,
         "microbatch_size": MICROBATCH_SIZE,
+        "local_microbatches_per_rank": SEQUENCES_PER_BLOCK // 2 // MICROBATCH_SIZE,
         "schedule": "wsqd",
         "schedule_anchor_tokens": SOURCE_EXPECTED_TOKENS,
         "anchor_lr": PEAK_LR,
@@ -161,7 +161,7 @@ def _contract() -> dict[str, object]:
         "final_step": FINAL_STEP,
         "final_targets": TOTAL_TARGETS,
         "additional_steps": ADDITIONAL_STEPS,
-        "scientific_change": "scheduler_only; execution topology may migrate; exact global optimizer block preserved",
+        "scientific_change": "ADR0095 scheduler; Kaggle changes execution slicing 4->2 while preserving the exact 64-sequence optimizer block",
     }
 
 
@@ -181,13 +181,7 @@ def _checkpoint_step(checkpoint_id: str) -> int:
         raise RuntimeError(f"invalid checkpoint ID: {checkpoint_id!r}") from error
 
 
-def _restore_pointer(
-    runtime_base: Any,
-    *,
-    run_id: str,
-    destination_run_dir: Path,
-    require_checkpoint_id: str | None = None,
-) -> dict[str, object] | None:
+def _restore_pointer(runtime_base: Any, *, run_id: str, destination_run_dir: Path, require_checkpoint_id: str | None = None) -> dict[str, object] | None:
     from dataset.src.joint_checkpoint import restore_on_empty_vps
     from dataset.src.remote import TwoPhaseCheckpointPublisher
 
@@ -201,19 +195,12 @@ def _restore_pointer(
     if not isinstance(checkpoint_id, str):
         raise RuntimeError(f"HF pointer for {run_id} has no checkpoint_id")
     if require_checkpoint_id is not None and checkpoint_id != require_checkpoint_id:
-        raise RuntimeError(
-            f"exact source checkpoint required: expected {require_checkpoint_id}, "
-            f"HF latest points to {checkpoint_id}"
-        )
+        raise RuntimeError(f"exact source checkpoint required: expected {require_checkpoint_id}, HF latest points to {checkpoint_id}")
 
     destination_run_dir.mkdir(parents=True, exist_ok=True)
     local_id, local_step = runtime_base._latest_checkpoint(destination_run_dir / "checkpoints")
     if local_id is not None:
-        return {
-            "checkpoint_id": local_id,
-            "step": local_step,
-            "source": "local",
-        }
+        return {"checkpoint_id": local_id, "step": local_step, "source": "local"}
 
     restored = restore_on_empty_vps(
         publisher=TwoPhaseCheckpointPublisher(store, run_id=run_id),
@@ -229,6 +216,7 @@ def _restore_pointer(
 
 
 def _verify_deep_decay_checkpoint(runtime_base: Any, checkpoint_id: str) -> int:
+    del runtime_base
     from trainer.state import load_trainer_state_file, release_host_memory
 
     step = _checkpoint_step(checkpoint_id)
@@ -260,9 +248,8 @@ def _verify_deep_decay_checkpoint(runtime_base: Any, checkpoint_id: str) -> int:
         }
         drift = {key: (config.get(key), value) for key, value in expected.items() if config.get(key) != value}
         if drift:
-            raise RuntimeError("deep-decay checkpoint scientific config drifted: " + json.dumps(drift, sort_keys=True))
-        committed = scheduler.get("committed_tokens")
-        if committed != step * TARGETS_PER_FULL_BLOCK:
+            raise RuntimeError("deep-decay checkpoint scientific/execution config drifted: " + json.dumps(drift, sort_keys=True))
+        if scheduler.get("committed_tokens") != step * TARGETS_PER_FULL_BLOCK:
             raise RuntimeError("deep-decay scheduler committed_tokens drifted")
     finally:
         del state
@@ -271,41 +258,21 @@ def _verify_deep_decay_checkpoint(runtime_base: Any, checkpoint_id: str) -> int:
 
 
 def _stage_dataset(runtime_base: Any, *, start_block_id: int) -> Path:
-    from dataset.incremental_stage import (
-        stage_incremental_window_when_ready,
-        verify_incremental_stage,
-    )
+    from dataset.incremental_stage import stage_incremental_window_when_ready, verify_incremental_stage
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
 
-    bucket_id = (
-        os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
-        or f"{runtime_base._hf_model_repo_id()}-datasets"
-    )
-    store = HuggingFaceBucketShardStore(
-        bucket_id,
-        token=runtime_base._hf_token(),
-        private=True,
-        create_bucket=False,
-    )
+    bucket_id = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip() or f"{runtime_base._hf_model_repo_id()}-datasets"
+    store = HuggingFaceBucketShardStore(bucket_id, token=runtime_base._hf_token(), private=True, create_bucket=False)
     destination = DATA_CACHE_ROOT / DATASET_RUN_ID / f"from-{start_block_id:08d}"
-    staged = stage_incremental_window_when_ready(
-        store=store,
-        run_id=DATASET_RUN_ID,
-        destination=destination,
-        start_block_id=start_block_id,
-    )
+    staged = stage_incremental_window_when_ready(store=store, run_id=DATASET_RUN_ID, destination=destination, start_block_id=start_block_id)
     if staged.get("status") != "ready":
         raise RuntimeError(f"dataset stage did not become ready: {staged}")
-    verify_incremental_stage(
-        destination=destination,
-        bucket_id=bucket_id,
-        run_id=DATASET_RUN_ID,
-        required_train_block=start_block_id,
-    )
+    verify_incremental_stage(destination=destination, bucket_id=bucket_id, run_id=DATASET_RUN_ID, required_train_block=start_block_id)
     return destination
 
 
 def _fork_source_checkpoint(runtime_base: Any, *, source_root: Path, dataset: Path) -> None:
+    del runtime_base
     import torch
     from dataset.src.joint_checkpoint import verify_local_manifest
     from dataset.src.remote import sha256_path
@@ -334,13 +301,14 @@ def _fork_source_checkpoint(runtime_base: Any, *, source_root: Path, dataset: Pa
             raise RuntimeError("source trainer state lacks config/scheduler mappings")
         if not isinstance(model_config, Mapping):
             raise RuntimeError("source trainer state lacks model_config")
-        if config.get("microbatch_size") != MICROBATCH_SIZE:
-            raise RuntimeError("source checkpoint no longer has microbatch four")
+        if config.get("microbatch_size") != SOURCE_MICROBATCH_SIZE:
+            raise RuntimeError("source checkpoint no longer has the expected microbatch four")
         if config.get("learning_rate") != PEAK_LR or config.get("schedule") != "wsd":
             raise RuntimeError("source checkpoint is not the expected uncooled 3e-4 WSD state")
 
         patched_config = dict(config)
         patched_config.update(
+            microbatch_size=MICROBATCH_SIZE,
             schedule="wsqd",
             warmup_tokens=0,
             stable_tokens=0,
@@ -361,17 +329,8 @@ def _fork_source_checkpoint(runtime_base: Any, *, source_root: Path, dataset: Pa
 
         manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
         production = manifest.get("production") if isinstance(manifest, Mapping) else None
-        dataset_configuration_hash = (
-            production.get("configuration_hash") if isinstance(production, Mapping) else None
-        )
-        new_configuration_hash = canonical_hash(
-            {
-                "version": 1,
-                "model": dict(model_config),
-                "trainer": patched_config,
-                "dataset_configuration_hash": dataset_configuration_hash,
-            }
-        )
+        dataset_configuration_hash = production.get("configuration_hash") if isinstance(production, Mapping) else None
+        new_configuration_hash = canonical_hash({"version": 1, "model": dict(model_config), "trainer": patched_config, "dataset_configuration_hash": dataset_configuration_hash})
 
         CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
         target = CHECKPOINT_DIR / SOURCE_CHECKPOINT_ID
@@ -386,15 +345,7 @@ def _fork_source_checkpoint(runtime_base: Any, *, source_root: Path, dataset: Pa
         checkpoint_payload = dict(source_payload)
         checkpoint_payload["configuration_hash"] = new_configuration_hash
         _write_json(staging / "checkpoint.json", checkpoint_payload)
-        _write_json(
-            staging / "local_manifest.json",
-            {
-                "files": [
-                    {"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
-                    {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")},
-                ]
-            },
-        )
+        _write_json(staging / "local_manifest.json", {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)}, {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")}]})
         verify_local_manifest(staging)
         os.replace(staging, target)
     finally:
@@ -453,11 +404,7 @@ def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     local_id, local_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
     if local_id is None:
-        restored = _restore_pointer(
-            runtime_base,
-            run_id=RUN_ID,
-            destination_run_dir=RUN_DIR,
-        )
+        restored = _restore_pointer(runtime_base, run_id=RUN_ID, destination_run_dir=RUN_DIR)
         if restored is not None:
             local_id = str(restored["checkpoint_id"])
             local_step = int(restored["step"])
@@ -473,19 +420,11 @@ def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
             raise RuntimeError("deep-decay Kaggle contract drifted")
         if step == FINAL_STEP:
             return local_id, step, Path()
-        dataset = _stage_dataset(runtime_base, start_block_id=step)
-        return local_id, step, dataset
+        return local_id, step, _stage_dataset(runtime_base, start_block_id=step)
 
-    source = _restore_pointer(
-        runtime_base,
-        run_id=SOURCE_RUN_ID,
-        destination_run_dir=SOURCE_CACHE_DIR,
-        require_checkpoint_id=SOURCE_CHECKPOINT_ID,
-    )
+    source = _restore_pointer(runtime_base, run_id=SOURCE_RUN_ID, destination_run_dir=SOURCE_CACHE_DIR, require_checkpoint_id=SOURCE_CHECKPOINT_ID)
     if source is None:
-        raise RuntimeError(
-            f"exact source {SOURCE_RUN_ID}/{SOURCE_CHECKPOINT_ID} is unavailable in the HF model repository"
-        )
+        raise RuntimeError(f"exact source {SOURCE_RUN_ID}/{SOURCE_CHECKPOINT_ID} is unavailable in the HF model repository")
     if int(source["step"]) != SOURCE_STEP:
         raise RuntimeError("restored source step is not exactly 15,500")
     dataset = _stage_dataset(runtime_base, start_block_id=SOURCE_STEP)
@@ -497,13 +436,7 @@ def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
     return local_id, local_step, dataset
 
 
-def _build_trainer_command(
-    runtime_base: Any,
-    *,
-    dataset: Path,
-    resume_checkpoint_id: str,
-    steps: int,
-) -> list[str]:
+def _build_trainer_command(runtime_base: Any, *, dataset: Path, resume_checkpoint_id: str, steps: int) -> list[str]:
     from model_repo_checkpoint import install_model_repo_checkpoint_transport  # type: ignore
     from profiles import resolve_presets  # type: ignore
 
@@ -513,10 +446,7 @@ def _build_trainer_command(
 
     install_model_repo_checkpoint_transport()
     os.environ["SMALL_LLM_MODAL_ROLLING_DATASET"] = "1"
-    dataset_bucket_id = (
-        os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
-        or f"{runtime_base._hf_model_repo_id()}-datasets"
-    )
+    dataset_bucket_id = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip() or f"{runtime_base._hf_model_repo_id()}-datasets"
     os.environ["SMALL_LLM_DATASET_SHARD_BUCKET"] = dataset_bucket_id
     os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = DATASET_RUN_ID
     os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
@@ -533,14 +463,7 @@ def _build_trainer_command(
         resume_parent_source_commit=None,
         bucket_id=checkpoint_repo_id,
     )
-    plan: dict[str, Any] = {
-        "trainer": {
-            "warmup_tokens": 0,
-            "stable_tokens": 0,
-            "decay_tokens": COOLDOWN_TOKENS,
-            "validation_blocks": 16,
-        }
-    }
+    plan: dict[str, Any] = {"trainer": {"warmup_tokens": 0, "stable_tokens": 0, "decay_tokens": COOLDOWN_TOKENS, "validation_blocks": 16}}
     command = runtime_base._trainer_command(
         model=model_preset,
         tokens=token_preset,
@@ -563,27 +486,14 @@ def _build_trainer_command(
     _replace_option(command, "--decay-tokens", str(COOLDOWN_TOKENS))
     _replace_option(command, "--minimum-lr-ratio", str(MINIMUM_LR_RATIO))
     _replace_option(command, "--remote-publish-every-steps", str(REMOTE_EVERY))
-    _replace_option(
-        command,
-        "--wandb-resume",
-        "allow" if resume_checkpoint_id == SOURCE_CHECKPOINT_ID else "must",
-    )
-    _replace_option(
-        command,
-        "--wandb-run-name",
-        "100M/10B deep-decay continuation from step 15500",
-    )
+    _replace_option(command, "--wandb-resume", "allow" if resume_checkpoint_id == SOURCE_CHECKPOINT_ID else "must")
+    _replace_option(command, "--wandb-run-name", "100M/10B deep-decay continuation from step 15500")
     command += [
-        "--schedule-anchor-tokens",
-        str(SOURCE_EXPECTED_TOKENS),
-        "--cooldown-start-tokens",
-        str(COOLDOWN_START_TOKENS),
-        "--settle-tokens",
-        str(SETTLE_TOKENS),
-        "--settle-lr-ratio",
-        str(SETTLE_LR_RATIO),
-        "--base-power",
-        str(BASE_POWER),
+        "--schedule-anchor-tokens", str(SOURCE_EXPECTED_TOKENS),
+        "--cooldown-start-tokens", str(COOLDOWN_START_TOKENS),
+        "--settle-tokens", str(SETTLE_TOKENS),
+        "--settle-lr-ratio", str(SETTLE_LR_RATIO),
+        "--base-power", str(BASE_POWER),
     ]
     _replace_tag(command, "beam", "kaggle")
     if "--wandb-tags" in command and "dual-t4-ddp" not in command:
@@ -607,6 +517,7 @@ def _dry_run_payload(max_steps_this_session: int | None) -> dict[str, object]:
         "execution": "kaggle_dual_t4_ddp_block64",
         "source_run_id": SOURCE_RUN_ID,
         "source_checkpoint_id": SOURCE_CHECKPOINT_ID,
+        "source_microbatch_size": SOURCE_MICROBATCH_SIZE,
         "run_id": RUN_ID,
         "dataset_profile": DATASET_PROFILE,
         "dataset_run_id": DATASET_RUN_ID,
@@ -614,12 +525,8 @@ def _dry_run_payload(max_steps_this_session: int | None) -> dict[str, object]:
         "sequences_per_block": SEQUENCES_PER_BLOCK,
         "sequences_per_rank": SEQUENCES_PER_BLOCK // dual_t4_runtime.WORLD_SIZE,
         "microbatch_size": MICROBATCH_SIZE,
-        "local_microbatches_per_rank": (SEQUENCES_PER_BLOCK // dual_t4_runtime.WORLD_SIZE) // MICROBATCH_SIZE,
-        "runtime": {
-            "torch": dual_t4_runtime.TORCH_VERSION,
-            "triton": dual_t4_runtime.TRITON_VERSION,
-            "fla_core": dual_t4_runtime.FLA_VERSION,
-        },
+        "local_microbatches_per_rank": SEQUENCES_PER_BLOCK // dual_t4_runtime.WORLD_SIZE // MICROBATCH_SIZE,
+        "runtime": {"torch": dual_t4_runtime.TORCH_VERSION, "triton": dual_t4_runtime.TRITON_VERSION, "fla_core": dual_t4_runtime.FLA_VERSION},
         "max_steps_this_session": max_steps_this_session,
         "remote_checkpoint_every": REMOTE_EVERY,
         "schedule": _contract(),
@@ -638,29 +545,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     runtime_base = _beam_runtime()
     checkpoint_id, completed_step, dataset = _prepare(runtime_base)
     if completed_step == FINAL_STEP:
-        print(
-            json.dumps(
-                {
-                    "status": "already_complete",
-                    "run_id": RUN_ID,
-                    "checkpoint_id": checkpoint_id,
-                    "completed_steps": completed_step,
-                    "final_step": FINAL_STEP,
-                },
-                indent=2,
-                sort_keys=True,
-            )
-        )
+        print(json.dumps({"status": "already_complete", "run_id": RUN_ID, "checkpoint_id": checkpoint_id, "completed_steps": completed_step, "final_step": FINAL_STEP}, indent=2, sort_keys=True))
         return 0
 
     remaining = FINAL_STEP - completed_step
     steps = min(remaining, args.max_steps_this_session or remaining)
-    trainer_command = _build_trainer_command(
-        runtime_base,
-        dataset=dataset,
-        resume_checkpoint_id=checkpoint_id,
-        steps=steps,
-    )
+    trainer_command = _build_trainer_command(runtime_base, dataset=dataset, resume_checkpoint_id=checkpoint_id, steps=steps)
     command = _dual_t4_command(trainer_command)
     log_path = RUN_DIR / "evidence" / f"kaggle-dual-t4-from-{checkpoint_id}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -679,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "final_step": FINAL_STEP,
         "elapsed_seconds": time.perf_counter() - started,
         "execution": "kaggle_dual_t4_ddp_block64",
+        "microbatch_size": MICROBATCH_SIZE,
         "lr_now": _expected_lr(final_step * TARGETS_PER_FULL_BLOCK),
     }
     print(json.dumps(result, indent=2, sort_keys=True))
