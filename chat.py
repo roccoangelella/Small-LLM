@@ -2,6 +2,7 @@
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
 #   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --r-sft --run-id RUN_ID  # explicit R-SFT experiment
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
@@ -131,6 +132,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         required=True,
         help="parent pretraining token profile, e.g. 500M or 2B",
     )
+    parser.add_argument(
+        "--run-id",
+        help="R-SFT only: explicitly select a completed R-SFT run instead of the registered default",
+    )
     stage = parser.add_mutually_exclusive_group(required=True)
     stage.add_argument(
         "--pre-trained",
@@ -162,6 +167,7 @@ def _resolve_chat_run(
     num_tokens: int,
     *,
     stage: str,
+    run_id: str | None = None,
 ) -> tuple[str, str]:
     key = (model_params, num_tokens)
     try:
@@ -169,7 +175,7 @@ def _resolve_chat_run(
     except KeyError as error:
         raise RuntimeError(f"unsupported chat stage: {stage!r}") from error
     try:
-        return registry[key]
+        registered = registry[key]
     except KeyError as error:
         supported = ", ".join(
             f"{params // 1_000_000}M/{tokens // 1_000_000}M"
@@ -183,6 +189,18 @@ def _resolve_chat_run(
             f"no registered {stage} chat profile for model_params={model_params}, "
             f"num_tokens={num_tokens}; supported: {supported}"
         ) from error
+
+    if run_id is None:
+        return registered
+    if stage != _STAGE_R_SFT:
+        raise RuntimeError("--run-id override is supported only with --r-sft")
+    if (
+        not run_id
+        or run_id.strip() != run_id
+        or not all(character.isalnum() or character in "._-" for character in run_id)
+    ):
+        raise RuntimeError("--run-id must be a non-empty stable identifier using letters, digits, '.', '_' or '-'")
+    return run_id, _SOURCE_R_SFT
 
 
 def _repo_id(*, source: str) -> str:
@@ -576,6 +594,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.model_params,
         args.num_tokens,
         stage=args.stage,
+        run_id=args.run_id,
     )
     repo_id = _repo_id(source=source)
 
