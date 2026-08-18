@@ -15,7 +15,9 @@ T4 path:
 - use a separate five-minute monitored Gloo startup rendezvous after prewarm so
   a stalled rank cannot silently consume an hour of Kaggle GPU time;
 - preseed a manifest-verified portable Triton cache before importing Torch when
-  a compatible cache dataset is attached, otherwise use normal JIT fallback.
+  a compatible cache dataset is attached, otherwise use normal JIT fallback;
+- emit first-update entry/completion milestones so a qualification stall is not
+  mistaken for another startup or cache problem.
 """
 from __future__ import annotations
 
@@ -37,13 +39,34 @@ def _install_geometry_overrides() -> None:
     """Adapt the shared exact-batch engine to block64 and microbatch two."""
 
     original_prewarm = base._prewarm_raw_model
+    original_train_step = base._distributed_train_step
 
     def prewarm(engine: Any, *, rank: int, microbatch_size: int = MICROBATCH_SIZE) -> None:
         original_prewarm(engine, rank=rank, microbatch_size=microbatch_size)
 
+    def diagnostic_train_step(engine: Any, batch: Any) -> Any:
+        rank = int(getattr(engine, "_small_llm_rank", -1))
+        first_step = int(getattr(engine, "global_step", -1)) == 18_000
+        if first_step:
+            print(
+                f"[kaggle-ddp][rank {rank}] first distributed optimizer step entered "
+                f"at block={getattr(batch, 'block_id', 'unknown')}; "
+                "32 sequences/rank, 16 local microbatches",
+                flush=True,
+            )
+        result = original_train_step(engine, batch)
+        if first_step:
+            print(
+                f"[kaggle-ddp][rank {rank}] first distributed optimizer step completed "
+                f"in {float(getattr(result, 'elapsed_seconds', 0.0)):.2f}s",
+                flush=True,
+            )
+        return result
+
     base.SEQUENCES_PER_BLOCK = SEQUENCES_PER_BLOCK
     base.MICROBATCH_SIZE = MICROBATCH_SIZE
     base._prewarm_raw_model = prewarm
+    base._distributed_train_step = diagnostic_train_step
 
 
 def _new_control_group(distributed: Any) -> Any:
