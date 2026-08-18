@@ -1,6 +1,6 @@
 # 100M / 10B deep-decay on Kaggle 2xT4
 
-ADR 0099 moves the ADR-0095 deep-decay continuation to Kaggle exact-batch two-T4 DDP while preserving the exact step-15,500 source, 64-sequence global optimizer block, microbatch four, and LR schedule.
+ADR 0099 moves the ADR-0095 deep-decay continuation to Kaggle exact-batch two-T4 DDP while preserving the exact step-15,500 model/optimizer/scaler/RNG/data state, the 64-sequence global optimizer block, and the LR schedule. The source checkpoint used execution microbatch four; the Kaggle fork uses microbatch two because microbatch four OOMed on the 100M model/T4 path while microbatch two subsequently completed 250 real optimizer updates with material memory headroom.
 
 ## Kaggle prerequisites
 
@@ -14,7 +14,7 @@ Use a Kaggle notebook/session configured with **2x Tesla T4** and internet acces
 
 The launcher fails closed if both visible CUDA devices are not Tesla T4s.
 
-## Inspect the frozen contract without allocating training work
+## Inspect the frozen contract without training
 
 ```bash
 python kaggle/launch.py deep-decay --model 100M --tokens 10B --dry-run
@@ -24,19 +24,20 @@ Expected geometry:
 
 ```text
 source checkpoint:           step-00015500
+source microbatch:           4
 execution:                   kaggle_dual_t4_ddp_block64
 world size:                  2
 sequences per block:         64
 sequences per rank:          32
-microbatch:                  4
-local microbatches/rank:     8
+Kaggle microbatch:           2
+local microbatches/rank:     16
 remote checkpoint cadence:   250 updates
 final step:                  76294
 ```
 
 ## First live gate
 
-Use one durability interval for the first 64-sequence live qualification:
+Use one durability interval for the first block-64 live qualification:
 
 ```bash
 python kaggle/launch.py deep-decay --model 100M --tokens 10B --max-steps-this-session 250
@@ -45,15 +46,15 @@ python kaggle/launch.py deep-decay --model 100M --tokens 10B --max-steps-this-se
 Before treating the Kaggle lane as qualified, verify the logs show:
 
 - two Tesla T4 devices and `world_size=2`;
-- global block 64, 32 sequences/rank, microbatch four;
-- exact source fork or verified deep-decay restore;
+- global block 64, 32 sequences/rank, microbatch two;
+- exact source fork or verified Kaggle deep-decay restore;
 - the expected LR for the resumed committed-target count;
 - finite loss and gradient norms;
 - W&B side effects only on rank zero;
 - a manifest-valid local checkpoint at the expected final step;
 - the same checkpoint published under `run/100m-10b-deep-decay-from-step15500/...` in the configured Hugging Face model repository.
 
-For a fresh fork, the bounded segment must finish at `step-00015750`. If a newer valid deep-decay checkpoint already exists, it must instead finish exactly 250 updates after that checkpoint.
+For a fresh fork, the bounded segment must finish at `step-00015750`. If a newer valid Kaggle deep-decay checkpoint already exists, it must instead finish exactly 250 updates after that checkpoint.
 
 ## Continue the run
 
@@ -63,7 +64,7 @@ After the live gate, launch without a session cap:
 python kaggle/launch.py deep-decay --model 100M --tokens 10B
 ```
 
-Kaggle may stop a notebook before the full remaining horizon. Resume by rerunning the **same command** in a new two-T4 session. The launcher restores the newest manifest-verified deep-decay Hugging Face checkpoint and stages the rolling dataset from that exact next block.
+Kaggle may stop a notebook before the full remaining horizon. Resume by rerunning the **same command** in a new two-T4 session. The launcher restores the newest manifest-verified Kaggle deep-decay Hugging Face checkpoint and stages the rolling dataset from that exact next block.
 
 If desired, bound individual notebook segments explicitly:
 
@@ -75,18 +76,18 @@ Do not add `--resume`; resume is automatic and the canonical launcher rejects th
 
 ## Fail-closed source rule
 
-When no deep-decay checkpoint exists yet, the launcher accepts only:
+When no Kaggle microbatch-two deep-decay checkpoint exists yet, the launcher accepts only:
 
 ```text
 run/100m-10b-data-001/latest.json
   checkpoint_id = step-00015500
 ```
 
-It never substitutes a nearest checkpoint and never starts from an older cooled/diagnostic continuation. Once the deep-decay namespace has a valid checkpoint, that namespace becomes the resume authority.
+It never substitutes a nearest checkpoint and never starts from an older cooled/diagnostic continuation. The fork keeps the exact source model/optimizer/scaler/RNG/data state, rewrites the execution microbatch field from four to two plus the already-authorized ADR-0095 scheduler fields, and recomputes the checkpoint configuration hash. Once the Kaggle deep-decay namespace has a valid microbatch-two checkpoint, that namespace becomes the resume authority.
 
-## Scientific invariants
+## Preserved scientific state
 
-The execution migration does not change:
+The execution migration preserves:
 
 - the 100M GDN-2 hybrid model;
 - FP16 execution;
@@ -95,8 +96,12 @@ The execution migration does not change:
 - exact 10B corpus order and cursor;
 - frozen 16-block validation prefix;
 - 64-sequence global optimizer block;
-- microbatch four;
 - the ADR-0095 three-phase deep-decay schedule;
 - final step 76,294 / 10,000,007,168 targets.
 
-The two-T4 implementation can differ from one-GPU accumulation in floating-point reduction order; it is intended to preserve the same optimizer update mathematically, not bitwise identity.
+Microbatch is execution slicing rather than optimizer-batch size. The switch `4 -> 2` creates more accumulation slices inside the same 64-sequence update. DDP and finer accumulation can change floating-point reduction order, so the migration targets numerical equivalence rather than bitwise identity.
+
+## T4 evidence
+
+- Microbatch four OOM: [`../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md`](../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md)
+- Microbatch two completed 250 real updates with peak allocated 8.35 GiB and peak reserved 11.70 GiB: [`../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md)
