@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
+import io
 import fcntl
 import hashlib
 import importlib.metadata
@@ -64,6 +66,8 @@ MICROBATCH_SIZE = 2
 CONTEXT_LENGTH = 2048
 GDN_CHUNK_SIZE = 32
 WORLD_SIZE = 2
+PUBLISH_VERIFY_TIMEOUT_SECONDS = 300.0
+PUBLISH_VERIFY_POLL_SECONDS = 3.0
 EXPECTED_GPU_NAME = "Tesla T4"
 EXPECTED_COMPUTE_CAPABILITY = (7, 5)
 
@@ -622,17 +626,123 @@ def _write_dataset_metadata(package_dir: Path, handle: str) -> None:
     _write_json(package_dir / "dataset-metadata.json", metadata)
 
 
+def _completed_output(result: subprocess.CompletedProcess[str]) -> str:
+    return "\n".join(
+        part.strip()
+        for part in (result.stdout or "", result.stderr or "")
+        if part and part.strip()
+    )
+
+
+def _run_kaggle_capture(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        list(command),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+
+def _remote_dataset_files(
+    kaggle: str,
+    *,
+    package_dir: Path,
+    handle: str,
+) -> set[str]:
+    result = _run_kaggle_capture(
+        [
+            kaggle,
+            "datasets",
+            "files",
+            handle,
+            "--page-size",
+            "200",
+            "-v",
+        ],
+        cwd=package_dir,
+    )
+    if result.returncode != 0:
+        detail = _completed_output(result) or f"exit status {result.returncode}"
+        raise TritonCacheError(
+            f"Kaggle Dataset file verification failed for {handle}: {detail}"
+        )
+
+    lines = [
+        line
+        for line in (result.stdout or "").splitlines()
+        if not line.startswith("Next Page Token = ")
+    ]
+    try:
+        rows = list(csv.DictReader(io.StringIO("\n".join(lines))))
+    except (csv.Error, TypeError) as error:
+        raise TritonCacheError(
+            f"cannot parse Kaggle Dataset file listing for {handle}: {error}"
+        ) from error
+    names = {str(row.get("name", "")).strip() for row in rows}
+    names.discard("")
+    if not names:
+        raise TritonCacheError(
+            f"Kaggle Dataset file verification returned no files for {handle}"
+        )
+    return names
+
+
+def _verify_published_dataset(
+    kaggle: str,
+    *,
+    package_dir: Path,
+    handle: str,
+) -> None:
+    expected = {ARCHIVE_NAME, MANIFEST_NAME}
+    deadline = time.monotonic() + PUBLISH_VERIFY_TIMEOUT_SECONDS
+    last_detail = "remote Dataset is not yet resolvable"
+    while True:
+        status = _run_kaggle_capture(
+            [kaggle, "datasets", "status", handle],
+            cwd=package_dir,
+        )
+        if status.returncode == 0:
+            try:
+                actual = _remote_dataset_files(
+                    kaggle,
+                    package_dir=package_dir,
+                    handle=handle,
+                )
+            except TritonCacheError as error:
+                last_detail = str(error)
+            else:
+                if actual == expected:
+                    return
+                last_detail = (
+                    "Kaggle Dataset file verification mismatch for "
+                    f"{handle}: expected {sorted(expected)}, found {sorted(actual)}"
+                )
+        else:
+            last_detail = _completed_output(status) or f"exit status {status.returncode}"
+
+        if time.monotonic() >= deadline:
+            raise TritonCacheError(
+                f"Kaggle Dataset publication was not confirmed for {handle}: "
+                f"{last_detail}"
+            )
+        time.sleep(PUBLISH_VERIFY_POLL_SECONDS)
+
+
 def publish_package(package_dir: Path, handle: str) -> None:
     kaggle = shutil.which("kaggle")
     if not kaggle:
         raise TritonCacheError("Kaggle CLI is required for --publish")
+    _validate_manifest(package_dir)
     _write_dataset_metadata(package_dir, handle)
-    status = subprocess.run(
+    status = _run_kaggle_capture(
         [kaggle, "datasets", "status", handle],
         cwd=package_dir,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
     )
     if status.returncode == 0:
         command = [
@@ -659,10 +769,29 @@ def publish_package(package_dir: Path, handle: str) -> None:
         ]
         action = "create"
     print(f"[triton-cache] Kaggle Dataset {action}: {handle}", flush=True)
-    subprocess.check_call(command, cwd=package_dir)
+    upload = _run_kaggle_capture(command, cwd=package_dir)
+    output = _completed_output(upload)
+    if output:
+        print(output, flush=True)
+    if upload.returncode != 0:
+        raise TritonCacheError(
+            f"Kaggle Dataset {action} command failed for {handle}: "
+            + (output or f"exit status {upload.returncode}")
+        )
+    if "Dataset creation error:" in output or "Dataset version creation error:" in output:
+        raise TritonCacheError(
+            f"Kaggle Dataset {action} was rejected for {handle}: {output}"
+        )
+
+    _verify_published_dataset(
+        kaggle,
+        package_dir=package_dir,
+        handle=handle,
+    )
     print(
-        f"[triton-cache] published private dataset {handle}; attach it to future "
-        "Kaggle notebooks so launch.py can preseed automatically",
+        f"[triton-cache] published private dataset {handle}; verified remote files "
+        f"{ARCHIVE_NAME} + {MANIFEST_NAME}; attach it to future Kaggle notebooks "
+        "so launch.py can preseed automatically",
         flush=True,
     )
 

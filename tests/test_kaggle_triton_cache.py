@@ -1,7 +1,9 @@
 """CPU-only contracts for portable Kaggle Tesla-T4 Triton cache seeding."""
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import tempfile
@@ -174,6 +176,134 @@ class KaggleTritonCacheTests(unittest.TestCase):
         self.assertIn('"datasets",\n            "create"', source)
         self.assertNotIn('"--public"', source)
         self.assertIn('"licenses": [{"name": "other"}]', source)
+
+    def test_publish_rejects_kaggle_cli_false_positive(self) -> None:
+        module = _load("small_llm_triton_cache_publish_error_test", KAGGLE / "triton_cache.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary)
+            completed = module.subprocess.CompletedProcess
+            responses = [
+                completed([], 1, stdout="", stderr="not found"),
+                completed(
+                    [],
+                    0,
+                    stdout=(
+                        "Dataset creation error: Dataset url's dataset slugs "
+                        "and hashlink are all null\n"
+                    ),
+                    stderr="",
+                ),
+            ]
+            output = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
+                )
+                stack.enter_context(
+                    mock.patch.object(module.subprocess, "run", side_effect=responses)
+                )
+                stack.enter_context(contextlib.redirect_stdout(output))
+                with self.assertRaisesRegex(
+                    module.TritonCacheError,
+                    "Dataset creation error: Dataset url's dataset slugs",
+                ):
+                    module.publish_package(
+                        package,
+                        "roccoangelella/small-llm-t4-triton-cache",
+                    )
+
+            self.assertNotIn("published private dataset", output.getvalue())
+
+    def test_publish_requires_remote_archive_and_manifest_verification(self) -> None:
+        module = _load("small_llm_triton_cache_publish_verify_test", KAGGLE / "triton_cache.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary)
+            completed = module.subprocess.CompletedProcess
+            responses = [
+                completed([], 1, stdout="", stderr="not found"),
+                completed(
+                    [],
+                    0,
+                    stdout="Your private Dataset is being created.\n",
+                    stderr="",
+                ),
+                completed([], 0, stdout="ready\n", stderr=""),
+                completed(
+                    [],
+                    0,
+                    stdout=(
+                        "name,size,creationDate\n"
+                        f"{module.ARCHIVE_NAME},362000000,2026-08-18\n"
+                        f"{module.MANIFEST_NAME},123456,2026-08-18\n"
+                    ),
+                    stderr="",
+                ),
+            ]
+            output = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
+                )
+                run = stack.enter_context(
+                    mock.patch.object(module.subprocess, "run", side_effect=responses)
+                )
+                stack.enter_context(contextlib.redirect_stdout(output))
+                module.publish_package(
+                    package,
+                    "roccoangelella/small-llm-t4-triton-cache",
+                )
+
+            self.assertEqual(run.call_count, 4)
+            self.assertIn("published private dataset", output.getvalue())
+            self.assertIn(module.ARCHIVE_NAME, output.getvalue())
+            self.assertIn(module.MANIFEST_NAME, output.getvalue())
+            create_command = run.call_args_list[1].args[0]
+            self.assertIn("create", create_command)
+            self.assertIn("skip", create_command)
+            self.assertNotIn("--public", create_command)
+
+    def test_publish_rejects_expanded_remote_triton_tree(self) -> None:
+        module = _load("small_llm_triton_cache_publish_tree_test", KAGGLE / "triton_cache.py")
+        with tempfile.TemporaryDirectory() as temporary:
+            package = Path(temporary)
+            completed = module.subprocess.CompletedProcess
+            responses = [
+                completed([], 0, stdout="ready\n", stderr=""),
+                completed([], 0, stdout="Dataset version is being created.\n", stderr=""),
+                completed([], 0, stdout="ready\n", stderr=""),
+                completed(
+                    [],
+                    0,
+                    stdout=(
+                        "name,size,creationDate\n"
+                        f"{module.ARCHIVE_NAME},362000000,2026-08-18\n"
+                        f"{module.MANIFEST_NAME},123456,2026-08-18\n"
+                        "kernel.cubin,100,2026-08-18\n"
+                    ),
+                    stderr="",
+                ),
+            ]
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(module, "_validate_manifest"))
+                stack.enter_context(
+                    mock.patch.object(module.shutil, "which", return_value="/usr/bin/kaggle")
+                )
+                stack.enter_context(
+                    mock.patch.object(module.subprocess, "run", side_effect=responses)
+                )
+                stack.enter_context(
+                    mock.patch.object(module, "PUBLISH_VERIFY_TIMEOUT_SECONDS", 0.0)
+                )
+                with self.assertRaisesRegex(
+                    module.TritonCacheError,
+                    "file verification mismatch",
+                ):
+                    module.publish_package(
+                        package,
+                        "roccoangelella/small-llm-t4-triton-cache",
+                    )
 
 
 if __name__ == "__main__":
