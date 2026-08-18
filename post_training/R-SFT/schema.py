@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 TEACHER_FIELDS = frozenset({"problem", "reasoning", "answer"})
+STORED_FIELDS = frozenset({"skill", "difficulty", "problem", "reasoning", "answer"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +57,25 @@ class ReasoningExample:
             reasoning=example.reasoning,
             answer=example.answer,
         )
+
+    @classmethod
+    def from_mapping(cls, raw: Mapping[str, Any], *, index: int | None = None) -> "ReasoningExample":
+        label = "stored reasoning item" if index is None else f"stored reasoning item {index}"
+        keys = set(raw)
+        if keys != STORED_FIELDS:
+            missing = sorted(STORED_FIELDS - keys)
+            extra = sorted(keys - STORED_FIELDS)
+            raise ValueError(
+                f"{label} must contain exactly skill/difficulty/problem/reasoning/answer; "
+                f"missing={missing} extra={extra}"
+            )
+        values: dict[str, str] = {}
+        for name in ("skill", "difficulty", "problem", "reasoning", "answer"):
+            value = raw[name]
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label} field {name!r} must be non-empty text")
+            values[name] = value.strip()
+        return cls(**values)
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -107,6 +127,31 @@ def parse_teacher_batch(text: str, *, expected_count: int) -> tuple[TeacherExamp
     return tuple(_parse_teacher_item(raw, index=index) for index, raw in enumerate(payload))
 
 
+def read_jsonl(path: str | Path) -> tuple[ReasoningExample, ...]:
+    """Load a frozen reasoning JSONL file and reject any schema or syntax drift."""
+
+    source = Path(path)
+    records: list[ReasoningExample] = []
+    try:
+        handle = source.open("r", encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"reasoning JSONL is missing or unreadable: {source}") from error
+    with handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.strip():
+                raise ValueError(f"reasoning JSONL contains a blank line at {line_number}")
+            try:
+                raw = json.loads(raw_line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"reasoning JSONL line {line_number} is invalid JSON") from error
+            if not isinstance(raw, Mapping):
+                raise ValueError(f"reasoning JSONL line {line_number} must be a JSON object")
+            records.append(ReasoningExample.from_mapping(raw, index=line_number - 1))
+    if not records:
+        raise ValueError("reasoning JSONL contains no records")
+    return tuple(records)
+
+
 def write_jsonl(records: Sequence[ReasoningExample], path: str | Path) -> Path:
     """Write accepted records as compact UTF-8 JSONL."""
 
@@ -121,8 +166,10 @@ def write_jsonl(records: Sequence[ReasoningExample], path: str | Path) -> Path:
 
 __all__ = [
     "ReasoningExample",
+    "STORED_FIELDS",
     "TEACHER_FIELDS",
     "TeacherExample",
     "parse_teacher_batch",
+    "read_jsonl",
     "write_jsonl",
 ]
