@@ -57,6 +57,19 @@ def test_dual_t4_command_preserves_block64_and_t4_safe_microbatch() -> None:
     assert "torch==2.10.0" in command
     assert "triton==3.6.0" in command
     assert "fla-core==0.5.2" in command
+    assert "huggingface_hub==1.5.0" in command
+
+
+def test_host_staging_bootstraps_private_hf_bucket_client() -> None:
+    source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+    assert 'HF_HUB_VERSION = "1.5.0"' in source
+    assert '"create_bucket"' in source
+    assert '"list_bucket_tree"' in source
+    assert '"download_bucket_files"' in source
+    assert '"batch_bucket_files"' in source
+    assert '"--target"' in source
+    assert 'os.execve(' in source
+    assert '_ensure_host_hf_bucket_runtime(args)' in source
 
 
 def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
