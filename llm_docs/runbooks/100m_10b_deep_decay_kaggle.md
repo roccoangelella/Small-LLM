@@ -14,6 +14,44 @@ Use a Kaggle notebook/session configured with **2x Tesla T4** and internet acces
 
 The launcher fails closed if both visible CUDA devices are not Tesla T4s.
 
+## Build and attach the portable Triton cache
+
+ADR 0102 adds an optional private Kaggle Dataset containing the precompiled/autotuned T4 Triton cache. The cache is an execution optimization only: an absent or rejected cache falls back to ordinary JIT/autotuning and does not change training state.
+
+Pay the full compile/autotune cost once on a two-T4 Kaggle session and package the result:
+
+```bash
+python kaggle/triton_cache.py build
+```
+
+The builder creates no optimizer or checkpoint state. It instantiates the frozen 100M GDN-2 model with configured chunk 32, executes the production-local FP16 `2 x 2048` forward/backward prewarm on one T4, then launches a second fresh pinned-runtime process against the same disk cache before packaging it under:
+
+```text
+/kaggle/working/small-llm-t4-triton-cache-dataset/
+  small_llm_triton_cache_manifest.json
+  triton-cache.tar
+```
+
+To create or refresh a private Kaggle Dataset directly when the Kaggle CLI is authenticated:
+
+```bash
+python kaggle/triton_cache.py build --publish OWNER/DATASET-SLUG
+```
+
+Attach that private Dataset to future notebooks. `kaggle/dual_t4_train_block64.py` scans attached inputs for the cache manifest before importing Torch, verifies the exact T4/runtime/model/shape/source contract and all checksums, and atomically seeds the canonical writable cache path. Both torchrun ranks share the result; a filesystem lock prevents concurrent extraction.
+
+Useful overrides:
+
+```bash
+# Explicit attached/package directory instead of discovery under /kaggle/input
+export SMALL_LLM_KAGGLE_TRITON_CACHE_DATASET_DIR=/kaggle/input/<dataset-slug>
+
+# Qualification only: fail if an explicit/attached seed is incompatible
+export SMALL_LLM_KAGGLE_TRITON_CACHE_STRICT=1
+```
+
+Do not commit generated cache binaries to Git. Rebuild the Dataset whenever the manifest rejects runtime, geometry, canonical-path, or focused kernel-source drift.
+
 ## Inspect the frozen contract without training
 
 ```bash
