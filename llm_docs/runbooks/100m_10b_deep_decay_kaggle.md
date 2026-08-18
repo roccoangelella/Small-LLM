@@ -35,6 +35,8 @@ remote checkpoint cadence:   250 updates
 final step:                  76294
 ```
 
+Training math uses NCCL. Prewarm, cadence, and final rendezvous use a one-hour CPU/Gloo control group so rank-zero validation/checkpoint/publication work cannot reproduce the known ten-minute NCCL watchdog timeout from the 100M SFT lane.
+
 ## First live gate
 
 Use one durability interval for the first block-64 live qualification:
@@ -46,11 +48,12 @@ python kaggle/launch.py deep-decay --model 100M --tokens 10B --max-steps-this-se
 Before treating the Kaggle lane as qualified, verify the logs show:
 
 - two Tesla T4 devices and `world_size=2`;
-- global block 64, 32 sequences/rank, microbatch two;
+- startup banner `global block=64`, `32 sequences/rank`, `microbatch=2`, `control_barrier=gloo-1h`;
 - exact source fork or verified Kaggle deep-decay restore;
 - the expected LR for the resumed committed-target count;
 - finite loss and gradient norms;
 - W&B side effects only on rank zero;
+- successful cadence rendezvous after validation;
 - a manifest-valid local checkpoint at the expected final step;
 - the same checkpoint published under `run/100m-10b-deep-decay-from-step15500/...` in the configured Hugging Face model repository.
 
@@ -104,4 +107,4 @@ Microbatch is execution slicing rather than optimizer-batch size. The switch `4 
 ## T4 evidence
 
 - Microbatch four OOM: [`../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md`](../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md)
-- Microbatch two completed 250 real updates with peak allocated 8.35 GiB and peak reserved 11.70 GiB: [`../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md)
+- Microbatch two completed 250 real updates with peak allocated 8.35 GiB and peak reserved 11.70 GiB; the later failure was the cadence NCCL watchdog, not memory: [`../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md)
