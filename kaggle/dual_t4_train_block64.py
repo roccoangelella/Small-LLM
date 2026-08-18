@@ -9,9 +9,11 @@ T4 path:
 - preserve the 64-sequence global optimizer block as 32 ordered rows per rank;
 - use execution microbatch two, the largest 100M/T4 shape already shown to
   complete real optimizer updates with material memory headroom;
-- route long cadence/prewarm/final rendezvous through a one-hour CPU/Gloo
-  control group so rank zero validation/checkpoint/publication cannot trip the
-  default ten-minute NCCL watchdog observed in the 100M SFT path;
+- route long cadence/final rendezvous through a one-hour CPU/Gloo control group
+  so rank zero validation/checkpoint/publication cannot trip the default
+  ten-minute NCCL watchdog observed in the 100M SFT path;
+- use a separate five-minute monitored Gloo startup rendezvous after prewarm so
+  a stalled rank cannot silently consume an hour of Kaggle GPU time;
 - preseed a manifest-verified portable Triton cache before importing Torch when
   a compatible cache dataset is attached, otherwise use normal JIT fallback.
 """
@@ -28,6 +30,7 @@ import triton_cache
 SEQUENCES_PER_BLOCK = 64
 MICROBATCH_SIZE = 2
 CONTROL_GROUP_TIMEOUT_SECONDS = 60 * 60
+STARTUP_BARRIER_TIMEOUT_SECONDS = 5 * 60
 
 
 def _install_geometry_overrides() -> None:
@@ -51,15 +54,38 @@ def _new_control_group(distributed: Any) -> Any:
 
 
 def _install_control_barrier(distributed: Any, group: Any) -> None:
-    """Make only synchronization barriers use Gloo; DDP all-reduces stay NCCL."""
+    """Use monitored Gloo for startup and long-lived Gloo for later barriers."""
 
     original_barrier = distributed.barrier
+    startup_pending = True
 
     def control_barrier(*args: Any, **kwargs: Any) -> Any:
+        nonlocal startup_pending
         # Preserve an explicitly requested group. The shared pretraining shim
         # does not pass one today, but fail gracefully if that changes later.
         if args or kwargs.get("group") is not None:
             return original_barrier(*args, **kwargs)
+        if startup_pending:
+            startup_pending = False
+            rank = os.environ.get("RANK", "?")
+            print(
+                f"[kaggle-ddp][rank {rank}] reached post-prewarm startup barrier; "
+                f"timeout={STARTUP_BARRIER_TIMEOUT_SECONDS}s",
+                flush=True,
+            )
+            monitored = getattr(distributed, "monitored_barrier", None)
+            if not callable(monitored):
+                raise RuntimeError("qualified PyTorch lacks dist.monitored_barrier")
+            result = monitored(
+                group=group,
+                timeout=timedelta(seconds=STARTUP_BARRIER_TIMEOUT_SECONDS),
+                wait_all_ranks=True,
+            )
+            print(
+                f"[kaggle-ddp][rank {rank}] post-prewarm startup barrier passed",
+                flush=True,
+            )
+            return result
         return original_barrier(group=group)
 
     distributed.barrier = control_barrier
@@ -111,7 +137,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if rank == 0:
         print(
             "[kaggle-ddp] 100M/10B execution: 2x Tesla T4, global block=64, "
-            "32 sequences/rank, microbatch=2, control_barrier=gloo-1h, exact-batch DDP",
+            "32 sequences/rank, microbatch=2, control_barrier=gloo-1h, "
+            "startup_barrier=gloo-monitored-5m, exact-batch DDP",
             flush=True,
         )
     trainer_cli = base._install_pinned_trainer_ddp(
