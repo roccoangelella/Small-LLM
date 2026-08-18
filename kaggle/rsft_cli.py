@@ -26,18 +26,27 @@ def build_parser() -> argparse.ArgumentParser:
     train = subs.add_parser("train")
     train.add_argument("--model", required=True, type=parse_quantity, metavar="SIZE")
     train.add_argument("--tokens", required=True, type=parse_quantity, metavar="SIZE")
-    train.add_argument("--dataset-dir", required=True)
-    train.add_argument("--run-id", required=True)
     train.add_argument(
         "--delimiter-format",
         choices=("atomic", "textual"),
         required=True,
-        help="matched R-SFT delimiter arm",
+        help="matched R-SFT delimiter arm; this is the only required experiment choice",
+    )
+    train.add_argument(
+        "--dataset-dir",
+        help="optional prebuilt arm bundle; omit to build from the committed 630-example corpus",
+    )
+    train.add_argument(
+        "--s0-bundle",
+        help="optional completed S0 bundle override for the 10%% retention lane",
+    )
+    train.add_argument(
+        "--run-id",
+        help="optional stable run identity; defaults to the canonical pilot ID for the selected arm",
     )
     train.add_argument(
         "--token-spec",
-        required=True,
-        help="JSON file declaring reasoning_start/reasoning_end/answer_start strings",
+        help="optional reasoning-token spec override; defaults to the frozen repository spec",
     )
     train.add_argument("--parent-repo-id")
     train.add_argument("--checkpoint-repo-id")
@@ -56,18 +65,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     sft_cli._load_dotenv()
     parser = build_parser()
     args = parser.parse_args(argv)
+    run_id = args.run_id or rsft_runtime.default_run_id(args.delimiter_format)
     try:
         profile = rsft_runtime.resolve_profile(
             args.model,
             args.tokens,
-            run_id=args.run_id,
+            run_id=run_id,
             delimiter_format=args.delimiter_format,
             learning_rate=float(args.learning_rate),
         )
         print(
             f"[launch-rsft] action=train model={profile.model_label} tokens={profile.token_label} "
             f"parent={profile.parent_run_id} run={profile.sft_run_id} "
-            f"delimiter={args.delimiter_format} topology=2xT4-DDP bundle_exact_one_pass=true",
+            f"delimiter={args.delimiter_format} topology=2xT4-DDP "
+            f"data={'explicit' if args.dataset_dir else 'auto-committed-pilot'} "
+            "bundle_exact_one_pass=true",
             flush=True,
         )
         return rsft_runtime.train(
@@ -75,6 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset_dir=args.dataset_dir,
             delimiter_format=args.delimiter_format,
             token_spec=args.token_spec,
+            s0_bundle=args.s0_bundle,
             parent_repo_id=args.parent_repo_id,
             checkpoint_repo_id=args.checkpoint_repo_id,
             max_steps_this_session=args.max_steps_this_session,
