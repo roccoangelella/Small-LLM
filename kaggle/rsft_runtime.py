@@ -6,15 +6,14 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import dual_t4_runtime
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# Pinned after the implementation commit is complete. The public launcher refuses
-# to create a worktree until this is a full commit SHA.
-IMPLEMENTATION_COMMIT = "__PIN_RSFT_IMPLEMENTATION_COMMIT__"
+# This commit contains the R-SFT launcher, DDP adapter, tokenizer/model transition,
+# and shared SFT runtime contract consumed inside the detached Kaggle worktree.
+IMPLEMENTATION_COMMIT = "96a8fc399fd919f54e73d8b9c4689e698e476cc7"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 DEFAULT_MICROBATCH_SIZE = 2
 DEFAULT_CADENCE_STEPS = 250
@@ -175,6 +174,9 @@ def train(
         or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
         or os.environ.get("SMALL_LLM_HF_REPO_ID")
     )
+    if dry_run:
+        parent_repo = parent_repo or "<SMALL_LLM_SFT_HF_REPO_ID>"
+        checkpoint_repo = checkpoint_repo or "<SMALL_LLM_RSFT_HF_REPO_ID>"
     if not parent_repo:
         raise base.RuntimeFailure(
             "pass --parent-repo-id or set SMALL_LLM_SFT_HF_REPO_ID/SMALL_LLM_HF_REPO_ID"
