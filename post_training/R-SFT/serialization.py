@@ -32,6 +32,7 @@ def _load_schema() -> ModuleType:
 
 schema = _load_schema()
 DEFAULT_REASONING_SOURCE = "r0-reasoning"
+_VALID_SPLITS = frozenset({"train", "validation", "test"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,15 +78,18 @@ def to_conversation_mapping(
     *,
     markers: ReasoningMarkers,
     source: str = DEFAULT_REASONING_SOURCE,
+    split: str = "train",
 ) -> dict[str, object]:
     """Convert an accepted record to the mapping consumed by S0 ConversationRecord."""
 
     if not isinstance(source, str) or not source.strip():
         raise ValueError("source must be a non-empty string")
+    if split not in _VALID_SPLITS:
+        raise ValueError("split must be train, validation, or test")
     return {
         "conversation_id": stable_conversation_id(example),
         "source": source.strip(),
-        "split": "train",
+        "split": split,
         "messages": [
             {"role": "user", "content": example.problem},
             {
