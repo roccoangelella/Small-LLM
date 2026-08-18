@@ -1,7 +1,7 @@
 # Usage:
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
 #   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
-#   python chat.py --model_params 100M --num_tokens 2B --r-sft       # completed R-SFT run (once registered)
+#   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
@@ -28,11 +28,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _SOURCE_SFT = "sft"
+_SOURCE_R_SFT = "r_sft"
 _SOURCE_STABLE_MODEL = "stable_model"
 _STAGE_PRETRAINED = "pre-trained"
 _STAGE_SFT = "sft"
 _STAGE_R_SFT = "r-sft"
 _GPT2_SEMANTIC_VOCAB_SIZE = 50_257
+_R_SFT_CANONICAL_MARKERS = ("<think>", "</think>", "<answer>")
 
 _PRETRAINED_CHAT_RUNS = {
     (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
@@ -42,8 +44,12 @@ _SFT_CHAT_RUNS = {
     (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
     (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-001", _SOURCE_SFT),
 }
-# Register completed/verified R-SFT artifacts here only after their run identity is frozen.
-_R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {}
+_R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {
+    (100_000_000, 2_000_000_000): (
+        "100m-2b-rsft-r0-atomic-pilot-001",
+        _SOURCE_R_SFT,
+    ),
+}
 _STAGE_REGISTRIES = {
     _STAGE_PRETRAINED: _PRETRAINED_CHAT_RUNS,
     _STAGE_SFT: _SFT_CHAT_RUNS,
@@ -180,6 +186,18 @@ def _resolve_chat_run(
 
 
 def _repo_id(*, source: str) -> str:
+    if source == _SOURCE_R_SFT:
+        repo_id = (
+            os.environ.get("SMALL_LLM_RSFT_HF_REPO_ID")
+            or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
+            or os.environ.get("SMALL_LLM_HF_REPO_ID")
+        )
+        if not repo_id:
+            raise RuntimeError(
+                "set SMALL_LLM_RSFT_HF_REPO_ID (or SMALL_LLM_SFT_HF_REPO_ID / "
+                "SMALL_LLM_HF_REPO_ID when post-training checkpoints share a repository)"
+            )
+        return repo_id
     if source == _SOURCE_SFT:
         repo_id = os.environ.get("SMALL_LLM_SFT_HF_REPO_ID") or os.environ.get(
             "SMALL_LLM_HF_REPO_ID"
@@ -235,11 +253,30 @@ def _load_completed_checkpoint(
         if not isinstance(sft_identity, Mapping) or sft_identity.get("stage") != "sft_s0":
             raise RuntimeError("the selected Hugging Face checkpoint is not an SFT S0 checkpoint")
     elif stage == _STAGE_R_SFT:
+        rsft_format = pipeline.get("rsft_format")
+        if (
+            not isinstance(rsft_format, Mapping)
+            or rsft_format.get("version") != 1
+            or rsft_format.get("stage") != "r_sft_r0"
+            or rsft_format.get("delimiter_format") != "atomic"
+        ):
+            raise RuntimeError(
+                "the selected Hugging Face checkpoint is not the accepted atomic R-SFT R0 format"
+            )
         tokenizer_module = _load_rsft_tokenizer_module()
         try:
             reasoning_spec = tokenizer_module.spec_from_pipeline_state(pipeline)
         except ValueError as error:
             raise RuntimeError(f"invalid R-SFT reasoning tokenizer contract: {error}") from error
+        actual_markers = (
+            reasoning_spec.reasoning_start,
+            reasoning_spec.reasoning_end,
+            reasoning_spec.answer_start,
+        )
+        if actual_markers != _R_SFT_CANONICAL_MARKERS:
+            raise RuntimeError(
+                "R-SFT checkpoint does not use the accepted <think>, </think>, <answer> protocol"
+            )
 
     state = load_trainer_state_file(checkpoint_root / "trainer_state.pkl", map_location="cpu")
     if state.get("version") != 1:
@@ -314,7 +351,7 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
     token = os.environ.get("HF_TOKEN")
     temporary = tempfile.TemporaryDirectory(prefix="small-llm-chat-")
     try:
-        if source == _SOURCE_SFT:
+        if source in {_SOURCE_SFT, _SOURCE_R_SFT}:
             from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
 
             checkpoint_root, info = download_verified_checkpoint(
