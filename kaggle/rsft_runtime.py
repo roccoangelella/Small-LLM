@@ -13,8 +13,8 @@ import rsft_prepare
 import sft_runtime as base
 import sft_scaled_runtime as scaled
 
-# Re-pinned after the atomic-production implementation is complete.
-IMPLEMENTATION_COMMIT = "d6ca7e0ae2ff0026203dc60e88efb39ffd6e27cf"
+# Pinned atomic-production implementation used by the detached Kaggle worktree.
+IMPLEMENTATION_COMMIT = "28b854b58068ba30d1557c317483da524639a2a0"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
 PRODUCTION_RUN_ID = "100m-2b-rsft-r0-001"
 PILOT_RUN_IDS = {
@@ -79,8 +79,6 @@ def resolve_profile(
         dataset_slug=run_id,
         known_parent_consumed_tokens=None,
         launch_commit=IMPLEMENTATION_COMMIT,
-        # Internal compatibility values only. dual_t4_rsft.py replaces the
-        # inherited fraction budget with the bundle's exact target count.
         sft_fraction_numerator=1,
         sft_fraction_denominator=2,
         microbatch_size=DEFAULT_MICROBATCH_SIZE,
