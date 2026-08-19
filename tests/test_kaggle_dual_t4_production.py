@@ -61,6 +61,7 @@ class KaggleDualT4ProductionTests(unittest.TestCase):
         self.assertIn("triton==3.6.0", rewritten)
         self.assertIn("fla-core==0.5.2", rewritten)
         self.assertIn("huggingface_hub==1.5.0", rewritten)
+        self.assertIn("wandb==0.26.1", rewritten)
         self.assertIn("https://download.pytorch.org/whl/cu128", rewritten)
         self.assertIn("dual-t4-ddp", rewritten)
         self.assertNotIn("trainer", rewritten[rewritten.index("python") : rewritten.index("--dataset-dir")])
