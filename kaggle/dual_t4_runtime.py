@@ -18,6 +18,7 @@ TORCH_VERSION = "2.10.0"
 TRITON_VERSION = "3.6.0"
 FLA_VERSION = "0.5.2"
 HF_HUB_VERSION = "1.5.0"
+WANDB_VERSION = "0.26.1"
 CUDA_WHEEL_INDEX = "https://download.pytorch.org/whl/cu128"
 
 
@@ -59,6 +60,8 @@ def qualified_runtime_uv_args() -> list[str]:
         f"fla-core=={FLA_VERSION}",
         "--with",
         f"huggingface_hub=={HF_HUB_VERSION}",
+        "--with",
+        f"wandb=={WANDB_VERSION}",
         "--with",
         "packaging>=24",
         "--with",
@@ -125,6 +128,7 @@ __all__ = [
     "HF_HUB_VERSION",
     "TORCH_VERSION",
     "TRITON_VERSION",
+    "WANDB_VERSION",
     "WORLD_SIZE",
     "distributed_trainer_command",
     "install",
