@@ -117,6 +117,7 @@ def test_profile_is_fixed_to_100m_2b() -> None:
     assert profile.parent_run_id == "100m-2b-sft-s0-001"
     assert profile.microbatch_size == 2
     assert profile.sft_run_id == "100m-2b-rsft-r0-12306-001"
+    assert profile.launch_commit == "b6bf8df5aa3c835278214a4ba4adb91225b6b672"
 
     with pytest.raises(rsft_runtime.base.RuntimeFailure):
         rsft_runtime.resolve_profile(
