@@ -1,14 +1,20 @@
 # R-SFT R0 atomic runbook
 
-_Last updated: 2026-08-18 Europe/Rome_
+_Last updated: 2026-08-19 Europe/Rome_
 
-The accepted 100M / 2B R0 R-SFT artifact is the already-completed atomic delimiter run:
+The current accepted 100M / 2B R0 R-SFT artifact is the completed 12,306-row Superior/Gemini checkpoint:
 
 ```text
-100m-2b-rsft-r0-atomic-pilot-001
+100m-2b-rsft-r0-12306-001
 ```
 
-It uses the frozen special-token protocol:
+The verified Hugging Face latest pointer is the completed final optimizer boundary:
+
+```text
+step-00000361
+```
+
+It uses the frozen atomic special-token protocol:
 
 ```text
 50257  <think>
@@ -16,34 +22,47 @@ It uses the frozen special-token protocol:
 50259  <answer>
 ```
 
-The textual delimiter arm remains ablation-only. ADR 0100 promotes the completed atomic artifact itself; do **not** retrain the same 630-example corpus only to obtain a different run ID.
+The historical 630-example delimiter pilot and 10-epoch repeat probe are no longer accepted model artifacts. Their Hugging Face run namespaces were deleted on 2026-08-19 after the 12,306-row run completed. Their experiment definitions remain reproducible from Git for audit purposes.
 
 ## 1. Current accepted R0 state
 
-The frozen reasoning corpus already exists at:
+The frozen reasoning corpus is:
 
 ```text
-artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl
+artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
 ```
 
-The accepted atomic run already trained that corpus together with the frozen 10% S0 instruction-retention lane for one complete pass. The checkpoint remains identified by its original scientific provenance, including the historical `pilot` suffix.
+It contains 12,306 unique normalized prompts:
+
+- 7,683 unchanged, context-fit Superior instruction rows;
+- 3,993 unique accepted Variant-D Superior rewrites;
+- 630 frozen Gemini logic anchors.
+
+The adjacent manifest records 28 accepted rewrites omitted because compression created normalized-prompt collisions, and 4,476 manually-kept over-context candidates that remain pending future compression. Every emitted row passes the exact atomic R-SFT serialization at the 2,048-token model context.
+
+The native training bundle used 32,768 loss-bearing target tokens per optimizer block and one exact pass. It contained 361 train blocks and 11,609,452 train target tokens: 10,448,098 reasoning targets plus 1,161,354 S0-retention targets, preserving the approximately 90/10 reasoning/retention contract.
 
 ## 2. Chat with the accepted artifact
 
-Configure Hugging Face access. R-SFT first checks `SMALL_LLM_RSFT_HF_REPO_ID`, then falls back to the SFT/base checkpoint repository variables.
+Configure Hugging Face access. R-SFT first checks `SMALL_LLM_RSFT_HF_REPO_ID`, then falls back to the SFT/base checkpoint repository variables. In the current shared setup, `SMALL_LLM_HF_REPO_ID=roccoangelella/small-llm-100m-qualification` is sufficient.
+
+Run the registered current R-SFT model:
 
 ```bash
-export HF_TOKEN=...
-export SMALL_LLM_RSFT_HF_REPO_ID=owner/rsft-repository  # optional if shared
+.venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
 ```
 
-Run:
+The explicit equivalent is:
 
 ```bash
-python chat.py --model_params 100M --num_tokens 2B --r-sft
+.venv/bin/python chat.py \
+  --model_params 100M \
+  --num_tokens 2B \
+  --r-sft \
+  --run-id 100m-2b-rsft-r0-12306-001
 ```
 
-`chat.py` resolves `100m-2b-rsft-r0-atomic-pilot-001` and fails closed unless the downloaded checkpoint is complete and carries:
+`chat.py` fails closed unless the downloaded checkpoint is complete and carries:
 
 ```text
 semantic_vocab_size = 50260
@@ -54,31 +73,49 @@ pipeline_state.rsft_format.delimiter_format = atomic
 
 plus the exact `<think>`, `</think>`, `<answer>` token metadata at IDs 50257-50259.
 
-## 3. Historical delimiter experiment
+## 3. Hugging Face R-SFT state
 
-The original matched experiment remains reproducible for audit purposes:
+The checkpoint repository is:
 
-```bash
-python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B --delimiter-format atomic
-python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B --delimiter-format textual
+```text
+roccoangelella/small-llm-100m-qualification
 ```
 
-Do not use the textual checkpoint as an accepted R-SFT artifact or as the parent for later reasoning stages.
+The only retained 100M / 2B R-SFT run namespace is:
 
-## 4. Future larger R-SFT corpus
+```text
+run/100m-2b-rsft-r0-12306-001/
+```
 
-`post_training/R-SFT/build_atomic.py` and the production Kaggle `train` path remain available for a **future explicitly approved larger/new reasoning corpus**. They are not instructions to duplicate the accepted 630-example R0 run.
+Its `latest.json` points to `step-00000361`. The completed S0 parent `100m-2b-sft-s0-001` is preserved.
 
-If a future corpus is frozen, build an atomic-only native bundle on a CPU/VPS host with the completed S0 bundle available:
+The following superseded R-SFT namespaces were deliberately deleted from Hugging Face on 2026-08-19:
+
+```text
+100m-2b-rsft-r0-atomic-pilot-001
+100m-2b-rsft-r0-atomic-repeat-e10-001
+100m-2b-rsft-r0-textual-pilot-001
+```
+
+Do not treat those names as remotely loadable checkpoints. They remain historical experiment identities only.
+
+## 4. Training/reproduction
+
+The canonical production launch for the frozen 12,306-row checkpoint is:
+
+```bash
+python kaggle/launch_r_sft.py train --model 100M --tokens 2B
+```
+
+The launcher pins the committed corpus and implementation, resolves the completed 100M/2B S0 parent bundle, builds/verifies the atomic production bundle, and uses the distinct run ID `100m-2b-rsft-r0-12306-001`.
+
+The production builder can be run directly with:
 
 ```bash
 python post_training/R-SFT/build_atomic.py \
-  --reasoning-jsonl /path/to/new-reasoning.jsonl \
+  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl \
   --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --output-dir /path/to/rsft-r0-expanded \
-  --heldout-per-cell <FROZEN_COUNT>
+  --output-dir /path/to/rsft-r0-superior-instruction-checkpoint-12306
 ```
 
-The builder defaults to 32,768 loss-bearing target tokens per optimizer block, uses the canonical atomic token spec, computes the 10% retention target from atomic reasoning targets, preserves the S0 instruction-source stratification, excludes ClimbMix replay, and verifies the resulting bundle.
-
-Only after a new corpus/run is separately approved should it be launched with the production `train` path. Until then, `100m-2b-rsft-r0-atomic-pilot-001` is the accepted R0 checkpoint.
+Do not relaunch this run under the same run ID unless intentionally resuming the same verified trajectory. A future corpus that incorporates the remaining 4,476 adapted keepers must use a new corpus identity and a new R-SFT run ID.

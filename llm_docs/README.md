@@ -46,6 +46,7 @@ This directory is the repository's system of record and uses progressive disclos
 - [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md)
 - [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md)
 - [`runbooks/sft_s0_runbook.md`](runbooks/sft_s0_runbook.md)
+- [`runbooks/rsft_r0_atomic_production.md`](runbooks/rsft_r0_atomic_production.md)
 
 Completed scaling-stage reproduction procedures remain indexed from [`runbooks/README.md`](runbooks/README.md).
 

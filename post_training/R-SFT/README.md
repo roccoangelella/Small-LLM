@@ -6,25 +6,19 @@ ablation.
 
 ## Accepted R0 artifact
 
-The accepted 100M / 2B R0 R-SFT checkpoint is the already-completed atomic arm:
+The current accepted 100M / 2B R0 R-SFT checkpoint is:
 
 ```text
-100m-2b-rsft-r0-atomic-pilot-001
+100m-2b-rsft-r0-12306-001
 ```
 
-ADR 0100 promotes this exact artifact rather than retraining the same data under
-a different name. The historical `pilot` suffix remains part of its scientific
-provenance and does not mean the checkpoint is unaccepted.
-
-The frozen R0 reasoning corpus is:
+It completed one exact production pass at `step-00000361`. The frozen reasoning corpus is:
 
 ```text
-artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl
+artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
 ```
 
-It contains 630 Gemini examples (7 skills x 3 difficulty bands x 30 examples).
-The atomic run trained that corpus plus the accepted 10% S0 instruction-retention
-lane for one complete pass.
+It contains 12,306 unique normalized prompts: 7,683 unchanged context-fit Superior instruction rows, 3,993 unique accepted Variant-D rewrites, and 630 frozen Gemini logic anchors. The earlier 630-example atomic/textual delimiter runs and the 10-epoch atomic repeat are historical experiments only; their Hugging Face run namespaces were deleted after this checkpoint completed.
 
 ## Accepted token contract
 
@@ -75,9 +69,10 @@ textual  100m-2b-rsft-r0-textual-pilot-001
 
 The two completed summaries used the same S0 parent and shared source manifest.
 Textual reported validation loss 2.0444399 on 1,779 targets; atomic reported
-2.4455797 on 1,653 targets. Atomic is nevertheless the accepted artifact by ADR
-0099/0100 because reasoning/answer boundaries are a semantic machine protocol
-and must not be conflated with ordinary language tokens.
+2.4455797 on 1,653 targets. ADR 0099/0100 selected the atomic arm at that stage
+because reasoning/answer boundaries are a semantic machine protocol rather than
+ordinary language tokens. ADR 0105 later promoted the larger 12,306-row run as
+the current accepted R0 artifact.
 
 ## Repeated-epoch corpus-size diagnostic
 
@@ -158,3 +153,19 @@ groups, holds out 1% validation and 1% test per group, uses only the frozen
 atomic `<think>`, `</think>`, `<answer>` token mapping, computes the S0 retention
 target from reasoning loss-bearing tokens, and verifies the resulting native
 bundle.
+
+### Completed checkpoint
+
+The `100m-2b-rsft-r0-12306-001` trajectory completed on 2026-08-19 at
+`step-00000361` and is the current accepted 100M/2B R-SFT artifact. Chat with it
+using:
+
+```bash
+.venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
+```
+
+The explicit `--run-id 100m-2b-rsft-r0-12306-001` form is equivalent. The
+Hugging Face checkpoint lives in `roccoangelella/small-llm-100m-qualification`.
+The earlier atomic pilot, 10-epoch repeat probe, and textual pilot run namespaces
+were deleted from Hugging Face after this run completed; only their historical
+experiment definitions remain in Git. The S0 parent remains preserved.

@@ -54,7 +54,7 @@ def test_resolve_chat_run_is_stage_explicit_and_fail_closed() -> None:
         2_000_000_000,
         stage=chat._STAGE_R_SFT,
     ) == (
-        "100m-2b-rsft-r0-atomic-pilot-001",
+        "100m-2b-rsft-r0-12306-001",
         chat._SOURCE_R_SFT,
     )
     with pytest.raises(RuntimeError, match="no registered pre-trained chat profile"):

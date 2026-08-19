@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-17
+last_reviewed: 2026-08-19
 ---
 
 # Current project status
@@ -169,24 +169,33 @@ Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../referenc
 
 ## Post-training status
 
-The completed 20M/500M S0 SFT learned the masked SFT objective but failed behavioral qualification: 0/30 deterministic instruction cases, 0% EOS termination, 100% runaway, with modest broad `eval_core_v1` regression. Do not promote the unchanged S0 recipe solely from its lower SFT validation/test loss.
+The 20M/500M S0 experiment remains a failed behavioral qualification despite lower held-out SFT loss; do not use that result as evidence that the unchanged S0 recipe is generally sufficient.
 
-Evidence: [`../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md`](../evidence/20m/20m_500m_sft_full_qualification_2026-08-11.md).
+For the 100M/2B line, the completed S0 parent is `100m-2b-sft-s0-001`. Its frozen S0 bundle remains privately published at `roccoangelella/small-llm-100m-2b-sft-s0-001` and is the retention/parent source used by the current R-SFT trajectory.
 
-The 100M/2B S0 bundle is built and privately published at `roccoangelella/small-llm-100m-2b-sft-s0-001`. The authenticated Kaggle round-trip passed full bundle verification and exact tree identity: 15 files, 347,155,440 bytes, tree SHA-256 `aa1f4c2bb98c9218e390e9be5ebe5152e8d20fd1938b03f044667ced259f6818`; anonymous access is denied. This records dataset readiness only, not SFT training or behavioral qualification.
+The current accepted R-SFT R0 model is now the completed ADR-0105 run:
 
-The first live 100M/2B SFT hardware start OOMed during no-step backward prewarm
-at per-rank microbatch 4. Microbatch 2 then passed prewarm and completed 250
-finite optimizer updates, reaching 8,044,261 loss-bearing targets at 3,690
-targets/s on the boundary step. Rank 1 subsequently entered the next NCCL
-barrier while rank 0 owned validation/behavior work and hit the 600-second NCCL
-watchdog. Evaluation, local save, and remote publication had not completed, so
-no SFT checkpoint exists and the next launch starts fresh from the parent. The
-pinned runtime now uses a one-hour CPU/Gloo control group for rank-zero cadence
-side effects; the next live gate is successful step-250 evaluation plus local
-and verified remote checkpoint publication. See
-[`../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md`](../evidence/scaling/100m_2b_sft_t4_microbatch4_oom_2026-08-13.md)
-and [`../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md`](../evidence/scaling/100m_2b_sft_step250_nccl_timeout_2026-08-13.md).
+```text
+run ID:       100m-2b-rsft-r0-12306-001
+HF repo:      roccoangelella/small-llm-100m-qualification
+latest step:  step-00000361
+```
+
+Its frozen reasoning corpus is `artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl`, SHA-256 `e7d83f9809a65bcb50a6dea3087813d92fea1950a716b3c1eb13e87bfe263a5e`. It contains 12,306 unique normalized prompts: 7,683 unchanged Superior instruction rows, 3,993 accepted unique Variant-D rewrites, and 630 Gemini logic anchors. All rows fit the exact 2,048-token atomic R-SFT serialization. Twenty-eight otherwise accepted rewrites were omitted because compression created conflicting normalized-prompt collisions.
+
+The verified native R-SFT bundle used one exact pass, 32,768 loss-bearing target tokens per optimizer block, and 361 train blocks. The train stream contained 10,448,098 reasoning targets plus 1,161,354 S0-retention targets, for 11,609,452 total targets and the intended approximately 90/10 reasoning/retention mix. The completed Hugging Face `latest.json` pointer resolves the final step 361 boundary.
+
+The root chat registry now selects this run for the 100M/2B `--r-sft` profile. Canonical local chat is:
+
+```bash
+.venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
+```
+
+The superseded Hugging Face R-SFT trial namespaces `100m-2b-rsft-r0-atomic-pilot-001`, `100m-2b-rsft-r0-atomic-repeat-e10-001`, and `100m-2b-rsft-r0-textual-pilot-001` were deleted after the new run completed. The current R-SFT run and completed S0 parent were preserved. Historical experiment definitions remain in Git but those three run IDs are no longer remotely loadable checkpoints.
+
+The over-context expansion lane remains paused and resumable: GemRouter is inactive, no adaptation workers are running, 1,122 accepted Variant-D batch files are preserved, and manual curation covers all 9,624 candidates. Of the 8,497 curated keepers, 4,476 still require compression before a future expanded corpus can be frozen. Generated retry/review scratch was removed; the candidate cache, manifest, final curation, and accepted batches were retained locally. Any future resume stays on the selected Gemini Variant-D path; NVIDIA fallback is not part of the accepted dataset-generation contract.
+
+Canonical evidence: [`../evidence/rsft_r0_12306_training_completion_2026-08-19.md`](../evidence/rsft_r0_12306_training_completion_2026-08-19.md). Active procedure: [`../runbooks/rsft_r0_atomic_production.md`](../runbooks/rsft_r0_atomic_production.md).
 
 ## Source of truth
 

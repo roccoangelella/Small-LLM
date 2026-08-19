@@ -2,6 +2,11 @@
 
 Evidence records completed observations: measured results, verification reports, incidents, accepted checkpoint selection, and qualitative outputs. Preserve evidence unchanged except for explicit factual corrections; add later interpretation in a new record rather than rewriting old observations.
 
+## R-SFT evidence
+
+- [`rsft_r0_12306_training_completion_2026-08-19.md`](rsft_r0_12306_training_completion_2026-08-19.md) — frozen 12,306-row corpus identity, 361-block one-pass training completion, Hugging Face step-361 publication, old R-SFT namespace cleanup, and preserved future-adaptation state.
+- [`rsft_r0_delimiter_pilot_2026-08-18.md`](rsft_r0_delimiter_pilot_2026-08-18.md) — historical matched atomic/textual 630-example delimiter pilot evidence.
+
 ## Current scaling comparison
 
 - [`scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md) — healthy step-3,250 validation followed by RTX5090 worker loss, failed clean RTX5090 startup, and exact RTX4090 recovery from step 3,000.

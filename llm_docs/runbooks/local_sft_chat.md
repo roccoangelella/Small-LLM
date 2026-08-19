@@ -77,7 +77,7 @@ Accepted 100M / 2B atomic R-SFT R0:
 python chat.py --model_params 100M --num_tokens 2B --r-sft
 ```
 
-This resolves the completed run `100m-2b-rsft-r0-atomic-pilot-001`. The artifact was originally produced as the atomic arm of the delimiter pilot and is now the accepted R0 R-SFT artifact; it is not renamed or retrained.
+This resolves the completed run `100m-2b-rsft-r0-12306-001`, whose verified Hugging Face `latest.json` points to `step-00000361`. The earlier atomic pilot, 10-epoch repeat probe, and textual pilot remain historical experiment identities in Git but their Hugging Face run namespaces have been deleted.
 
 Hyphenated spellings remain aliases for the profile arguments, and `--pretrained` aliases `--pre-trained`:
 

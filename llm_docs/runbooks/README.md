@@ -8,7 +8,8 @@ Runbooks contain executable or intentionally reproducible procedures, prerequisi
 - [`100m_10b_incremental_modal.md`](100m_10b_incremental_modal.md) — ADR-0058 CPU producer/frontier/staging/H100 procedure for the conditional fresh 100M/10B trajectory; technical readiness is separate from ADR-0050 launch authorization.
 - [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical finite-profile Kaggle publication/training command surface.
 - [`sft_s0_runbook.md`](sft_s0_runbook.md) — SFT bundle publication/training/qualification procedure; the original S0 behavioral recipe is not promoted by its failed qualification.
-- [`local_sft_chat.md`](local_sft_chat.md) — local interactive chat over a verified completed SFT checkpoint.
+- [`rsft_r0_atomic_production.md`](rsft_r0_atomic_production.md) — current 100M/2B R-SFT R0 checkpoint, chat, Hugging Face state, and reproduction procedure.
+- [`local_sft_chat.md`](local_sft_chat.md) — local interactive chat over verified completed pretrained, SFT, or R-SFT artifacts.
 - [`eval_core_v1_runbook.md`](eval_core_v1_runbook.md) — frozen intrinsic evaluation workflow and stable/live checkpoint transport.
 - [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) — exact ADR-0025 qualitative comparison and teacher-forced confidence diagnostic.
 - [`modal_training_launcher.md`](modal_training_launcher.md) — current Modal launch/checkpoint operation.
