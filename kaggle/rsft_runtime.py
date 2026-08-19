@@ -187,6 +187,17 @@ def _require_atomic_production_bundle(bundle: Path) -> int:
         raise base.RuntimeFailure(
             "production R-SFT requires an atomic-production-v1 bundle; pilot bundles are not accepted"
         )
+    if rsft.get("reasoning_corpus_contract") != "heterogeneous-groups-v1":
+        raise base.RuntimeFailure(
+            "production R-SFT requires the heterogeneous Superior-instruction reasoning corpus contract"
+        )
+    prepared = manifest.get("prepared_source")
+    if not isinstance(prepared, Mapping) or prepared.get("dataset_name") != (
+        "small-llm-rsft-r0-superior-instruction"
+    ):
+        raise base.RuntimeFailure(
+            "production R-SFT bundle is not built from the accepted Superior instruction corpus"
+        )
     reasoning_tokenizer = rsft.get("reasoning_tokenizer")
     if not isinstance(reasoning_tokenizer, Mapping):
         raise base.RuntimeFailure("production R-SFT bundle has no reasoning-tokenizer metadata")
@@ -335,12 +346,22 @@ def train(
     if production:
         if delimiter_format != "atomic":
             raise base.RuntimeFailure("production R-SFT is atomic-only")
-        if not dataset_dir:
-            raise base.RuntimeFailure(
-                "production R-SFT requires --dataset-dir pointing to a frozen atomic-production-v1 bundle"
+        if dataset_dir:
+            bundle = base._find_bundle(dataset_dir)
+            exact_targets: int | None = _require_atomic_production_bundle(bundle)
+        elif dry_run:
+            preparation = rsft_prepare.production_preparation_plan(
+                worktree=worktree,
+                s0_bundle=s0_bundle,
             )
-        bundle = base._find_bundle(dataset_dir)
-        exact_targets: int | None = _require_atomic_production_bundle(bundle)
+            bundle = Path(str(preparation["production_bundle"]))
+            exact_targets = None
+        else:
+            bundle = rsft_prepare.prepare_production_bundle(
+                worktree=worktree,
+                s0_bundle=s0_bundle,
+            )
+            exact_targets = _require_atomic_production_bundle(bundle)
     elif dataset_dir:
         bundle = base._find_bundle(dataset_dir)
         exact_targets = _bundle_target_budget(bundle)

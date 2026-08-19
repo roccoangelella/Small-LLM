@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-19
+superseded_by: 0104
 ---
 
 # ADR 0102 — Use Superior Reasoning Stage 1 for the first real R-SFT corpus

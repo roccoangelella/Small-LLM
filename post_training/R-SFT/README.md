@@ -109,33 +109,56 @@ example) step 173 continues at the exact next repeated block. `--num-epochs 1`
 preserves the historical one-pass behavior. The canonical production `train`
 lane rejects `--num-epochs > 1`.
 
-## Future larger reasoning corpus
+## First large production R-SFT
 
-`build_atomic.py` remains available for a future **new or larger** reasoning
-corpus if that expansion is explicitly approved. It is not necessary for the
-currently accepted R0 checkpoint.
+ADR 0104 approves the first large R-SFT corpus at:
 
-For a future frozen corpus:
+```text
+artifacts/rsft-superior-instruction-r0/reasoning.jsonl
+```
+
+It uses Superior Reasoning Stage-1 `instruction_following` only, removes
+math/computation/code-primary tasks, requires every Superior record to fit the
+real 2,048-token atomic R-SFT serialization without truncation, and merges the
+frozen 630 Gemini logic examples. Exact realized counts and the JSONL SHA-256 are
+recorded next to the corpus in `reasoning.jsonl.manifest.json`.
+
+The production mixture keeps the previous R-SFT contract: 90% reasoning and 10%
+completed S0 instruction retention by loss-bearing target tokens. The S0 lane
+preserves its original instruction-source proportions and excludes ClimbMix
+replay from retention.
+
+Canonical Kaggle launch:
+
+```bash
+python kaggle/launch_r_sft.py train --model 100M --tokens 2B
+```
+
+No `--dataset-dir` is required. The launcher resolves the completed S0 bundle,
+builds the native production bundle from the committed reasoning JSONL, verifies
+it, and starts the qualified 2xT4 DDP trainer. `--dataset-dir` remains available
+for an explicitly prebuilt verified production bundle, and `--s0-bundle` can
+override S0 resolution.
+
+The production builder can also be run directly:
 
 ```bash
 python post_training/R-SFT/build_atomic.py \
-  --reasoning-jsonl /path/to/new-reasoning.jsonl \
+  --reasoning-jsonl artifacts/rsft-superior-instruction-r0/reasoning.jsonl \
   --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --output-dir /path/to/rsft-r0-expanded \
-  --heldout-per-cell <N>
+  --output-dir /path/to/rsft-r0-superior-instruction
 ```
 
 The builder:
 
-- infers and verifies a uniform record count across all 7 x 3 R0 cells;
-- uses the frozen `<think>`, `</think>`, `<answer>` special-token mapping only;
-- deterministically partitions every cell into train/validation/test;
+- accepts heterogeneous reasoning groups rather than requiring the historical
+  uniform 7 x 3 Gemini matrix;
+- deterministically holds out 1% validation and 1% test inside each
+  `skill x difficulty` group, with at least one record per held-out split;
+- uses only the frozen atomic `<think>`, `</think>`, `<answer>` token mapping;
 - computes the 10% S0 retention target from the atomic reasoning-token count;
-- samples exact tokenized S0 instruction records while preserving the S0
-  instruction-source stratification and excluding ClimbMix replay;
+- samples exact tokenized S0 instruction records while preserving S0 source
+  stratification and excluding ClimbMix replay;
 - defaults to 32,768 loss-bearing target tokens per optimizer block;
-- writes and verifies a native bundle marked `rsft.contract=atomic-production-v1`.
-
-The production Kaggle `train` path remains tooling for such a future explicitly
-approved expansion. Do not use it merely to duplicate the accepted 630-example
-R0 run under `100m-2b-rsft-r0-001`.
+- writes and verifies a native bundle marked `rsft.contract=atomic-production-v1`
+  and `reasoning_corpus_contract=heterogeneous-groups-v1`.

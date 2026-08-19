@@ -52,8 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     _profile_args(train)
     train.add_argument(
         "--dataset-dir",
-        required=True,
-        help="verified atomic-production-v1 R-SFT bundle",
+        help="optional prebuilt atomic-production-v1 bundle; omit to build from the committed Superior instruction corpus",
+    )
+    train.add_argument(
+        "--s0-bundle",
+        help="optional completed S0 bundle override for the production 10%% retention lane",
     )
     train.add_argument(
         "--run-id",
@@ -134,7 +137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset_dir=args.dataset_dir,
             delimiter_format=delimiter_format,
             token_spec=args.token_spec,
-            s0_bundle=None if production else args.s0_bundle,
+            s0_bundle=args.s0_bundle,
             parent_repo_id=args.parent_repo_id,
             checkpoint_repo_id=args.checkpoint_repo_id,
             max_steps_this_session=args.max_steps_this_session,

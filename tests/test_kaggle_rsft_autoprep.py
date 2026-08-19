@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -59,6 +60,53 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
             plan["s0_kaggle_handle"],
             "roccoangelella/small-llm-100m-2b-sft-s0-001",
         )
+
+    def test_production_reasoning_manifest_is_sha_pinned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            reasoning = Path(directory) / "reasoning.jsonl"
+            reasoning.write_text('{"row":1}\n', encoding="utf-8")
+            manifest = {
+                "schema": rsft_prepare.PRODUCTION_REASONING_SCHEMA,
+                "policy": rsft_prepare.PRODUCTION_REASONING_POLICY,
+                "production_domain": "instruction_following",
+                "context_length": 2_048,
+                "gemini_rows": 630,
+                "combined_rows": 631,
+                "output_sha256": rsft_prepare._sha256_path(reasoning),
+            }
+            reasoning.with_suffix(".jsonl.manifest.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            loaded = rsft_prepare._require_production_reasoning_manifest(reasoning)
+            self.assertEqual(loaded["output_sha256"], manifest["output_sha256"])
+            reasoning.write_text('{"row":2}\n', encoding="utf-8")
+            with self.assertRaisesRegex(rsft_prepare.base.RuntimeFailure, "SHA-256"):
+                rsft_prepare._require_production_reasoning_manifest(reasoning)
+
+    def test_production_preparation_plan_uses_committed_superior_instruction_corpus(self) -> None:
+        plan = rsft_prepare.production_preparation_plan(worktree=REPO)
+        self.assertEqual(
+            Path(str(plan["reasoning_jsonl"])),
+            (REPO / "artifacts" / "rsft-superior-instruction-r0" / "reasoning.jsonl").resolve(),
+        )
+        self.assertEqual(plan["optimizer_target_tokens"], 32_768)
+        self.assertEqual(plan["heldout_fraction_per_split"], 0.01)
+        self.assertEqual(plan["reasoning_share"], 0.90)
+        self.assertEqual(plan["s0_retention_share"], 0.10)
+        self.assertEqual(plan["passes"], 1)
+
+    def test_minimal_production_dry_run_requires_no_manual_dataset_arguments(self) -> None:
+        result = rsft_cli.main(
+            [
+                "train",
+                "--model",
+                "100M",
+                "--tokens",
+                "2B",
+                "--dry-run",
+            ]
+        )
+        self.assertEqual(result, 0)
 
     def test_minimal_atomic_ablation_dry_run_requires_no_manual_dataset_arguments(self) -> None:
         result = rsft_cli.main(

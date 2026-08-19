@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Single human entry point for Small-LLM reasoning SFT on Kaggle.
 
-Canonical production R-SFT is atomic-only and consumes a frozen
-``atomic-production-v1`` bundle:
+Canonical production R-SFT is atomic-only. By default it materializes the
+committed Superior-instruction reasoning corpus with the completed S0 retention
+bundle, verifies the resulting ``atomic-production-v1`` bundle, then trains:
 
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B \
-    --dataset-dir /kaggle/input/rsft-r0-production
+  python kaggle/launch_r_sft.py train --model 100M --tokens 2B
+
+A prebuilt verified bundle can still be supplied explicitly with ``--dataset-dir``.
 
 The completed 630-example delimiter experiment remains reproducible separately:
 

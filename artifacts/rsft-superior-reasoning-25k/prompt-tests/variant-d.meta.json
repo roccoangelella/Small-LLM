@@ -1,0 +1,9 @@
+{
+  "model": "gemini-3.7-flash",
+  "finish_reason": "stop",
+  "usage": {
+    "prompt_tokens": 12281,
+    "completion_tokens": 1917,
+    "total_tokens": 14198
+  }
+}

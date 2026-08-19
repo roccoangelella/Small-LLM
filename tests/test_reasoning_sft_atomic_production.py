@@ -25,6 +25,9 @@ def _load_module():
 class _Record:
     skill: str
     difficulty: str
+    problem: str = "problem"
+    reasoning: str = "reasoning"
+    answer: str = "answer"
 
 
 def _uniform_records(module, count: int) -> list[_Record]:
@@ -67,17 +70,47 @@ def test_atomic_retention_target_uses_90_10_top_level_mix() -> None:
     assert module._retention_target(reasoning) == 100_000
 
 
-def test_production_builder_requires_explicit_heldout_scale() -> None:
+def test_heterogeneous_partition_keeps_each_group_in_all_splits() -> None:
+    module = _load_module()
+    records = [
+        _Record("SR_INSTRUCTION_FOLLOWING", "shortest", f"instruction {index}")
+        for index in range(100)
+    ] + [
+        _Record("DED", "L1", f"deduction {index}")
+        for index in range(30)
+    ]
+    partition, groups = module._partition_heterogeneous_reasoning(
+        records,
+        heldout_fraction=0.01,
+        seed=17,
+    )
+    assert groups["SR_INSTRUCTION_FOLLOWING/shortest"] == {
+        "total": 100,
+        "train": 98,
+        "validation": 1,
+        "test": 1,
+    }
+    assert groups["DED/L1"] == {
+        "total": 30,
+        "train": 28,
+        "validation": 1,
+        "test": 1,
+    }
+    assert {len(partition[name]) for name in ("validation", "test")} == {2}
+    assert len(partition["train"]) == 126
+
+
+def test_production_builder_defaults_to_one_percent_group_holdout() -> None:
     module = _load_module()
     parser = module.build_parser()
-    with pytest.raises(SystemExit):
-        parser.parse_args(
-            [
-                "--reasoning-jsonl",
-                "reasoning.jsonl",
-                "--s0-bundle",
-                "s0",
-                "--output-dir",
-                "out",
-            ]
-        )
+    args = parser.parse_args(
+        [
+            "--reasoning-jsonl",
+            "reasoning.jsonl",
+            "--s0-bundle",
+            "s0",
+            "--output-dir",
+            "out",
+        ]
+    )
+    assert args.heldout_fraction == 0.01

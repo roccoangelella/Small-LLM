@@ -70,12 +70,16 @@ def _bundle(
     }
     if contract is not None:
         rsft["contract"] = contract
+        rsft["reasoning_corpus_contract"] = "heterogeneous-groups-v1"
     (root / "bundle-manifest.json").write_text(
         json.dumps(
             {
                 "schema": "small-llm-sft-bundle",
                 "train_target_tokens_requested": targets,
                 "optimizer_target_tokens": optimizer_target_tokens,
+                "prepared_source": {
+                    "dataset_name": "small-llm-rsft-r0-superior-instruction"
+                },
                 "rsft": rsft,
             }
         ),
@@ -206,6 +210,32 @@ def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     assert "--nproc-per-node=2" in output
     assert "dual_t4_rsft.py" in output
     assert "--rsft-num-epochs" in output
+
+
+def test_production_dry_run_auto_prepares_committed_superior_corpus(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = rsft_cli.main(
+        [
+            "train",
+            "--model",
+            "100M",
+            "--tokens",
+            "2B",
+            "--parent-repo-id",
+            "owner/parent",
+            "--checkpoint-repo-id",
+            "owner/checkpoints",
+            "--dry-run",
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "artifacts/rsft-superior-instruction-r0/reasoning.jsonl" in output
+    assert '"reasoning_share": 0.9' in output
+    assert '"s0_retention_share": 0.1' in output
+    assert '"heldout_fraction_per_split": 0.01' in output
+    assert '"bundle_target_tokens_one_pass": null' in output
 
 
 def test_production_rejects_textual_bundle(tmp_path: Path) -> None:

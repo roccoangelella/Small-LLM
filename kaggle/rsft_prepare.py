@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Resolve the S0 retention bundle and build the committed R-SFT pilot on Kaggle.
+"""Resolve S0 retention data and materialize committed R-SFT corpora on Kaggle.
 
-The first R0 corpus itself is versioned in git.  Kaggle only needs to resolve the
-already-published S0 bundle used for the frozen 10% instruction-retention lane,
-then materialize the matched atomic/textual native SFT bundles in /kaggle/working.
+The accepted large R0 reasoning JSONL is versioned in git. Kaggle resolves the
+already-published S0 bundle, builds the canonical atomic production bundle with
+the frozen 90% reasoning / 10% S0-retention contract, verifies it, then trains.
+The historical 630-example matched delimiter pilot remains available separately.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,9 +19,15 @@ import sft_runtime as base
 
 DEFAULT_S0_KAGGLE_HANDLE = "roccoangelella/small-llm-100m-2b-sft-s0-001"
 DEFAULT_MATCHED_BUNDLE_NAME = "rsft-r0-pilot-630-bundles"
+DEFAULT_PRODUCTION_BUNDLE_NAME = "rsft-r0-superior-instruction-production"
 REASONING_RELATIVE_PATH = Path("artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl")
+PRODUCTION_REASONING_RELATIVE_PATH = Path("artifacts/rsft-superior-instruction-r0/reasoning.jsonl")
 TOKEN_SPEC_RELATIVE_PATH = Path("post_training/R-SFT/reasoning-tokens.json")
 PILOT_OPTIMIZER_TARGET_TOKENS = 2_048
+PRODUCTION_OPTIMIZER_TARGET_TOKENS = 32_768
+PRODUCTION_HELDOUT_FRACTION = 0.01
+PRODUCTION_REASONING_SCHEMA = "small-llm-superior-reasoning-production-v1"
+PRODUCTION_REASONING_POLICY = "instruction-no-math-code-v1"
 
 
 def _read_json(path: Path, *, label: str) -> dict[str, object]:
@@ -30,6 +38,36 @@ def _read_json(path: Path, *, label: str) -> dict[str, object]:
     if not isinstance(payload, Mapping):
         raise base.RuntimeFailure(f"{label} must be a JSON object: {path}")
     return dict(payload)
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _require_production_reasoning_manifest(reasoning: Path) -> dict[str, object]:
+    manifest_path = reasoning.with_suffix(reasoning.suffix + ".manifest.json")
+    manifest = _read_json(manifest_path, label="production reasoning manifest")
+    expected = {
+        "schema": PRODUCTION_REASONING_SCHEMA,
+        "policy": PRODUCTION_REASONING_POLICY,
+        "production_domain": "instruction_following",
+        "context_length": 2_048,
+        "gemini_rows": 630,
+    }
+    drift = {key: (manifest.get(key), value) for key, value in expected.items() if manifest.get(key) != value}
+    if drift:
+        raise base.RuntimeFailure(f"production reasoning manifest contract drifted: {drift}")
+    actual_sha = _sha256_path(reasoning)
+    if manifest.get("output_sha256") != actual_sha:
+        raise base.RuntimeFailure("production reasoning JSONL SHA-256 does not match its manifest")
+    rows = manifest.get("combined_rows")
+    if isinstance(rows, bool) or not isinstance(rows, int) or rows <= 630:
+        raise base.RuntimeFailure("production reasoning manifest has no positive Superior corpus")
+    return manifest
 
 
 def _looks_like_s0_bundle(root: Path) -> bool:
@@ -143,6 +181,35 @@ def default_matched_bundle_root() -> Path:
     return (base.WORK / DEFAULT_MATCHED_BUNDLE_NAME).resolve()
 
 
+def default_production_bundle_root() -> Path:
+    return (base.WORK / DEFAULT_PRODUCTION_BUNDLE_NAME).resolve()
+
+
+def production_preparation_plan(
+    *,
+    worktree: Path,
+    s0_bundle: str | None = None,
+) -> dict[str, object]:
+    root = default_production_bundle_root()
+    return {
+        "reasoning_jsonl": str((worktree / PRODUCTION_REASONING_RELATIVE_PATH).resolve()),
+        "reasoning_manifest": str(
+            (worktree / PRODUCTION_REASONING_RELATIVE_PATH).resolve().with_suffix(".jsonl.manifest.json")
+        ),
+        "reasoning_token_spec": str((worktree / TOKEN_SPEC_RELATIVE_PATH).resolve()),
+        "s0_bundle": str(Path(s0_bundle).expanduser().resolve()) if s0_bundle else "auto:attached-or-private-kaggle",
+        "s0_kaggle_handle": os.environ.get(
+            "SMALL_LLM_S0_KAGGLE_DATASET_HANDLE", DEFAULT_S0_KAGGLE_HANDLE
+        ),
+        "production_bundle": str(root),
+        "optimizer_target_tokens": PRODUCTION_OPTIMIZER_TARGET_TOKENS,
+        "heldout_fraction_per_split": PRODUCTION_HELDOUT_FRACTION,
+        "reasoning_share": 0.90,
+        "s0_retention_share": 0.10,
+        "passes": 1,
+    }
+
+
 def preparation_plan(*, worktree: Path, s0_bundle: str | None = None) -> dict[str, object]:
     root = default_matched_bundle_root()
     return {
@@ -158,6 +225,60 @@ def preparation_plan(*, worktree: Path, s0_bundle: str | None = None) -> dict[st
         "optimizer_target_tokens": PILOT_OPTIMIZER_TARGET_TOKENS,
         "passes": 1,
     }
+
+
+def prepare_production_bundle(
+    *,
+    worktree: Path,
+    s0_bundle: str | None = None,
+    output_root: Path | None = None,
+) -> Path:
+    """Build or verify the committed Superior-instruction production bundle."""
+
+    reasoning = (worktree / PRODUCTION_REASONING_RELATIVE_PATH).resolve()
+    builder = (worktree / "post_training" / "R-SFT" / "build_atomic.py").resolve()
+    if not reasoning.is_file() or reasoning.is_symlink():
+        raise base.RuntimeFailure(
+            f"pinned worktree has no safe committed production reasoning corpus: {reasoning}"
+        )
+    _require_production_reasoning_manifest(reasoning)
+    output = (output_root or default_production_bundle_root()).expanduser().resolve()
+    verify_command = [
+        *base._uv_prefix(),
+        "python",
+        "-m",
+        "post_training.sft.bundle",
+        "verify",
+        "--dataset-dir",
+        str(output),
+    ]
+    if (output / "bundle-manifest.json").is_file():
+        base._run(verify_command, cwd=worktree)
+        return output
+    if output.exists():
+        raise base.RuntimeFailure(
+            f"refusing to replace incomplete production R-SFT output: {output}; remove it explicitly first"
+        )
+
+    source_bundle = resolve_s0_bundle(s0_bundle, worktree=worktree)
+    build_command = [
+        *base._uv_prefix(),
+        "python",
+        str(builder),
+        "--reasoning-jsonl",
+        str(reasoning),
+        "--s0-bundle",
+        str(source_bundle),
+        "--output-dir",
+        str(output),
+        "--heldout-fraction",
+        str(PRODUCTION_HELDOUT_FRACTION),
+        "--optimizer-target-tokens",
+        str(PRODUCTION_OPTIMIZER_TARGET_TOKENS),
+    ]
+    base._run(build_command, cwd=worktree)
+    base._run(verify_command, cwd=worktree)
+    return output
 
 
 def prepare_pilot_bundles(
@@ -218,12 +339,19 @@ def prepare_pilot_bundles(
 
 __all__ = [
     "DEFAULT_MATCHED_BUNDLE_NAME",
+    "DEFAULT_PRODUCTION_BUNDLE_NAME",
     "DEFAULT_S0_KAGGLE_HANDLE",
     "PILOT_OPTIMIZER_TARGET_TOKENS",
+    "PRODUCTION_HELDOUT_FRACTION",
+    "PRODUCTION_OPTIMIZER_TARGET_TOKENS",
+    "PRODUCTION_REASONING_RELATIVE_PATH",
     "REASONING_RELATIVE_PATH",
     "TOKEN_SPEC_RELATIVE_PATH",
     "default_matched_bundle_root",
+    "default_production_bundle_root",
     "preparation_plan",
     "prepare_pilot_bundles",
+    "prepare_production_bundle",
+    "production_preparation_plan",
     "resolve_s0_bundle",
 ]
