@@ -58,6 +58,7 @@ def test_dual_t4_command_preserves_block64_and_t4_safe_microbatch() -> None:
     assert "triton==3.6.0" in command
     assert "fla-core==0.5.2" in command
     assert "huggingface_hub==1.5.0" in command
+    assert "wandb==0.26.1" in command
 
 
 def test_host_staging_bootstraps_private_hf_bucket_client() -> None:
