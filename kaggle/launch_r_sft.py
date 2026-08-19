@@ -2,7 +2,7 @@
 """Single human entry point for Small-LLM reasoning SFT on Kaggle.
 
 Canonical production R-SFT is atomic-only. By default it materializes the
-committed Superior-instruction reasoning corpus with the completed S0 retention
+committed 12,306-row Superior-instruction checkpoint corpus with the completed S0 retention
 bundle, verifies the resulting ``atomic-production-v1`` bundle, then trains:
 
   python kaggle/launch_r_sft.py train --model 100M --tokens 2B

@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     _profile_args(train)
     train.add_argument(
         "--dataset-dir",
-        help="optional prebuilt atomic-production-v1 bundle; omit to build from the committed Superior instruction corpus",
+        help="optional prebuilt atomic-production-v1 bundle; omit to build from the committed 12,306-row Superior instruction checkpoint corpus",
     )
     train.add_argument(
         "--s0-bundle",

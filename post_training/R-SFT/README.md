@@ -109,24 +109,27 @@ example) step 173 continues at the exact next repeated block. `--num-epochs 1`
 preserves the historical one-pass behavior. The canonical production `train`
 lane rejects `--num-epochs > 1`.
 
-## First large production R-SFT
+## Current large R-SFT checkpoint
 
-ADR 0104 approves the first large R-SFT corpus at:
+ADR 0105 promotes the currently available, fully validated adaptation checkpoint at:
 
 ```text
-artifacts/rsft-superior-instruction-r0/reasoning.jsonl
+artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
 ```
 
-It uses Superior Reasoning Stage-1 `instruction_following` only, removes
-math/computation/code-primary tasks, requires every Superior record to fit the
-real 2,048-token atomic R-SFT serialization without truncation, and merges the
-frozen 630 Gemini logic examples. Exact realized counts and the JSONL SHA-256 are
-recorded next to the corpus in `reasoning.jsonl.manifest.json`.
+The checkpoint contains 12,306 trainable reasoning examples: 7,683 unchanged
+context-fit Superior instruction rows, 3,993 unique accepted Variant-D rewrites,
+and the frozen 630 Gemini logic anchors. Manual curation covers all 9,624
+over-context candidates; 4,476 kept candidates are still awaiting compression.
+Twenty-eight accepted rewrites are deliberately omitted because compression
+collapsed them onto a prompt already present in the training corpus (22 against
+the baseline and 6 against another accepted rewrite), which would otherwise
+create conflicting supervision for identical normalized inputs. The JSONL is
+SHA-pinned by its adjacent manifest.
 
-The production mixture keeps the previous R-SFT contract: 90% reasoning and 10%
-completed S0 instruction retention by loss-bearing target tokens. The S0 lane
-preserves its original instruction-source proportions and excludes ClimbMix
-replay from retention.
+The production mixture remains 90% reasoning and 10% completed S0 instruction
+retention by loss-bearing target tokens. The S0 lane preserves its original
+instruction-source proportions and excludes ClimbMix replay from retention.
 
 Canonical Kaggle launch:
 
@@ -134,31 +137,24 @@ Canonical Kaggle launch:
 python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 ```
 
-No `--dataset-dir` is required. The launcher resolves the completed S0 bundle,
-builds the native production bundle from the committed reasoning JSONL, verifies
-it, and starts the qualified 2xT4 DDP trainer. `--dataset-dir` remains available
-for an explicitly prebuilt verified production bundle, and `--s0-bundle` can
-override S0 resolution.
+No `--dataset-dir` is required. The launcher resolves the completed 100M/2B S0
+bundle, validates the committed 12,306-row checkpoint and its SHA-256, builds a
+native `atomic-production-v1` bundle with 32,768 loss-bearing target tokens per
+optimizer block, verifies it, and starts the qualified 2xT4 DDP trainer. This
+checkpoint uses the distinct run identity `100m-2b-rsft-r0-12306-001` so the
+eventual complete corpus cannot accidentally resume from it.
 
 The production builder can also be run directly:
 
 ```bash
 python post_training/R-SFT/build_atomic.py \
-  --reasoning-jsonl artifacts/rsft-superior-instruction-r0/reasoning.jsonl \
+  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl \
   --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --output-dir /path/to/rsft-r0-superior-instruction
+  --output-dir /path/to/rsft-r0-superior-instruction-checkpoint-12306
 ```
 
-The builder:
-
-- accepts heterogeneous reasoning groups rather than requiring the historical
-  uniform 7 x 3 Gemini matrix;
-- deterministically holds out 1% validation and 1% test inside each
-  `skill x difficulty` group, with at least one record per held-out split;
-- uses only the frozen atomic `<think>`, `</think>`, `<answer>` token mapping;
-- computes the 10% S0 retention target from the atomic reasoning-token count;
-- samples exact tokenized S0 instruction records while preserving S0 source
-  stratification and excluding ClimbMix replay;
-- defaults to 32,768 loss-bearing target tokens per optimizer block;
-- writes and verifies a native bundle marked `rsft.contract=atomic-production-v1`
-  and `reasoning_corpus_contract=heterogeneous-groups-v1`.
+The builder deterministically partitions heterogeneous `skill × difficulty`
+groups, holds out 1% validation and 1% test per group, uses only the frozen
+atomic `<think>`, `</think>`, `<answer>` token mapping, computes the S0 retention
+target from reasoning loss-bearing tokens, and verifies the resulting native
+bundle.

@@ -235,3 +235,10 @@ client_secret_906718824991-qtnqubvh9luv7cki8ni7kb8m4h5v4roa.apps.googleuserconte
 artifacts/**/batches/
 
 
+
+# Superior R-SFT adaptation scratch state. The source candidate identity and final
+# human curation are the only small audit artifacts committed; the 170 MiB source
+# cache, accepted provider batches, attempts, review extracts, and logs stay local.
+/artifacts/rsft-superior-instruction-r0-adaptation/*
+!/artifacts/rsft-superior-instruction-r0-adaptation/candidates.manifest.json
+!/artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.final.jsonl
