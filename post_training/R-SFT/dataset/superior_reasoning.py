@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Select a compact Stage-1 subset of Alibaba Superior Reasoning for R-SFT.
+"""Prepare a short-trace Superior Reasoning subset for the first real R-SFT run.
 
-The first real Small-LLM reasoning corpus uses only the Stage-1 low-temperature
-split and only ``science`` / ``instruction_following`` rows. Selection is by
-GPT-2 token count of the parsed ``<think>...</think>`` body, with a default
-25,000-row target and 30/70 science/instruction-following stratification.
+Policy:
+- Alibaba Superior Reasoning Stage 1 only;
+- ``science`` and ``instruction_following`` only;
+- 25,000 unique rows by default;
+- target 30% science / 70% instruction-following, with deterministic backfill;
+- rank by GPT-2 token count of the parsed ``<think>...</think>`` body;
+- optionally merge the frozen Gemini R0 JSONL and deterministically shuffle.
 
-This module intentionally prepares data only. The current production
-``build_atomic.py`` still enforces the historical uniform Gemini R0 matrix and
-must be generalized separately before a heterogeneous corpus is trained.
+This module prepares the heterogeneous reasoning JSONL only. The existing
+``build_atomic.py`` still validates the historical uniform Gemini R0 matrix and
+must be generalized explicitly before this corpus can be trained.
 """
 from __future__ import annotations
 
@@ -17,19 +20,28 @@ from dataclasses import dataclass
 import argparse
 import hashlib
 import heapq
+import io
 import json
 from pathlib import Path
 import random
 import tempfile
 from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence, TextIO
+from urllib.request import Request, urlopen
 
 DATASET_ID = "Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b"
 DATASET_CONFIG = "stage1"
 DATASET_SPLIT = "train"
+DATASET_REVISION = "main"
+DATASET_FILENAME = "Superior-Reasoning-SFT-gpt-oss-120b-stage1-train-data.jsonl"
+DATASET_URL = (
+    f"https://huggingface.co/datasets/{DATASET_ID}/resolve/{DATASET_REVISION}/"
+    f"{DATASET_FILENAME}?download=true"
+)
 ELIGIBLE_DOMAINS = ("science", "instruction_following")
 DEFAULT_TOTAL = 25_000
 DEFAULT_SCIENCE_SHARE = 0.30
 DEFAULT_SEED = 17
+DEFAULT_HTTP_TIMEOUT_SECONDS = 120.0
 SOURCE_SKILLS = {
     "science": "SR_SCIENCE",
     "instruction_following": "SR_INSTRUCTION_FOLLOWING",
@@ -72,6 +84,8 @@ class SelectionReport:
             "dataset_id": DATASET_ID,
             "dataset_config": DATASET_CONFIG,
             "dataset_split": DATASET_SPLIT,
+            "dataset_revision": DATASET_REVISION,
+            "dataset_filename": DATASET_FILENAME,
             "source_rows": self.source_rows,
             "domain_counts": dict(sorted(self.domain_counts.items())),
             "usable_counts": dict(sorted(self.usable_counts.items())),
@@ -88,12 +102,7 @@ class SelectionReport:
 
 
 def parse_teacher_output(output: str) -> ParsedOutput:
-    """Split one Superior response into reasoning and final answer.
-
-    Superior Stage 1 examples are distilled with a ``<think>`` block. We fail
-    closed when its closing marker or final answer is missing instead of
-    silently teaching malformed serialization.
-    """
+    """Extract a non-empty reasoning body and the final answer."""
 
     if not isinstance(output, str) or not output.strip():
         raise ValueError("Superior output must be non-empty text")
@@ -113,7 +122,6 @@ def parse_teacher_output(output: str) -> ParsedOutput:
             if answer.endswith(closing):
                 answer = answer[: -len(closing)].rstrip()
             break
-
     if not reasoning:
         raise ValueError("Superior output has an empty reasoning body")
     if not answer:
@@ -137,9 +145,7 @@ def _default_token_counter() -> Callable[[str], int]:
     try:
         import tiktoken
     except ImportError as error:  # pragma: no cover - environment dependency
-        raise RuntimeError(
-            "tiktoken is required to rank Superior reasoning traces by the project GPT-2 tokenizer"
-        ) from error
+        raise RuntimeError("tiktoken is required for GPT-2 reasoning-length ranking") from error
     encoding = tiktoken.get_encoding("gpt2")
 
     def count(text: str) -> int:
@@ -148,23 +154,34 @@ def _default_token_counter() -> Callable[[str], int]:
     return count
 
 
-def iter_stage1_rows() -> Iterator[Mapping[str, Any]]:
-    """Stream the public Stage-1 split without materializing its ~4.6 GB JSONL."""
+def iter_stage1_rows(
+    *, timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS
+) -> Iterator[Mapping[str, Any]]:
+    """Stream the public 4.6 GB Stage-1 JSONL without downloading it first."""
 
-    try:
-        from datasets import load_dataset
-    except ImportError as error:  # pragma: no cover - environment dependency
-        raise RuntimeError(
-            "huggingface datasets is required; install it before building Superior Reasoning data"
-        ) from error
-
-    dataset = load_dataset(
-        DATASET_ID,
-        DATASET_CONFIG,
-        split=DATASET_SPLIT,
-        streaming=True,
+    if timeout_seconds <= 0:
+        raise ValueError("timeout_seconds must be positive")
+    request = Request(
+        DATASET_URL,
+        headers={"User-Agent": "small-llm-superior-reasoning/1"},
+        method="GET",
     )
-    yield from dataset
+    try:
+        response = urlopen(request, timeout=timeout_seconds)
+    except OSError as error:  # pragma: no cover - network path
+        raise RuntimeError("failed to open Superior Reasoning Stage-1 stream") from error
+
+    with response, io.TextIOWrapper(response, encoding="utf-8") as text_stream:
+        for line_number, line in enumerate(text_stream, start=1):
+            if not line.strip():
+                raise ValueError(f"Superior source contains a blank line at {line_number}")
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Superior source line {line_number} is invalid JSON") from error
+            if not isinstance(row, Mapping):
+                raise ValueError(f"Superior source line {line_number} must be a JSON object")
+            yield row
 
 
 def _spool_candidate(
@@ -179,17 +196,22 @@ def _spool_candidate(
     reasoning_token_count: int,
 ) -> int:
     offset = handle.tell()
-    payload = {
-        "source_index": source_index,
-        "source_id": source_id,
-        "domain": domain,
-        "problem": problem,
-        "reasoning": reasoning,
-        "answer": answer,
-        "reasoning_token_count": reasoning_token_count,
-    }
-    handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-    handle.write("\n")
+    handle.write(
+        json.dumps(
+            {
+                "source_index": source_index,
+                "source_id": source_id,
+                "domain": domain,
+                "problem": problem,
+                "reasoning": reasoning,
+                "answer": answer,
+                "reasoning_token_count": reasoning_token_count,
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
     return offset
 
 
@@ -199,26 +221,18 @@ def _push_shortest(
     *,
     capacity: int,
 ) -> None:
-    """Keep the ``capacity`` lowest (token_count, source_index) candidates."""
-
     entry = (-candidate.reasoning_token_count, -candidate.source_index, candidate)
     if len(heap) < capacity:
         heapq.heappush(heap, entry)
         return
-    worst_tokens = -heap[0][0]
-    worst_index = -heap[0][1]
-    if (candidate.reasoning_token_count, candidate.source_index) < (
-        worst_tokens,
-        worst_index,
-    ):
+    worst = (-heap[0][0], -heap[0][1])
+    current = (candidate.reasoning_token_count, candidate.source_index)
+    if current < worst:
         heapq.heapreplace(heap, entry)
 
 
 def _allocate_counts(
-    *,
-    total: int,
-    science_share: float,
-    usable_counts: Mapping[str, int],
+    *, total: int, science_share: float, usable_counts: Mapping[str, int]
 ) -> dict[str, int]:
     if isinstance(total, bool) or not isinstance(total, int) or total <= 0:
         raise ValueError("total must be a positive integer")
@@ -226,32 +240,30 @@ def _allocate_counts(
         raise ValueError("science_share must be in [0, 1]")
 
     science_target = round(total * science_share)
-    instruction_target = total - science_target
+    requested = {
+        "science": science_target,
+        "instruction_following": total - science_target,
+    }
     counts = {
-        "science": min(science_target, int(usable_counts.get("science", 0))),
-        "instruction_following": min(
-            instruction_target, int(usable_counts.get("instruction_following", 0))
-        ),
+        domain: min(requested[domain], int(usable_counts.get(domain, 0)))
+        for domain in ELIGIBLE_DOMAINS
     }
     deficit = total - sum(counts.values())
-    if deficit:
-        # Backfill first from the domain with the largest remaining pool. Ties
-        # prefer instruction-following because it is the requested majority.
-        domains = sorted(
-            ELIGIBLE_DOMAINS,
-            key=lambda domain: (
-                int(usable_counts.get(domain, 0)) - counts[domain],
-                domain == "instruction_following",
-            ),
-            reverse=True,
-        )
-        for domain in domains:
-            available = int(usable_counts.get(domain, 0)) - counts[domain]
-            take = min(deficit, max(0, available))
-            counts[domain] += take
-            deficit -= take
-            if deficit == 0:
-                break
+    domains = sorted(
+        ELIGIBLE_DOMAINS,
+        key=lambda domain: (
+            int(usable_counts.get(domain, 0)) - counts[domain],
+            domain == "instruction_following",
+        ),
+        reverse=True,
+    )
+    for domain in domains:
+        if deficit == 0:
+            break
+        available = max(0, int(usable_counts.get(domain, 0)) - counts[domain])
+        take = min(deficit, available)
+        counts[domain] += take
+        deficit -= take
     if deficit:
         raise RuntimeError(
             f"only {total - deficit} usable science/instruction rows are available; requested {total}"
@@ -271,8 +283,7 @@ def _read_spooled(handle: TextIO, offset: int) -> dict[str, Any]:
 
 
 def _selection_order_key(candidate: CandidateRef, *, seed: int) -> str:
-    payload = f"{seed}\x1f{candidate.source_id}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return hashlib.sha256(f"{seed}\x1f{candidate.source_id}".encode("utf-8")).hexdigest()
 
 
 def select_shortest(
@@ -284,12 +295,7 @@ def select_shortest(
     token_counter: Callable[[str], int] | None = None,
     spool_dir: str | Path | None = None,
 ) -> tuple[list[dict[str, Any]], SelectionReport]:
-    """Scan once, count domains, and select the shortest stratified traces.
-
-    Candidate text is spooled to disk while only small heap references stay in
-    memory, so the 4.6 GB Stage-1 source does not become a multi-GB Python list.
-    Exact normalized duplicate prompts are dropped before ranking.
-    """
+    """Count the full stream and retain the shortest eligible unique traces."""
 
     if token_counter is None:
         token_counter = _default_token_counter()
@@ -318,8 +324,8 @@ def select_shortest(
             source_rows += 1
             if not isinstance(row, Mapping):
                 raise ValueError(f"Superior row {source_index} must be an object")
-            domain_raw = row.get("domain")
-            domain = domain_raw.strip() if isinstance(domain_raw, str) else "<invalid>"
+            raw_domain = row.get("domain")
+            domain = raw_domain.strip() if isinstance(raw_domain, str) else "<invalid>"
             domain_counts[domain] += 1
             if domain not in ELIGIBLE_DOMAINS:
                 continue
@@ -333,16 +339,15 @@ def select_shortest(
                 rejected_output_count += 1
                 continue
 
-            input_hash = _normalized_input_hash(problem)
-            if input_hash in seen_inputs:
+            prompt_hash = _normalized_input_hash(problem)
+            if prompt_hash in seen_inputs:
                 duplicate_input_count += 1
                 continue
-            seen_inputs.add(input_hash)
+            seen_inputs.add(prompt_hash)
 
-            reasoning_token_count = int(token_counter(parsed.reasoning))
-            if reasoning_token_count <= 0:
+            token_count = int(token_counter(parsed.reasoning))
+            if token_count <= 0:
                 raise ValueError("token_counter must return a positive count")
-
             usable_counts[domain] += 1
             offset = _spool_candidate(
                 spool,
@@ -352,16 +357,13 @@ def select_shortest(
                 problem=problem,
                 reasoning=parsed.reasoning,
                 answer=parsed.answer,
-                reasoning_token_count=reasoning_token_count,
+                reasoning_token_count=token_count,
             )
-            candidate = CandidateRef(
-                offset=offset,
-                source_index=source_index,
-                source_id=source_id,
-                domain=domain,
-                reasoning_token_count=reasoning_token_count,
+            _push_shortest(
+                heaps[domain],
+                CandidateRef(offset, source_index, source_id, domain, token_count),
+                capacity=total,
             )
-            _push_shortest(heaps[domain], candidate, capacity=total)
 
         selected_counts = _allocate_counts(
             total=total,
@@ -372,20 +374,13 @@ def select_shortest(
         for domain in ELIGIBLE_DOMAINS:
             ranked = sorted(
                 (entry[2] for entry in heaps[domain]),
-                key=lambda candidate: (
-                    candidate.reasoning_token_count,
-                    candidate.source_index,
-                ),
+                key=lambda item: (item.reasoning_token_count, item.source_index),
             )
             selected_refs.extend(ranked[: selected_counts[domain]])
+        selected_refs.sort(key=lambda item: _selection_order_key(item, seed=seed))
+        selected = [_read_spooled(spool, item.offset) for item in selected_refs]
 
-        # Deterministically interleave domains without making selection depend
-        # on Python's random implementation or source ordering.
-        selected_refs.sort(key=lambda candidate: _selection_order_key(candidate, seed=seed))
-        selected = [_read_spooled(spool, candidate.offset) for candidate in selected_refs]
-
-    token_counts = [candidate.reasoning_token_count for candidate in selected_refs]
-    science_selected = selected_counts["science"]
+    token_counts = [item.reasoning_token_count for item in selected_refs]
     report = SelectionReport(
         source_rows=source_rows,
         domain_counts=dict(domain_counts),
@@ -396,7 +391,7 @@ def select_shortest(
         total_selected=len(selected),
         requested_total=total,
         requested_science_share=science_share,
-        realized_science_share=science_selected / len(selected) if selected else 0.0,
+        realized_science_share=(selected_counts["science"] / len(selected)) if selected else 0.0,
         selected_min_reasoning_tokens=min(token_counts) if token_counts else None,
         selected_max_reasoning_tokens=max(token_counts) if token_counts else None,
     )
@@ -405,12 +400,10 @@ def select_shortest(
 
 def to_rsft_mapping(record: Mapping[str, Any]) -> dict[str, str]:
     domain = str(record["domain"])
-    try:
-        skill = SOURCE_SKILLS[domain]
-    except KeyError as error:
-        raise ValueError(f"unsupported Superior domain {domain!r}") from error
+    if domain not in SOURCE_SKILLS:
+        raise ValueError(f"unsupported Superior domain {domain!r}")
     return {
-        "skill": skill,
+        "skill": SOURCE_SKILLS[domain],
         "difficulty": SOURCE_DIFFICULTY,
         "problem": str(record["problem"]).strip(),
         "reasoning": str(record["reasoning"]).strip(),
@@ -419,10 +412,9 @@ def to_rsft_mapping(record: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _read_gemini_jsonl(path: str | Path) -> list[dict[str, str]]:
-    source = Path(path)
     expected = {"skill", "difficulty", "problem", "reasoning", "answer"}
     records: list[dict[str, str]] = []
-    with source.open("r", encoding="utf-8") as handle:
+    with Path(path).open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 raise ValueError(f"Gemini JSONL contains a blank line at {line_number}")
@@ -432,7 +424,7 @@ def _read_gemini_jsonl(path: str | Path) -> list[dict[str, str]]:
                     f"Gemini JSONL line {line_number} must contain exactly {sorted(expected)}"
                 )
             record: dict[str, str] = {}
-            for field in sorted(expected):
+            for field in expected:
                 value = raw[field]
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(
@@ -452,20 +444,16 @@ def write_combined_jsonl(
     gemini_jsonl: str | Path | None = None,
     seed: int = DEFAULT_SEED,
 ) -> Path:
-    """Write Superior rows plus the existing Gemini R0 rows in deterministic order."""
-
     combined = [to_rsft_mapping(record) for record in superior_records]
     if gemini_jsonl is not None:
         combined.extend(_read_gemini_jsonl(gemini_jsonl))
-    rng = random.Random(seed)
-    rng.shuffle(combined)
+    random.Random(seed).shuffle(combined)
 
     destination = Path(output_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8") as handle:
         for record in combined:
-            handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")))
-            handle.write("\n")
+            handle.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
     return destination
 
 
@@ -520,21 +508,21 @@ def build_dataset(
 
 
 def scan_dataset() -> dict[str, object]:
-    """Return exact Stage-1 domain counts without tokenizing or selecting rows."""
-
     counts: Counter[str] = Counter()
     rows = 0
     for index, row in enumerate(iter_stage1_rows()):
         rows += 1
         if not isinstance(row, Mapping):
             raise ValueError(f"Superior row {index} must be an object")
-        raw = row.get("domain")
-        domain = raw.strip() if isinstance(raw, str) else "<invalid>"
+        raw_domain = row.get("domain")
+        domain = raw_domain.strip() if isinstance(raw_domain, str) else "<invalid>"
         counts[domain] += 1
     return {
         "dataset_id": DATASET_ID,
         "dataset_config": DATASET_CONFIG,
         "dataset_split": DATASET_SPLIT,
+        "dataset_revision": DATASET_REVISION,
+        "dataset_filename": DATASET_FILENAME,
         "rows": rows,
         "domain_counts": dict(sorted(counts.items())),
     }
@@ -544,8 +532,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("scan", help="print exact Stage-1 domain counts")
-
-    build = subparsers.add_parser("build", help="select 25k shortest rows and write R-SFT JSONL")
+    build = subparsers.add_parser("build", help="select shortest rows and write R-SFT JSONL")
     build.add_argument("--output-jsonl", type=Path, required=True)
     build.add_argument("--gemini-jsonl", type=Path)
     build.add_argument("--total", type=int, default=DEFAULT_TOTAL)
@@ -560,15 +547,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "scan":
         print(json.dumps(scan_dataset(), indent=2, sort_keys=True))
         return 0
-    result = build_dataset(
-        args.output_jsonl,
-        gemini_jsonl=args.gemini_jsonl,
-        total=args.total,
-        science_share=args.science_share,
-        seed=args.seed,
-        spool_dir=args.spool_dir,
+    print(
+        json.dumps(
+            build_dataset(
+                args.output_jsonl,
+                gemini_jsonl=args.gemini_jsonl,
+                total=args.total,
+                science_share=args.science_share,
+                seed=args.seed,
+                spool_dir=args.spool_dir,
+            ),
+            indent=2,
+            sort_keys=True,
+        )
     )
-    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
