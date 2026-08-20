@@ -118,6 +118,14 @@ def evaluation_plan(
         "historical_greedy": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "max_new_tokens": 32},
         "historical_wider": {"temperature": 1.0, "top_p": 0.9, "top_k": 20},
         "reasoning_sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 0},
+        "prompt_wrapper_robustness": {
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "top_k": 0,
+            "samples_per_problem": 1,
+            "cases_per_skill": 1 if suite == "fast" else 2,
+            "wrappers": ["chat", "question_answer", "plain"],
+        },
     }
 
 
@@ -229,7 +237,39 @@ def evaluate(
         ),
         flush=True,
     )
-    return base._run(cmd, cwd=base.REPO)
+    status = base._run(cmd, cwd=base.REPO)
+    if status != 0:
+        return status
+
+    wrapper_cmd = [
+        *base._uv_prefix(),
+        "python",
+        "-m",
+        "post_training.rsft_prompt_wrapper_eval",
+        "--report",
+        str(selected_output),
+        "--suite",
+        suite,
+        "--device",
+        device,
+        "--precision",
+        precision,
+        "--max-new-tokens",
+        str(reasoning_max_new_tokens),
+        "--rsft-run-id",
+        profile.sft_run_id,
+        "--rsft-pointer",
+        "latest",
+    ]
+    if rsft_checkpoint_dir:
+        wrapper_cmd += [
+            "--rsft-checkpoint-dir",
+            str(Path(rsft_checkpoint_dir).expanduser().resolve()),
+        ]
+    else:
+        assert rsft_repo is not None
+        wrapper_cmd += ["--rsft-repo-id", rsft_repo]
+    return base._run(wrapper_cmd, cwd=base.REPO)
 
 
 __all__ = ["evaluate", "evaluation_plan"]
