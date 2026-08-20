@@ -242,6 +242,7 @@ artifacts/**/batches/
 /artifacts/rsft-superior-instruction-r0-adaptation/*
 !/artifacts/rsft-superior-instruction-r0-adaptation/candidates.manifest.json
 !/artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.final.jsonl
+!/artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl
 
 # IRE
 .ire/cache/

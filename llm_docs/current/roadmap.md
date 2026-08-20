@@ -80,14 +80,14 @@ The 100M/2B R-SFT R0 12,306-row trajectory is complete at `step-00000361` under 
 
 The immediate post-training work is evaluation/behavioral inspection of this completed checkpoint, not another same-corpus retrain. Use the registered `chat.py --model_params 100M --num_tokens 2B --r-sft` path or an explicit matching `--run-id`. Any qualification result should be recorded as new evidence without mutating the completed trajectory.
 
-A larger R-SFT corpus remains a separate future lane. The local adaptation checkpoint preserves 1,122 accepted Variant-D batches and complete 9,624-row curation, with 4,476 curated keepers still awaiting compression. GemRouter is intentionally inactive. If this lane is resumed, keep the selected Gemini Variant-D compressor, do not use NVIDIA fallback, preserve the existing accepted batch/candidate identities, deduplicate rewritten prompts against the baseline and each other, and assign the eventual expanded corpus a new run identity rather than resuming `100m-2b-rsft-r0-12306-001`.
+The larger R-SFT corpus is now an active quota-limited lane under ADR 0106. Preserve the 1,122 historical accepted batches and the v1 curation for the completed model, but use expansion curation v2 (8,473 keepers) for all new work. The keeper-only resume starts from 4,009 still-valid old keep rewrites and adapts only the 4,464 missing keepers with the selected Gemini Variant-D compressor. GemRouter must remain hard Gemini-only (`GEMROUTER_NVIDIA_ENABLED=false`, backend order exactly `gemini-api`, fallback disabled). Continue resumably across daily quota windows; after every v2 keeper has an accepted rewrite, deduplicate normalized prompts against the 7,683-row baseline and one another, freeze the exact expanded corpus, build/verify the 90/10 atomic bundle, and assign a new run identity rather than resuming `100m-2b-rsft-r0-12306-001`.
 
 The first 20M/500M S0 behavioral failure remains historical evidence and does not override the now-completed 100M/2B S0→R-SFT trajectory.
 
 ## Open decisions
 
 - How does the completed 12,306-row R-SFT R0 checkpoint behave under direct chat and the next frozen reasoning qualification suite, especially on atomic `<think>`/`<answer>` protocol use and generalization beyond the training templates?
-- Is completing the remaining 4,476 curated Variant-D adaptations worth a separate expanded R-SFT run after the 12,306-row checkpoint is evaluated?
+- What exact final row count remains after all 8,473 curation-v2 keepers are adapted and normalized-prompt collisions are removed?
 - Does the deep-decay 10B continuation keep validation loss falling after step 17,789, or does the much steeper long-phase power law under-train later fresh data?
 - How does the completed step-15,500 400M cooldown probe compare with the completed 100M/2B endpoint under frozen `eval_core_v1`?
 - Which pre-terminal-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?

@@ -4,6 +4,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## R-SFT evidence
 
+- [`rsft_expansion_resume_2026-08-20.md`](rsft_expansion_resume_2026-08-20.md) — Gemini-only resume gate, expansion curation v2, keeper-only adaptation contract, and initial live progress.
 - [`rsft_r0_12306_training_completion_2026-08-19.md`](rsft_r0_12306_training_completion_2026-08-19.md) — frozen 12,306-row corpus identity, 361-block one-pass training completion, Hugging Face step-361 publication, old R-SFT namespace cleanup, and preserved future-adaptation state.
 - [`rsft_r0_delimiter_pilot_2026-08-18.md`](rsft_r0_delimiter_pilot_2026-08-18.md) — historical matched atomic/textual 630-example delimiter pilot evidence.
 

@@ -118,4 +118,30 @@ python post_training/R-SFT/build_atomic.py \
   --output-dir /path/to/rsft-r0-superior-instruction-checkpoint-12306
 ```
 
-Do not relaunch this run under the same run ID unless intentionally resuming the same verified trajectory. A future corpus that incorporates the remaining 4,476 adapted keepers must use a new corpus identity and a new R-SFT run ID.
+Do not relaunch this run under the same run ID unless intentionally resuming the same verified trajectory. Any expanded corpus must use a new corpus identity and a new R-SFT run ID.
+
+## 5. Expanded-corpus adaptation lane
+
+ADR 0106 resumes the over-context lane without changing the historical curation used by the completed model. Expansion work uses:
+
+```text
+artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl
+```
+
+Curation v2 contains 8,473 keepers, 829 code exclusions, 212 math exclusions, and 110 safety exclusions. The keeper-only resume reuses 4,009 valid historical accepted rewrites and sends only the remaining 4,464 keepers to Gemini.
+
+Before any teacher request, require GemRouter to have `GEMROUTER_BACKEND_ORDER=gemini-api` and `GEMROUTER_NVIDIA_ENABLED=false`; `/health` must show only `gemini-api` and `fallbackEnabled=false`. Never enable NVIDIA for this dataset.
+
+Prepare/status commands:
+
+```bash
+.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py prepare \
+  --work-dir artifacts/rsft-superior-instruction-r0-adaptation \
+  --manual-curation-jsonl artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl \
+  --baseline-manifest artifacts/rsft-superior-instruction-r0/reasoning.jsonl.manifest.json
+
+.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py status \
+  --work-dir artifacts/rsft-superior-instruction-r0-adaptation
+```
+
+Provider batches and attempts under `keep-resume/` are generated local state and remain ignored by Git. Completion is quota-limited and resumable. Once pending reaches zero, finalize the curated corpus, audit exact 2,048-token fit and normalized-prompt uniqueness, and only then promote the new corpus/launcher identity.
