@@ -48,7 +48,10 @@ The full suite compares S0→R-SFT and includes:
 - the same full 18-prompt wider regression (`T=1.0`, `top_p=0.9`, `top_k=20`, seed 17, native budgets);
 - 35 novel mechanically scored reasoning problems balanced across `INF`, `DED`, `REL`, `CSP`, `IND`, `ABD`, and `MAG`;
 - reasoning greedy accuracy (`T=0`) and an eight-sample pass@1 estimate (`T=0.6`, `top_p=0.95`);
-- atomic `<think>...</think><answer>...` protocol health and reasoning/answer length telemetry.
+- atomic `<think>...</think><answer>...` protocol health and reasoning/answer length telemetry;
+- a deterministic prompt-wrapper robustness probe on 14 representative novel reasoning cases (two per skill), comparing the trained chat wrapper against raw `Question: ...\nAnswer:` and plain natural-language prompts.
+
+The prompt-wrapper probe uses identical cases and seeds for all three wrappers. It reports answer accuracy independently from reasoning-protocol compliance, including reasoning-start rate, well-formed protocol rate, strict protocol+answer accuracy, and raw-wrapper deltas against the chat baseline. It is diagnostic only and is not folded into the main reasoning score.
 
 The report deliberately has no single master score.
 
@@ -57,6 +60,8 @@ The report deliberately has no single master score.
 ```bash
 !python kaggle/launch_r_sft.py eval --model 100M --tokens 2B --suite fast
 ```
+
+The fast wrapper probe uses one representative case per reasoning skill (7 cases, 21 total wrapper generations).
 
 ## Useful overrides
 
@@ -70,7 +75,7 @@ The report deliberately has no single master score.
   --output /kaggle/working/post-rsft-full-qualification.json
 ```
 
-Use more reasoning samples only when a tighter repeated-sampling estimate is worth the extra generation cost. Do not change the historical greedy/wider settings when making stage-to-stage comparisons.
+Use more reasoning samples only when a tighter repeated-sampling estimate is worth the extra generation cost. Do not change the historical greedy/wider settings when making stage-to-stage comparisons. The prompt-wrapper robustness probe stays deterministic and one-sample-per-case regardless of `--reasoning-samples`.
 
 ## Output interpretation
 
@@ -81,6 +86,9 @@ Treat these as separate axes:
 3. instruction-behavior correctness;
 4. novel reasoning final-answer accuracy;
 5. R-SFT reasoning-token protocol health;
-6. held-out R-SFT loss.
+6. prompt-wrapper robustness / template dependence;
+7. held-out R-SFT loss.
+
+For prompt-wrapper robustness, the chat wrapper is the trained-condition baseline. A drop under raw wrappers means the reasoning behavior is template-dependent; it does not erase reasoning competence under the trained assistant context. Conversely, high raw-wrapper protocol rates are stronger evidence that the model learned to initiate the reasoning interface beyond the exact chat serialization.
 
 Do not interpret a fluent visible reasoning trace as evidence that the trace faithfully exposes the model's internal causal computation. The canonical suite does not use an LLM judge for that claim.
