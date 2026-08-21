@@ -2,11 +2,11 @@
 
 ## Scope
 
-ADR 0112 selects Superior Reasoning Stage 2 `instruction_following` as the additive source for the ADR-0111 nested 1% / 2% / 4% R-SFT scaling sweep. This evidence records the first wiring and build attempt. It deliberately distinguishes **pipeline readiness** from **a completed corpus artifact**.
+ADR 0113 selects Superior Reasoning Stage 2 `instruction_following` as the additive source for the ADR-0112 nested 1% / 2% / 4% R-SFT scaling sweep. This evidence records the first wiring and build attempt. It deliberately distinguishes **pipeline readiness** from **a completed corpus artifact**.
 
 ## Memory gap corrected
 
-Before ADR 0112, project memory documented why the first large production R-SFT used only Superior Reasoning Stage 1, but did not explicitly call out the availability of the dataset's Stage 2 as future scaling headroom. ADR 0112 now records Stage 2 as the selected expansion source while preserving the Stage-1 artifact and policy.
+Before ADR 0113, project memory documented why the first large production R-SFT used only Superior Reasoning Stage 1, but did not explicitly call out the availability of the dataset's Stage 2 as future scaling headroom. ADR 0113 now records Stage 2 as the selected expansion source while preserving the Stage-1 artifact and policy.
 
 ## Implemented Stage-2 lane
 
