@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0110-disable-xet-for-kaggle-rsft-checkpoint-upload.md`](0110-disable-xet-for-kaggle-rsft-checkpoint-upload.md)
 - [`0109-bind-100m-rsft-to-profile-specific-hf-repository.md`](0109-bind-100m-rsft-to-profile-specific-hf-repository.md)
 - [`0108-promote-expanded-rsft-corpus-to-kaggle-default.md`](0108-promote-expanded-rsft-corpus-to-kaggle-default.md)
 - [`0106-resume-expanded-rsft-with-curation-v2-and-keeper-only-gemini.md`](0106-resume-expanded-rsft-with-curation-v2-and-keeper-only-gemini.md)

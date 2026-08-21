@@ -27,6 +27,10 @@ DEFAULT_MICROBATCH_SIZE = 2
 DEFAULT_CADENCE_STEPS = 250
 DEFAULT_LEARNING_RATE = 3e-5
 PRODUCTION_OPTIMIZER_TARGET_TOKENS = 32_768
+RSFT_HF_UPLOAD_ENV = (
+    "HF_HUB_DISABLE_XET=1",
+    "HF_HUB_DISABLE_PROGRESS_BARS=1",
+)
 CANONICAL_SPECIAL_TOKENS = {
     "reasoning_start": {"id": 50_257, "text": "<think>"},
     "reasoning_end": {"id": 50_258, "text": "</think>"},
@@ -303,6 +307,7 @@ def build_train_command(
     return [
         "env",
         *scaled.KAGGLE_SFT_PROCESS_ENV,
+        *RSFT_HF_UPLOAD_ENV,
         *base._uv_prefix(wandb=True),
         *dual_t4_runtime.qualified_runtime_uv_args(),
         "python",
@@ -450,6 +455,7 @@ __all__ = [
     "PARENT_RUN_ID",
     "PILOT_RUN_IDS",
     "PRODUCTION_OPTIMIZER_TARGET_TOKENS",
+    "RSFT_HF_UPLOAD_ENV",
     "PRODUCTION_RUN_ID",
     "RSFTProfile",
     "build_train_command",

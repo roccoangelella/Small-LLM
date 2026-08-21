@@ -4,6 +4,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## R-SFT evidence
 
+- [`rsft_step417_upload_sigkill_2026-08-21.md`](rsft_step417_upload_sigkill_2026-08-21.md) — records the completed step-417 computation, failed final Xet upload, safe step-250 live pointer, and classic HTTP/LFS recovery policy.
 - [`rsft_kaggle_wrong_parent_repo_fix_2026-08-21.md`](rsft_kaggle_wrong_parent_repo_fix_2026-08-21.md) — fixes the expanded R-SFT Kaggle launch after a stale generic secret redirected the 100M S0 parent lookup to the 20M Hugging Face repository.
 - [`rsft_kaggle_noninteractive_s0_download_fix_2026-08-21.md`](rsft_kaggle_noninteractive_s0_download_fix_2026-08-21.md) — fixes private S0 resolution in committed/non-interactive Kaggle runs by bypassing KaggleHub runtime datasource attachment.
 - [`rsft_expanded_corpus_kaggle_default_2026-08-21.md`](rsft_expanded_corpus_kaggle_default_2026-08-21.md) — promotes the completed 16,716-row corpus to the default Kaggle training input, assigns the fresh default run ID, and retires the intermediate 12,306-row corpus from the current tree.

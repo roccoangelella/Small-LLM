@@ -211,6 +211,8 @@ def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     assert "--nproc-per-node=2" in output
     assert "dual_t4_rsft.py" in output
     assert "--rsft-num-epochs" in output
+    assert "HF_HUB_DISABLE_XET=1" in output
+    assert "HF_HUB_DISABLE_PROGRESS_BARS=1" in output
 
 
 def test_production_defaults_ignore_stale_generic_20m_repo(
