@@ -1,0 +1,67 @@
+name: R-SFT Stage2 1% build
+
+on:
+  pull_request:
+    paths:
+      - '.github/rsft-stage2-1pct-trigger'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-stage2-1pct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install focused dependencies
+        run: python -m pip install --upgrade pip pytest tiktoken datasets
+
+      - name: Run Stage2 scaling tests
+        run: python -m pytest -q tests/test_reasoning_sft_stage2_scaling.py
+
+      - name: Prepare real Superior Reasoning Stage2 instruction lane
+        run: |
+          python post_training/R-SFT/dataset/scale_superior_reasoning.py prepare-stage2 \
+            --base-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl \
+            --work-dir /tmp/rsft-stage2
+
+      - name: Build projected 1 percent corpus from context-fit Stage2 rows
+        run: |
+          mkdir -p /tmp/rsft-1pct
+          python post_training/R-SFT/dataset/scale_superior_reasoning.py build-percent \
+            --base-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl \
+            --work-dir /tmp/rsft-stage2 \
+            --output-jsonl /tmp/rsft-1pct/reasoning.jsonl \
+            --percent 1
+
+      - name: Publish build summary
+        if: always()
+        run: |
+          echo '## Stage2 preparation' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f /tmp/rsft-stage2/candidates.manifest.json ]; then
+            cat /tmp/rsft-stage2/candidates.manifest.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '## 1% corpus' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f /tmp/rsft-1pct/reasoning.jsonl.manifest.json ]; then
+            cat /tmp/rsft-1pct/reasoning.jsonl.manifest.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload manifests and completed 1 percent corpus
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rsft-stage2-1pct
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            /tmp/rsft-stage2/candidates.manifest.json
+            /tmp/rsft-1pct/reasoning.jsonl
+            /tmp/rsft-1pct/reasoning.jsonl.manifest.json
