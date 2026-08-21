@@ -3,3 +3,4 @@ retrigger after workflow registration
 validate corrected stage2 train/domain contract
 validate append-only nested stage2 ordering
 concluded: no GitHub Actions run became visible
+temporary branch only; do not merge
