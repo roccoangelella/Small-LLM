@@ -47,7 +47,7 @@ _SFT_CHAT_RUNS = {
 }
 _R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {
     (100_000_000, 2_000_000_000): (
-        "100m-2b-rsft-r0-12306-001",
+        "100m-2b-rsft-r0-16716-e3-001",
         _SOURCE_R_SFT,
     ),
 }
