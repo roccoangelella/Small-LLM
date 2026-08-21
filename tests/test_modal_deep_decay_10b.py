@@ -51,7 +51,7 @@ def _continuation_state(module, *, step: int = 27_750, microbatch: int = 2):
         "consumed_tokens": committed,
         "python_rng_state": object(),
         "torch_rng_state": object(),
-        "cuda_rng_states": [],
+        "cuda_rng_states": [object(), object()] if microbatch == 2 else [object()],
     }
 
 
@@ -139,6 +139,8 @@ class ModalDeepDecayTests(unittest.TestCase):
         self.assertIs(patched["scaler"], state["scaler"])
         self.assertIs(patched["python_rng_state"], state["python_rng_state"])
         self.assertIs(patched["torch_rng_state"], state["torch_rng_state"])
+        self.assertEqual(len(patched["cuda_rng_states"]), 1)
+        self.assertIs(patched["cuda_rng_states"][0], state["cuda_rng_states"][0])
         changed = {
             key
             for key in state["config"]
@@ -151,6 +153,35 @@ class ModalDeepDecayTests(unittest.TestCase):
             patched["scheduler"]["committed_tokens"], state["scheduler"]["committed_tokens"]
         )
         self.assertEqual(patched["scheduler"]["last_lr"], state["scheduler"]["last_lr"])
+
+    def test_cuda_rng_projection_is_rank0_exact_and_topology_fail_closed(self) -> None:
+        module = _load()
+        state = _continuation_state(module, microbatch=2)
+        module.validate_state(
+            state,
+            step=27_750,
+            source_checkpoint=False,
+            allowed_microbatches=frozenset({2}),
+        )
+        projected = module._patched_state(state, source_checkpoint=False)
+        module.validate_state(
+            projected,
+            step=27_750,
+            source_checkpoint=False,
+            allowed_microbatches=frozenset({16}),
+            expected_cuda_rng_states=1,
+        )
+        self.assertIs(projected["cuda_rng_states"][0], state["cuda_rng_states"][0])
+
+        state = _continuation_state(module, microbatch=2)
+        state["cuda_rng_states"].append(object())
+        with self.assertRaisesRegex(RuntimeError, "CUDA RNG topology drifted"):
+            module.validate_state(
+                state,
+                step=27_750,
+                source_checkpoint=False,
+                allowed_microbatches=frozenset({2}),
+            )
 
     def test_pointer_and_data_cursor_validation_fail_closed(self) -> None:
         module = _load()

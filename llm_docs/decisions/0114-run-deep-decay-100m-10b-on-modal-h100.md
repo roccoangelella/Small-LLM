@@ -58,8 +58,10 @@ The execution contract is:
   if the continuation namespace has no checkpoint;
 - CPU restore, full checkpoint-state verification, dataset-window staging,
   and SHA verification must all complete before the H100 function is spawned;
-- an existing continuation may be rewritten only in `microbatch_size` and the
-  derived configuration hash. The exact source fallback may additionally
+- an existing continuation may be rewritten only in `microbatch_size`, the
+  derived configuration hash, and CUDA RNG topology cardinality: the unchanged
+  rank-zero CUDA RNG byte state becomes the one-H100 state while the original
+  two-rank tree remains in the provider-migration backup. The exact source fallback may additionally
   receive the already-authorized ADR-0095 scheduler fields;
 - remote checkpoints remain on a 250-successful-update cadence plus segment
   final, with no automatic H100 retry that could bypass CPU restaging.
@@ -91,7 +93,8 @@ non-finite update telemetry.
 
 Focused tests must reject schedule, LR, model, cursor, and unauthorized
 microbatch drift and prove that an existing continuation rewrite changes only
-the execution microbatch. The first live Modal segment must restore the newest
+the execution slice plus the topology-required, byte-exact rank-zero CUDA RNG
+projection. The first live Modal segment must restore the newest
 verified Hugging Face checkpoint, report its expected LR, complete finite H100
 updates, and publish a later verified checkpoint under the unchanged namespace.
 

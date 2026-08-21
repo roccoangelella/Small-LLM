@@ -109,7 +109,10 @@ def contract() -> dict[str, object]:
         "final_step": FINAL_STEP,
         "final_targets": TOTAL_TARGETS,
         "remote_checkpoint_every": REMOTE_EVERY,
-        "scientific_change": "none; Modal changes execution slicing only for an existing deep-decay checkpoint",
+        "scientific_change": (
+            "none; Modal changes execution slicing and projects the unchanged rank-0 "
+            "CUDA RNG state onto the one-device topology"
+        ),
     }
 
 
@@ -229,6 +232,7 @@ def validate_state(
     step: int,
     source_checkpoint: bool,
     allowed_microbatches: frozenset[int],
+    expected_cuda_rng_states: int | None = None,
 ) -> int:
     """Validate every frozen state identity before any provider rewrite."""
 
@@ -270,8 +274,19 @@ def validate_state(
             raise RuntimeError(f"checkpoint lacks {key} state")
     if state.get("python_rng_state") is None or state.get("torch_rng_state") is None:
         raise RuntimeError("checkpoint lacks exact RNG state")
-    if not isinstance(state.get("cuda_rng_states"), list):
+    cuda_rng_states = state.get("cuda_rng_states")
+    if not isinstance(cuda_rng_states, list) or not cuda_rng_states:
         raise RuntimeError("checkpoint lacks CUDA RNG state list")
+    allowed_rng_counts = {1, 2} if saved_microbatch in {2, MICROBATCH_SIZE} else {1}
+    if len(cuda_rng_states) not in allowed_rng_counts:
+        raise RuntimeError(
+            "checkpoint CUDA RNG topology drifted: "
+            f"microbatch={saved_microbatch!r}, states={len(cuda_rng_states)}"
+        )
+    if expected_cuda_rng_states is not None and len(cuda_rng_states) != expected_cuda_rng_states:
+        raise RuntimeError(
+            f"checkpoint CUDA RNG state count {len(cuda_rng_states)} != {expected_cuda_rng_states}"
+        )
     if scheduler.get("committed_tokens") != committed:
         raise RuntimeError("checkpoint scheduler committed-token count drifted")
     scheduler_config = scheduler.get("config")
@@ -306,6 +321,9 @@ def _patched_state(state: Mapping[str, object], *, source_checkpoint: bool) -> d
     scheduler["config"] = dict(config)
     patched["config"] = config
     patched["scheduler"] = scheduler
+    cuda_rng_states = state["cuda_rng_states"]
+    assert isinstance(cuda_rng_states, list) and cuda_rng_states
+    patched["cuda_rng_states"] = [cuda_rng_states[0]]
     return patched
 
 
@@ -372,7 +390,13 @@ def migrate_checkpoint(
                 else PRIOR_CONTINUATION_MICROBATCH_SIZES | {MICROBATCH_SIZE}
             ),
         )
-        if saved_microbatch == MICROBATCH_SIZE and not source_checkpoint:
+        cuda_rng_states = state.get("cuda_rng_states")
+        assert isinstance(cuda_rng_states, list)
+        if (
+            saved_microbatch == MICROBATCH_SIZE
+            and len(cuda_rng_states) == 1
+            and not source_checkpoint
+        ):
             return {"status": "already_modal_sliced", "from_microbatch": saved_microbatch}
 
         patched = _patched_state(state, source_checkpoint=source_checkpoint)
@@ -397,8 +421,13 @@ def migrate_checkpoint(
         staging = parent / f".{checkpoint_id}.modal-h100-migration"
         backup = parent / f".{checkpoint_id}.pre-modal-h100"
         shutil.rmtree(staging, ignore_errors=True)
+        swap_backup = backup
         if backup.exists():
-            raise RuntimeError(f"provider-migration backup already exists while target still needs migration: {backup}")
+            swap_backup = parent / f".{checkpoint_id}.pre-modal-h100-rng-projection"
+            if swap_backup.exists():
+                raise RuntimeError(
+                    "both provider-migration backups exist while target still needs migration"
+                )
         shutil.copytree(root, staging)
         (staging / "checkpoint_manifest.json").unlink(missing_ok=True)
         trainer_state = staging / "trainer_state.pkl"
@@ -416,11 +445,11 @@ def migrate_checkpoint(
             },
         )
         verify_local_manifest(staging)
-        os.replace(root, backup)
+        os.replace(root, swap_backup)
         try:
             os.replace(staging, root)
         except BaseException:
-            os.replace(backup, root)
+            os.replace(swap_backup, root)
             raise
         strict_state = load_trainer_state_file(root / "trainer_state.pkl", map_location="cpu")
         try:
@@ -429,6 +458,7 @@ def migrate_checkpoint(
                 step=checkpoint_step(checkpoint_id),
                 source_checkpoint=False,
                 allowed_microbatches=frozenset({MICROBATCH_SIZE}),
+                expected_cuda_rng_states=1,
             )
         finally:
             del strict_state
@@ -438,6 +468,7 @@ def migrate_checkpoint(
             "from_microbatch": saved_microbatch,
             "to_microbatch": MICROBATCH_SIZE,
             "backup": str(backup),
+            "cuda_rng_states": {"from": len(cuda_rng_states), "to": 1, "selected_rank": 0},
         }
     finally:
         del state

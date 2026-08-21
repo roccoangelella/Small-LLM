@@ -72,7 +72,11 @@ An existing microbatch-2 or historical microbatch-4 continuation is copied to
 an atomic staging directory, rewritten to microbatch 16, assigned the matching
 configuration hash, strictly reverified, and installed. The original downloaded
 tree remains as a hidden same-Volume provider-migration backup. No model,
-optimizer, scaler, RNG, counter, or cursor object is changed.
+optimizer, scaler, Python/Torch RNG, counter, or cursor object is changed. A
+two-T4 checkpoint has two CUDA generator states; the one-H100 migration keeps
+rank zero's CUDA RNG bytes unchanged as the single live device state and keeps
+the original two-state tree in the hidden backup. Any other CUDA RNG topology
+fails closed.
 
 ## Live confirmation
 
