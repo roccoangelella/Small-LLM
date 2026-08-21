@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Resume 100M/10B from exact step 15,500 with deep LR decay throughout.
+"""Resume the portable 100M/10B deep-decay continuation on Beam.
 
 Usage from repository root:
 
     python beam/deep_decay_10b_from_15500.py --dry-run
     python beam/deep_decay_10b_from_15500.py --gpu RTX4090
 
-The exact uncooled step-15,500 state is forked into a fresh run namespace.
-Only the LR scheduler changes:
-
-1. cosine settle from 3e-4 to 1e-4 over ~300M targets;
-2. calibrated power-law decay from 1e-4 to 1e-5 by 9.6B targets;
-3. linear terminal cooldown over ~400M targets from 1e-5 to 5e-6.
-
-Model, optimizer, scaler, RNG, data cursor, architecture, precision, optimizer
-recipe, validation prefix, and corpus order remain unchanged.
+The shared continuation namespace is provider-neutral. Beam first resolves the
+newest verified local/Hugging-Face checkpoint, then canonicalizes only execution
+slicing to single-GPU microbatch 4 when the checkpoint was last written by
+Kaggle (microbatch 2) or Modal (microbatch 16). The ADR-0095 scientific
+schedule, model, optimizer, scaler, data cursor, consumed tokens, CPU RNG state,
+validation prefix, and corpus order remain unchanged.
 """
 from __future__ import annotations
 
@@ -35,6 +32,11 @@ if str(ROOT) not in sys.path:
 
 from beam import function  # noqa: E402
 from beam import launch as base  # noqa: E402
+from trainer.deep_decay_provider_migration import (  # noqa: E402
+    execution_rewrite_needed,
+    rewrite_execution_state,
+    validate_target_execution_state,
+)
 
 SOURCE_RUN_ID = "100m-10b-data-001"
 SOURCE_STEP = 15_500
@@ -66,8 +68,6 @@ COOLDOWN_START_STEP = FINAL_STEP - COOLDOWN_STEPS
 COOLDOWN_START_TOKENS = COOLDOWN_START_STEP * TARGETS_PER_FULL_BLOCK
 ADDITIONAL_STEPS = FINAL_STEP - SOURCE_STEP
 
-# Choose the power exponent from the user's two requested long-phase endpoints:
-# 1e-4 at SETTLE_END_TOKENS and exactly 1e-5 at COOLDOWN_START_TOKENS.
 BASE_POWER = math.log(SETTLE_LR / COOLDOWN_START_LR) / math.log(
     COOLDOWN_START_TOKENS / SETTLE_END_TOKENS
 )
@@ -160,6 +160,99 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
     os.replace(tmp, path)
 
 
+def _checkpoint_step(checkpoint_id: str) -> int:
+    if not checkpoint_id.startswith("step-") or len(checkpoint_id) != 13:
+        raise RuntimeError(f"invalid checkpoint ID: {checkpoint_id!r}")
+    try:
+        return int(checkpoint_id.removeprefix("step-"))
+    except ValueError as error:
+        raise RuntimeError(f"invalid checkpoint ID: {checkpoint_id!r}") from error
+
+
+def _scientific_checkpoint_drift(config: Mapping[str, object]) -> dict[str, tuple[object, object]]:
+    expected = {
+        "schedule": "wsqd",
+        "learning_rate": PEAK_LR,
+        "warmup_tokens": 0,
+        "stable_tokens": 0,
+        "decay_tokens": COOLDOWN_TOKENS,
+        "schedule_anchor_tokens": SOURCE_EXPECTED_TOKENS,
+        "cooldown_start_tokens": COOLDOWN_START_TOKENS,
+        "settle_tokens": SETTLE_TOKENS,
+        "settle_lr_ratio": SETTLE_LR_RATIO,
+        "base_power": BASE_POWER,
+    }
+    return {
+        key: (config.get(key), value)
+        for key, value in expected.items()
+        if config.get(key) != value
+    }
+
+
+def _dataset_configuration_hash(dataset: Path) -> str:
+    manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
+    production = manifest.get("production") if isinstance(manifest, Mapping) else None
+    value = production.get("configuration_hash") if isinstance(production, Mapping) else None
+    if not isinstance(value, str) or not value:
+        raise RuntimeError("staged 10B dataset lacks production.configuration_hash")
+    return value
+
+
+def _restore_pointer(
+    runtime_base: Any,
+    *,
+    store: object,
+    pointer: Mapping[str, object],
+) -> dict[str, object]:
+    from dataset.src.joint_checkpoint import restore_on_empty_vps
+    from dataset.src.remote import TwoPhaseCheckpointPublisher
+
+    checkpoint_id = pointer.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str):
+        raise RuntimeError("HF deep-decay latest pointer has no checkpoint_id")
+    restored = restore_on_empty_vps(
+        publisher=TwoPhaseCheckpointPublisher(store, run_id=RUN_ID),
+        store=None,
+        run_id=RUN_ID,
+        destination=RUN_DIR,
+        checkpoint_pointer=pointer,
+        prefetch_shards=0,
+    )
+    metadata = runtime_base._verified_checkpoint_metadata(restored, checkpoint_id)
+    metadata["source"] = "hf_model_repo"
+    return metadata
+
+
+def _refresh_from_hf_if_newer(runtime_base: Any) -> tuple[str | None, int, str]:
+    """Resolve newest verified continuation across Beam Volume and shared HF."""
+
+    local_id, local_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+    store = runtime_base._hf_model_repo_store()
+    pointer = store.read_json(f"run/{RUN_ID}/latest.json")
+    if pointer is None:
+        return local_id, local_step, "beam_volume"
+    if not isinstance(pointer, Mapping):
+        raise RuntimeError("HF deep-decay latest pointer is not an object")
+    remote_id = pointer.get("checkpoint_id")
+    if not isinstance(remote_id, str):
+        raise RuntimeError("HF deep-decay latest pointer has no checkpoint_id")
+    remote_step = _checkpoint_step(remote_id)
+    if not SOURCE_STEP <= remote_step <= FINAL_STEP:
+        raise RuntimeError(f"HF deep-decay checkpoint step {remote_step} is outside the frozen horizon")
+    if local_step >= remote_step:
+        return local_id, local_step, "beam_volume"
+
+    restored = _restore_pointer(runtime_base, store=store, pointer=pointer)
+    restored_id = str(restored["checkpoint_id"])
+    restored_step = int(restored["step"])
+    if restored_id != remote_id or restored_step != remote_step:
+        raise RuntimeError(
+            "HF continuation changed during restore: "
+            f"expected {remote_id}/{remote_step}, got {restored_id}/{restored_step}"
+        )
+    return restored_id, restored_step, "hf_model_repo"
+
+
 def _fork_source_checkpoint(*, dataset: Path) -> None:
     import torch
     from dataset.src.joint_checkpoint import verify_local_manifest
@@ -224,18 +317,14 @@ def _fork_source_checkpoint(*, dataset: Path) -> None:
         patched_scheduler["last_lr"] = PEAK_LR
         state["config"] = patched_config
         state["scheduler"] = patched_scheduler
+        validate_target_execution_state(state, target_microbatch=MICROBATCH_SIZE)
 
-        manifest = json.loads((dataset / "manifest.json").read_text(encoding="utf-8"))
-        production = manifest.get("production") if isinstance(manifest, Mapping) else None
-        dataset_configuration_hash = (
-            production.get("configuration_hash") if isinstance(production, Mapping) else None
-        )
         new_configuration_hash = canonical_hash(
             {
                 "version": 1,
                 "model": dict(model_config),
                 "trainer": patched_config,
-                "dataset_configuration_hash": dataset_configuration_hash,
+                "dataset_configuration_hash": _dataset_configuration_hash(dataset),
             }
         )
 
@@ -255,14 +344,137 @@ def _fork_source_checkpoint(*, dataset: Path) -> None:
         _write_json(
             staging / "local_manifest.json",
             {
+                "version": 1,
                 "files": [
                     {"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
                     {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")},
-                ]
+                ],
             },
         )
         verify_local_manifest(staging)
         os.replace(staging, target)
+    finally:
+        del state
+        release_host_memory()
+
+
+def _install_execution_migration(*, checkpoint_id: str, dataset: Path) -> dict[str, object]:
+    """Canonicalize an authorized continuation to Beam microbatch-4 / one GPU."""
+
+    import torch
+    from dataset.src.joint_checkpoint import verify_local_manifest
+    from dataset.src.remote import sha256_path
+    from trainer.identity import canonical_hash
+    from trainer.state import load_trainer_state_file, release_host_memory
+
+    step = _checkpoint_step(checkpoint_id)
+    root = CHECKPOINT_DIR / checkpoint_id
+    verify_local_manifest(root)
+    payload = json.loads((root / "checkpoint.json").read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("deep-decay checkpoint.json is not an object")
+    pipeline = payload.get("pipeline_state")
+    if not isinstance(pipeline, Mapping) or pipeline.get("last_consumed_block_id") != step - 1:
+        raise RuntimeError("deep-decay checkpoint data cursor drifted")
+
+    state = load_trainer_state_file(root / "trainer_state.pkl", map_location="cpu")
+    try:
+        if state.get("global_step") != step:
+            raise RuntimeError("deep-decay checkpoint global_step disagrees with checkpoint ID")
+        if state.get("consumed_tokens") != step * TARGETS_PER_FULL_BLOCK:
+            raise RuntimeError("deep-decay checkpoint consumed-token count drifted")
+        config = state.get("config")
+        scheduler = state.get("scheduler")
+        model_config = state.get("model_config")
+        if not isinstance(config, Mapping) or not isinstance(scheduler, Mapping):
+            raise RuntimeError("deep-decay checkpoint lacks config/scheduler mappings")
+        if not isinstance(model_config, Mapping):
+            raise RuntimeError("deep-decay checkpoint lacks model_config")
+        drift = _scientific_checkpoint_drift(config)
+        if drift:
+            raise RuntimeError(
+                "deep-decay checkpoint scientific config drifted: "
+                + json.dumps(drift, sort_keys=True)
+            )
+        if scheduler.get("committed_tokens") != step * TARGETS_PER_FULL_BLOCK:
+            raise RuntimeError("deep-decay scheduler committed_tokens drifted")
+        scheduler_config = scheduler.get("config")
+        if not isinstance(scheduler_config, Mapping):
+            raise RuntimeError("deep-decay scheduler lacks config mapping")
+        scheduler_drift = _scientific_checkpoint_drift(scheduler_config)
+        if scheduler_drift:
+            raise RuntimeError(
+                "deep-decay scheduler scientific config drifted: "
+                + json.dumps(scheduler_drift, sort_keys=True)
+            )
+        expected_lr = _expected_lr(step * TARGETS_PER_FULL_BLOCK)
+        last_lr = scheduler.get("last_lr")
+        if (
+            isinstance(last_lr, bool)
+            or not isinstance(last_lr, (int, float))
+            or not math.isfinite(float(last_lr))
+            or not math.isclose(float(last_lr), expected_lr, rel_tol=1e-10, abs_tol=1e-12)
+        ):
+            raise RuntimeError(f"deep-decay scheduler LR drifted: {last_lr!r} != {expected_lr!r}")
+
+        if not execution_rewrite_needed(state, target_microbatch=MICROBATCH_SIZE):
+            validate_target_execution_state(state, target_microbatch=MICROBATCH_SIZE)
+            return {"status": "already_beam_sliced", "from_microbatch": MICROBATCH_SIZE}
+
+        patched_state, migration = rewrite_execution_state(
+            state,
+            target_microbatch=MICROBATCH_SIZE,
+        )
+        patched_config = patched_state.get("config")
+        if not isinstance(patched_config, Mapping):
+            raise RuntimeError("execution migration lost trainer config")
+        configuration_hash = canonical_hash(
+            {
+                "version": 1,
+                "model": dict(model_config),
+                "trainer": dict(patched_config),
+                "dataset_configuration_hash": _dataset_configuration_hash(dataset),
+            }
+        )
+
+        staging = CHECKPOINT_DIR / f".{checkpoint_id}.beam-provider-migration"
+        backup = CHECKPOINT_DIR / f".{checkpoint_id}.pre-beam-provider"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(backup, ignore_errors=True)
+        shutil.copytree(root, staging)
+        (staging / "checkpoint_manifest.json").unlink(missing_ok=True)
+        trainer_state_path = staging / "trainer_state.pkl"
+        torch.save(patched_state, trainer_state_path)
+        patched_payload = dict(payload)
+        patched_payload["configuration_hash"] = configuration_hash
+        _write_json(staging / "checkpoint.json", patched_payload)
+        _write_json(
+            staging / "local_manifest.json",
+            {
+                "version": 1,
+                "files": [
+                    {"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
+                    {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")},
+                ],
+            },
+        )
+        verify_local_manifest(staging)
+        os.replace(root, backup)
+        try:
+            os.replace(staging, root)
+        except BaseException:
+            os.replace(backup, root)
+            raise
+        else:
+            shutil.rmtree(backup, ignore_errors=True)
+
+        strict_state = load_trainer_state_file(root / "trainer_state.pkl", map_location="cpu")
+        try:
+            validate_target_execution_state(strict_state, target_microbatch=MICROBATCH_SIZE)
+        finally:
+            del strict_state
+            release_host_memory()
+        return {"status": "migrated_execution_slicing", **migration}
     finally:
         del state
         release_host_memory()
@@ -287,10 +499,12 @@ def prepare_remote(source_commit: str) -> dict[str, object]:
     from dataset.qualification import get_profile
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
     from dataset.src.joint_checkpoint import verify_local_manifest
+    from model_repo_checkpoint import install_model_repo_checkpoint_transport
     from rolling_dataset import hf_dataset_bucket_id
 
+    install_model_repo_checkpoint_transport()
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    latest_id, latest_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+    latest_id, latest_step, checkpoint_source = _refresh_from_hf_if_newer(runtime_base)
     if latest_step > FINAL_STEP:
         raise RuntimeError(f"continuation checkpoint step {latest_step} exceeds {FINAL_STEP}")
     if latest_step == 0:
@@ -307,6 +521,7 @@ def prepare_remote(source_commit: str) -> dict[str, object]:
             "checkpoint_id": latest_id,
             "completed_steps": latest_step,
             "final_step": FINAL_STEP,
+            "checkpoint_source": checkpoint_source,
         }
 
     required_block = SOURCE_STEP if latest_step == 0 else latest_step
@@ -330,16 +545,25 @@ def prepare_remote(source_commit: str) -> dict[str, object]:
     if staged.get("status") != "ready":
         raise RuntimeError(f"dataset stage did not become ready: {staged}")
 
+    migration: dict[str, object]
     if latest_step == 0:
         _fork_source_checkpoint(dataset=dataset)
         latest_id, latest_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
         if latest_id != SOURCE_CHECKPOINT_ID or latest_step != SOURCE_STEP:
             raise RuntimeError("fork did not install exact step-15500 checkpoint")
+        checkpoint_source = "exact_source_fork"
+        migration = {"status": "source_fork"}
         _write_json(CONTRACT_PATH, _contract())
-    elif not CONTRACT_PATH.is_file():
-        raise RuntimeError("resumed continuation is missing deep_decay_10b_contract.json")
-    elif json.loads(CONTRACT_PATH.read_text(encoding="utf-8")) != _contract():
-        raise RuntimeError("deep-decay contract drifted between segments")
+    else:
+        assert latest_id is not None
+        migration = _install_execution_migration(
+            checkpoint_id=latest_id,
+            dataset=dataset,
+        )
+        if not CONTRACT_PATH.is_file():
+            _write_json(CONTRACT_PATH, _contract())
+        elif json.loads(CONTRACT_PATH.read_text(encoding="utf-8")) != _contract():
+            raise RuntimeError("deep-decay contract drifted between segments")
 
     return {
         "status": "ready",
@@ -351,6 +575,8 @@ def prepare_remote(source_commit: str) -> dict[str, object]:
         "required_block": latest_step,
         "dataset_dir": str(dataset),
         "dataset_bucket_id": bucket_id,
+        "checkpoint_source": checkpoint_source,
+        "execution_migration": migration,
         "lr_now": _expected_lr(latest_step * TARGETS_PER_FULL_BLOCK),
         "lr_at_settle_end": SETTLE_LR,
         "base_power": BASE_POWER,
@@ -596,6 +822,7 @@ def main() -> int:
         "final_step": FINAL_STEP,
         "final_targets": TOTAL_TARGETS,
         "schedule": "300M cosine to 1e-4 + calibrated power to 1e-5 + 400M linear to 5e-6",
+        "resume": "newest_verified_local_or_hf_then_execution_only_provider_migration",
         "source_commit": source_commit,
     }
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
