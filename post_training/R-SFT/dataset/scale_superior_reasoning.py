@@ -1,42 +1,33 @@
 #!/usr/bin/env python3
-"""Scale the frozen R-SFT reasoning corpus with Superior Reasoning Stage 2.
+"""Scale the frozen R-SFT corpus with Superior Reasoning Stage 2.
 
-The Stage-1 production/reproduction path stays immutable.  This module adds a
-scaling lane that applies the same accepted R0 contract to Stage-2
-``instruction_following`` examples:
+Stage 1 remains immutable. Stage 2 uses the same accepted R0 contract: strict
+teacher-output parsing, instruction-only selection, primary math/code exclusion,
+normalized-prompt deduplication, reserved-marker rejection, exact 2,048-token
+atomic serialization, and Variant-D adaptation only for curated over-context
+keepers.
 
-- strict ``<think>...</think>`` teacher-output parsing;
-- normalized-prompt deduplication against the frozen Stage-1-expanded corpus;
-- the same primary-math / primary-code exclusion policy;
-- reserved reasoning-marker rejection;
-- exact 2,048-token atomic chat fit validation;
-- over-context rows frozen in the same candidate schema consumed by the
-  existing Variant-D GemRouter adapter;
-- deterministic 1% / 2% / 4% corpus assembly by *loss-bearing reasoning target
-  tokens*, with the existing 1%/1% per-group held-out policy projected exactly.
-
-For Stage 2, the preferred transport is Hugging Face ``datasets`` streaming of
-config ``stage2``, split ``instruction_following``.  ``--source-jsonl`` can be
-used to run the identical logic against a previously downloaded Stage-2 JSONL.
+The upstream *text* dataset exposes config ``stage2`` with split ``train`` and a
+``domain`` field in every row. We therefore stream Stage-2 train and filter
+``domain == instruction_following`` exactly as the Stage-1 producer filters its
+single train JSONL. (The domain-specific Stage-2 splits belong to the separate
+logprob companion dataset.)
 """
 from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
 import hashlib
+import importlib.util
 import json
-import math
 from pathlib import Path
 import random
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+import sys
+from typing import Any, Iterator, Mapping, Sequence
 
 HERE = Path(__file__).resolve().parent
 RSFT_DIR = HERE.parent
 REPO = RSFT_DIR.parents[1]
-
-# Import the frozen Stage-1 policy implementation rather than duplicating it.
-import importlib.util
-import sys
 
 
 def _load_module(name: str, path: Path):
@@ -53,10 +44,12 @@ def _load_module(name: str, path: Path):
     return module
 
 
+# Reuse the frozen Stage-1 policy implementation instead of duplicating policy.
 superior = _load_module("superior_reasoning", HERE / "superior_reasoning.py")
 
 STAGE2_CONFIG = "stage2"
-STAGE2_SPLIT = "instruction_following"
+STAGE2_SPLIT = "train"
+STAGE2_DOMAIN = "instruction_following"
 STAGE2_FILENAME = "Superior-Reasoning-SFT-gpt-oss-120b-stage2-train-data.jsonl"
 SCALING_SCHEMA = "small-llm-superior-stage2-scaling-v1"
 CANDIDATE_SCHEMA = "small-llm-superior-overcontext-candidates-v1"
@@ -101,21 +94,17 @@ def _atomic_json(path: Path, payload: Mapping[str, object]) -> None:
     temporary.replace(path)
 
 
-def _normalize_source_row(raw: Mapping[str, Any], *, index: int) -> dict[str, Any]:
-    """Normalize either raw JSONL or HF split rows to the Stage-1 row contract."""
-    row = dict(raw)
-    row.setdefault("domain", superior.PRODUCTION_DOMAIN)
-    if row.get("domain") != superior.PRODUCTION_DOMAIN:
-        raise ValueError(
-            f"Stage-2 scaling source must be instruction_following; row {index} has {row.get('domain')!r}"
-        )
-    return row
+def _instruction_row(raw: Mapping[str, Any]) -> bool:
+    domain = raw.get("domain")
+    return isinstance(domain, str) and domain.strip() == STAGE2_DOMAIN
 
 
 def iter_stage2_instruction_rows(*, source_jsonl: Path | None = None) -> Iterator[Mapping[str, Any]]:
+    """Stream Stage-2 train and yield only instruction-following rows."""
     if source_jsonl is not None:
-        for index, raw in enumerate(_read_jsonl(source_jsonl)):
-            yield _normalize_source_row(raw, index=index)
+        for raw in _read_jsonl(source_jsonl):
+            if _instruction_row(raw):
+                yield raw
         return
 
     try:
@@ -134,7 +123,8 @@ def iter_stage2_instruction_rows(*, source_jsonl: Path | None = None) -> Iterato
     for index, raw in enumerate(stream):
         if not isinstance(raw, Mapping):
             raise RuntimeError(f"Stage-2 dataset row {index} is not an object")
-        yield _normalize_source_row(raw, index=index)
+        if _instruction_row(raw):
+            yield raw
 
 
 def _base_prompt_hashes(base_jsonl: Path) -> tuple[set[str], int]:
@@ -143,8 +133,7 @@ def _base_prompt_hashes(base_jsonl: Path) -> tuple[set[str], int]:
     for line_number, raw in enumerate(_read_jsonl(base_jsonl), start=1):
         if set(raw) != set(FIVE_FIELDS):
             raise RuntimeError(f"base reasoning row {line_number} has the wrong schema")
-        prompt = str(raw["problem"]).strip()
-        identity = superior._normalized_input_hash(prompt)
+        identity = superior._normalized_input_hash(str(raw["problem"]).strip())
         if identity in hashes:
             raise RuntimeError("base reasoning corpus contains duplicate normalized prompts")
         hashes.add(identity)
@@ -155,7 +144,7 @@ def _base_prompt_hashes(base_jsonl: Path) -> tuple[set[str], int]:
 
 
 def _assistant_target_tokens(*, reasoning: str, answer: str, token_counter=None) -> int:
-    """Exact atomic assistant loss-bearing targets: 3 markers + text + EOS."""
+    """Exact atomic assistant targets: three control tokens + text + assistant EOS."""
     count = token_counter or superior._default_token_counter()
     return 3 + count(reasoning) + count(answer) + 1
 
@@ -168,7 +157,7 @@ def prepare_stage2(
     max_source_rows: int | None = None,
     progress_every: int = 5_000,
 ) -> dict[str, object]:
-    """Freeze Stage-2 fit rows and over-context candidates under the Stage-1 policy."""
+    """Freeze context-fit Stage-2 rows plus over-context adaptation candidates."""
     work_dir.mkdir(parents=True, exist_ok=True)
     fit_path = work_dir / "fit.jsonl"
     candidates_path = work_dir / "candidates.jsonl"
@@ -178,96 +167,102 @@ def prepare_stage2(
 
     base_hashes, base_rows = _base_prompt_hashes(base_jsonl)
     seen = set(base_hashes)
-    token_counter = superior._default_token_counter()
-    source_rows = 0
-    accepted_fit = 0
-    over_context = 0
-    duplicate_count = 0
-    rejected_output_count = 0
-    exclusion_counts: Counter[str] = Counter()
+    count_tokens = superior._default_token_counter()
+    instruction_rows = accepted_fit = over_context = duplicates = rejected_output = 0
+    exclusions: Counter[str] = Counter()
     fit_target_tokens = 0
 
-    fit_tmp = fit_path.with_suffix(".jsonl.tmp")
-    candidates_tmp = candidates_path.with_suffix(".jsonl.tmp")
+    fit_tmp = fit_path.with_suffix(fit_path.suffix + ".tmp")
+    candidates_tmp = candidates_path.with_suffix(candidates_path.suffix + ".tmp")
     with fit_tmp.open("w", encoding="utf-8") as fit_handle, candidates_tmp.open(
         "w", encoding="utf-8"
     ) as candidate_handle:
-        for source_index, raw in enumerate(
-            iter_stage2_instruction_rows(source_jsonl=source_jsonl)
-        ):
-            if max_source_rows is not None and source_rows >= max_source_rows:
+        for source_index, row in enumerate(iter_stage2_instruction_rows(source_jsonl=source_jsonl)):
+            if max_source_rows is not None and instruction_rows >= max_source_rows:
                 break
-            source_rows += 1
-            if progress_every and source_rows % progress_every == 0:
+            instruction_rows += 1
+            if progress_every and instruction_rows % progress_every == 0:
                 print(
-                    f"[stage2:prepare] source={source_rows} fit={accepted_fit} "
-                    f"over_context={over_context} duplicates={duplicate_count}",
+                    f"[stage2:prepare] instruction_rows={instruction_rows} fit={accepted_fit} "
+                    f"over_context={over_context} duplicates={duplicates}",
                     flush=True,
                 )
-            row = _normalize_source_row(raw, index=source_index)
+
             problem = superior._row_text(row, "input", index=source_index)
             source_id = superior._row_text(row, "uuid", index=source_index)
             output = superior._row_text(row, "output", index=source_index)
             try:
                 parsed = superior.parse_teacher_output(output)
             except ValueError:
-                rejected_output_count += 1
+                rejected_output += 1
                 continue
 
             prompt_hash = superior._normalized_input_hash(problem)
             if prompt_hash in seen:
-                duplicate_count += 1
+                duplicates += 1
                 continue
             seen.add(prompt_hash)
 
             exclusion = superior.instruction_exclusion_reason(problem)
             if exclusion is not None:
-                exclusion_counts[exclusion] += 1
+                exclusions[exclusion] += 1
                 continue
             if any(
                 marker in text
                 for marker in superior.PRODUCTION_RESERVED_MARKERS
                 for text in (problem, parsed.reasoning, parsed.answer)
             ):
-                exclusion_counts["reserved_marker_collision"] += 1
+                exclusions["reserved_marker_collision"] += 1
                 continue
 
             serialized_tokens = superior.atomic_rsft_serialized_tokens(
                 problem=problem,
                 reasoning=parsed.reasoning,
                 answer=parsed.answer,
-                token_counter=token_counter,
+                token_counter=count_tokens,
             )
             common = {
                 "id": source_id,
                 "source_index": source_index,
-                "domain": superior.PRODUCTION_DOMAIN,
+                "domain": STAGE2_DOMAIN,
                 "difficulty": superior.PRODUCTION_DIFFICULTY,
                 "problem": problem,
                 "reasoning": parsed.reasoning,
                 "answer": parsed.answer,
-                "serialized_token_count": serialized_tokens,
             }
             if serialized_tokens <= superior.PRODUCTION_CONTEXT_LENGTH:
                 target_tokens = _assistant_target_tokens(
                     reasoning=parsed.reasoning,
                     answer=parsed.answer,
-                    token_counter=token_counter,
+                    token_counter=count_tokens,
                 )
-                common["target_token_count"] = target_tokens
-                fit_handle.write(json.dumps(common, ensure_ascii=False, separators=(",", ":")) + "\n")
+                fit_handle.write(
+                    json.dumps(
+                        {
+                            **common,
+                            "serialized_token_count": serialized_tokens,
+                            "target_token_count": target_tokens,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
                 fit_target_tokens += target_tokens
                 accepted_fit += 1
             else:
-                exclusion_counts["over_context"] += 1
-                candidate = {
-                    **common,
-                    "difficulty": "simplified_fit",
-                    "original_serialized_tokens": serialized_tokens,
-                }
-                candidate.pop("serialized_token_count", None)
+                exclusions["over_context"] += 1
                 candidate_handle.write(
-                    json.dumps(candidate, ensure_ascii=False, separators=(",", ":")) + "\n"
+                    json.dumps(
+                        {
+                            **common,
+                            "difficulty": "simplified_fit",
+                            "original_serialized_tokens": serialized_tokens,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
                 )
                 over_context += 1
 
@@ -279,6 +274,7 @@ def prepare_stage2(
         "dataset_id": superior.DATASET_ID,
         "dataset_config": STAGE2_CONFIG,
         "dataset_split": STAGE2_SPLIT,
+        "production_domain": STAGE2_DOMAIN,
         "dataset_revision": superior.DATASET_REVISION,
         "dataset_filename": STAGE2_FILENAME,
         "filter_policy": superior.PRODUCTION_FILTER_VERSION,
@@ -287,13 +283,13 @@ def prepare_stage2(
         "batch_size_max": superior.SIMPLIFICATION_MAX_BATCH_SIZE,
         "base_jsonl_sha256": _sha256_path(base_jsonl),
         "base_rows": base_rows,
-        "source_rows": source_rows,
+        "source_instruction_rows": instruction_rows,
         "fit_unchanged_rows": accepted_fit,
         "fit_target_tokens_before_partition": fit_target_tokens,
         "over_context_rows": over_context,
-        "duplicate_or_base_collision_count": duplicate_count,
-        "rejected_output_count": rejected_output_count,
-        "exclusion_counts": dict(sorted(exclusion_counts.items())),
+        "duplicate_or_base_collision_count": duplicates,
+        "rejected_output_count": rejected_output,
+        "exclusion_counts": dict(sorted(exclusions.items())),
         "fit_jsonl": {
             "path": fit_path.name,
             "sha256": _sha256_path(fit_path),
@@ -383,7 +379,9 @@ def _load_stage2_pool(work_dir: Path, *, include_adapted: bool) -> list[tuple[st
     for raw in _read_jsonl(work_dir / "fit.jsonl"):
         pool.append((str(raw["id"]), _rsft_record(raw)))
     adapted_path = work_dir / "adapted.jsonl"
-    if include_adapted and adapted_path.is_file():
+    if include_adapted:
+        if not adapted_path.is_file():
+            raise RuntimeError("--include-adapted requested but adapted.jsonl is missing")
         for raw in _read_jsonl(adapted_path):
             pool.append((str(raw["id"]), _rsft_record(raw)))
     return pool
@@ -432,7 +430,7 @@ def build_percent_corpus(
             f"which reaches/exceeds the requested {requested_reasoning}"
         )
     if not deduped:
-        raise RuntimeError("Stage-2 pool is empty")
+        raise RuntimeError("Stage-2 context-fit pool is empty")
 
     def measure(prefix: int) -> int:
         return projected_train_reasoning_targets(
@@ -443,13 +441,10 @@ def build_percent_corpus(
     if high_value < requested_reasoning:
         raise RuntimeError(
             f"prepared Stage-2 pool only reaches {high_value:,} reasoning train targets; "
-            f"need {requested_reasoning:,}. Run keeper curation + Variant-D adaptation "
-            "for Stage-2 over-context candidates and retry with --include-adapted."
+            f"need {requested_reasoning:,}. Curate the Stage-2 over-context candidates, "
+            "run keeper-only Variant-D adaptation, then retry with --include-adapted."
         )
 
-    # Binary-search a near-minimal deterministic prefix. Held-out-count changes can
-    # cause tiny local non-monotonicities every ~100 rows, so scan a bounded window
-    # behind the crossing and choose the smallest prefix that actually reaches it.
     lo, hi = 0, len(deduped)
     while lo < hi:
         mid = (lo + hi) // 2
@@ -457,15 +452,14 @@ def build_percent_corpus(
             hi = mid
         else:
             lo = mid + 1
-    start = max(0, lo - 128)
     chosen = lo
-    chosen_targets = measure(chosen)
-    for prefix in range(start, min(len(deduped), lo + 8) + 1):
-        value = measure(prefix)
-        if value >= requested_reasoning:
+    # Holdout-size changes can create tiny local non-monotonicities; search a
+    # bounded region behind the binary-search crossing for an earlier valid prefix.
+    for prefix in range(max(0, lo - 256), lo + 1):
+        if measure(prefix) >= requested_reasoning:
             chosen = prefix
-            chosen_targets = value
             break
+    chosen_targets = measure(chosen)
 
     combined = [*base, *(record for _, record in deduped[:chosen])]
     random.Random(seed).shuffle(combined)
@@ -481,12 +475,16 @@ def build_percent_corpus(
     manifest = {
         "schema": SCALING_SCHEMA,
         "source": "Superior-Reasoning Stage1-expanded + Stage2 instruction_following",
+        "stage2_dataset_config": STAGE2_CONFIG,
+        "stage2_dataset_split": STAGE2_SPLIT,
+        "stage2_domain": STAGE2_DOMAIN,
         "stage2_policy": "same-R0-filter-and-atomic-context-contract-as-stage1",
-        "adaptation_policy": "ADR-0103-variant-D-fidelity-first when needed",
+        "adaptation_policy": "ADR-0103-variant-D-fidelity-first for curated keepers only",
         "percent_of_parent_requested": percent,
         "parent_train_targets": PARENT_TRAIN_TARGETS,
         "requested_total_train_targets": requested_total,
         "requested_reasoning_train_targets": requested_reasoning,
+        "base_projected_reasoning_train_targets": base_reasoning,
         "projected_reasoning_train_targets": chosen_targets,
         "projected_retention_train_targets": retention,
         "projected_total_train_targets": projected_total,
