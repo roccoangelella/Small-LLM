@@ -5,6 +5,14 @@ import pytest
 import chat
 
 
+def test_registered_rsft_default_is_expanded_e3_run() -> None:
+    assert chat._resolve_chat_run(
+        100_000_000,
+        2_000_000_000,
+        stage=chat._STAGE_R_SFT,
+    ) == ("100m-2b-rsft-r0-16716-e3-001", chat._SOURCE_R_SFT)
+
+
 def test_explicit_rsft_run_id_overrides_registered_default() -> None:
     run_id = "100m-2b-rsft-r0-atomic-repeat-e10-001"
     assert chat._resolve_chat_run(
