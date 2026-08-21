@@ -92,6 +92,26 @@ def default_experiment_run_id(delimiter_format: str, *, num_epochs: int) -> str:
     return f"100m-2b-rsft-r0-{delimiter_format}-repeat-e{num_epochs}-001"
 
 
+def default_production_run_id(*, num_epochs: int) -> str:
+    if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
+        raise base.RuntimeFailure("--num-epochs must be a positive integer")
+    if num_epochs == 1:
+        return PRODUCTION_RUN_ID
+    return f"100m-2b-rsft-r0-16716-e{num_epochs}-001"
+
+
+def validate_production_run_id(run_id: str, *, num_epochs: int) -> None:
+    if run_id == ACCEPTED_RUN_ID:
+        raise base.RuntimeFailure(
+            f"production training cannot use historical accepted run ID {ACCEPTED_RUN_ID!r}"
+        )
+    if num_epochs != 1 and run_id == PRODUCTION_RUN_ID:
+        raise base.RuntimeFailure(
+            f"multi-epoch production training cannot reuse one-epoch run ID {PRODUCTION_RUN_ID!r}; "
+            f"omit --run-id to use {default_production_run_id(num_epochs=num_epochs)!r}"
+        )
+
+
 def resolve_profile(
     model_parameters: int,
     parent_training_tokens: int,
@@ -345,10 +365,8 @@ def train(
 ) -> int:
     if isinstance(num_epochs, bool) or not isinstance(num_epochs, int) or num_epochs <= 0:
         raise base.RuntimeFailure("R-SFT --num-epochs must be a positive integer")
-    if production and num_epochs != 1:
-        raise base.RuntimeFailure(
-            "canonical production R-SFT remains one-pass; use the ablation lane for explicit repeat experiments"
-        )
+    if production:
+        validate_production_run_id(profile.sft_run_id, num_epochs=num_epochs)
 
     parent_repo, checkpoint_repo = resolve_repository_ids(parent_repo_id, checkpoint_repo_id)
     entity = wandb_entity or os.environ.get("WANDB_ENTITY")
@@ -420,7 +438,9 @@ def train(
                     "schema": "small-llm-rsft-kaggle-dry-run-v4",
                     "topology": "2xTesla-T4-DDP",
                     "stage": "r_sft_r0",
-                    "contract": "atomic-production-v1" if production else (
+                    "contract": (
+                        "atomic-production-v1" if num_epochs == 1 else "atomic-production-repeat-v1"
+                    ) if production else (
                         "pilot-ablation-v1" if num_epochs == 1 else "pilot-repeat-v1"
                     ),
                     "parent_run_id": profile.parent_run_id,
@@ -461,7 +481,9 @@ __all__ = [
     "build_train_command",
     "default_experiment_run_id",
     "default_pilot_run_id",
+    "default_production_run_id",
     "resolve_profile",
     "resolve_repository_ids",
     "train",
+    "validate_production_run_id",
 ]

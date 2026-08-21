@@ -37,6 +37,14 @@ python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 
 With no `--dataset-dir`, the launcher pins a detached worktree to `2ae60bfa135017353f39da2ef34a6124cda465dc`, SHA-validates the 16,716-row corpus, resolves completed S0 parent `100m-2b-sft-s0-001`, builds/verifies the native `atomic-production-v1` bundle, and launches 2xT4 DDP under fresh default run ID `100m-2b-rsft-r0-16716-001`.
 
+Production epoch count is configurable directly:
+
+```bash
+python kaggle/launch_r_sft.py train --model 100M --tokens 2B --num-epochs 2
+```
+
+The frozen bundle has 417 train blocks, so two exact passes produce 834 logical optimizer steps. Repeated epochs preserve block order and use logical block IDs for exact checkpoint/resume. Omitted run IDs are epoch-specific: epoch 2 resolves to `100m-2b-rsft-r0-16716-e2-001`. A multi-epoch launch is rejected if it explicitly reuses the one-epoch `100m-2b-rsft-r0-16716-001` ID, and the historical accepted `100m-2b-rsft-r0-12306-001` ID is never valid for expanded-corpus training.
+
 For committed/non-interactive Kaggle sessions, the S0 resolver must not ask KaggleHub to attach a new datasource at runtime. If the private S0 bundle is not already under `/kaggle/input`, the launcher sets `DISABLE_KAGGLE_CACHE=true` for the KaggleHub subprocess so it uses the authenticated HTTP resolver instead of the notebook attachment resolver. This keeps the minimal canonical command self-contained in non-interactive runs.
 
 For R-SFT checkpoint publication, the Kaggle DDP command also sets `HF_HUB_DISABLE_XET=1` and `HF_HUB_DISABLE_PROGRESS_BARS=1`. This forces the approximately-914-MB trainer-state uploads through the classic streaming HTTP/LFS path and avoids notebook progress output after the first expanded-corpus run reached step 417 but rank zero was SIGKILLed during a stalled Xet upload. The two-phase live pointer remained safely on step 250, so rerunning the same run ID resumes from step 250.

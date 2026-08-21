@@ -135,6 +135,12 @@ def test_repeat_experiment_gets_epoch_specific_run_id() -> None:
     assert rsft_runtime.default_experiment_run_id("atomic", num_epochs=10) == (
         "100m-2b-rsft-r0-atomic-repeat-e10-001"
     )
+    assert rsft_runtime.default_production_run_id(num_epochs=1) == (
+        "100m-2b-rsft-r0-16716-001"
+    )
+    assert rsft_runtime.default_production_run_id(num_epochs=2) == (
+        "100m-2b-rsft-r0-16716-e2-001"
+    )
 
 
 def test_bundle_budget_is_exact_not_parent_fraction(tmp_path: Path) -> None:
@@ -334,7 +340,42 @@ def test_production_rejects_pilot_optimizer_geometry(tmp_path: Path) -> None:
         )
 
 
-def test_production_rejects_repeat_epochs(tmp_path: Path) -> None:
+def test_production_two_epoch_dry_run_uses_distinct_exact_repeat_identity(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bundle = _bundle(tmp_path, targets=63_000)
+    result = rsft_cli.main(
+        [
+            "train",
+            "--model",
+            "100M",
+            "--tokens",
+            "2B",
+            "--dataset-dir",
+            str(bundle),
+            "--num-epochs",
+            "2",
+            "--parent-repo-id",
+            "owner/parent",
+            "--checkpoint-repo-id",
+            "owner/checkpoints",
+            "--dry-run",
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert '"contract": "atomic-production-repeat-v1"' in output
+    assert '"run_id": "100m-2b-rsft-r0-16716-e2-001"' in output
+    assert '"num_epochs": 2' in output
+    assert '"budget_mode": "bundle-exact-repeat"' in output
+    assert '"bundle_target_tokens_one_pass": 63000' in output
+    assert '"requested_target_tokens_all_epochs": 126000' in output
+    assert "--rsft-num-epochs" in output
+    assert '"2"' in output
+
+
+def test_production_repeat_rejects_one_epoch_run_identity(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
     with pytest.raises(SystemExit):
         rsft_cli.main(
@@ -347,7 +388,32 @@ def test_production_rejects_repeat_epochs(tmp_path: Path) -> None:
                 "--dataset-dir",
                 str(bundle),
                 "--num-epochs",
-                "10",
+                "2",
+                "--run-id",
+                rsft_runtime.PRODUCTION_RUN_ID,
+                "--parent-repo-id",
+                "owner/parent",
+                "--checkpoint-repo-id",
+                "owner/checkpoints",
+                "--dry-run",
+            ]
+        )
+
+
+def test_production_rejects_historical_accepted_run_identity(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path)
+    with pytest.raises(SystemExit):
+        rsft_cli.main(
+            [
+                "train",
+                "--model",
+                "100M",
+                "--tokens",
+                "2B",
+                "--dataset-dir",
+                str(bundle),
+                "--run-id",
+                rsft_runtime.ACCEPTED_RUN_ID,
                 "--parent-repo-id",
                 "owner/parent",
                 "--checkpoint-repo-id",

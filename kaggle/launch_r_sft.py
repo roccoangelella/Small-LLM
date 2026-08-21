@@ -25,7 +25,9 @@ The completed 630-example delimiter experiment remains reproducible separately:
     --delimiter-format textual
 
 Production ``train`` has no textual mode. It validates the bundle and frozen
-<think>, </think>, <answer> token contract before dual-T4 dispatch.
+<think>, </think>, <answer> token contract before dual-T4 dispatch. ``--num-epochs``
+replays the exact frozen production train blocks and automatically selects an
+epoch-specific run ID when greater than one.
 """
 from __future__ import annotations
 

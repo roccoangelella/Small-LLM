@@ -95,8 +95,9 @@ steps. The automatic run ID is:
 The WSD schedule spans the full 10-pass stream rather than resetting each pass.
 Checkpoint/resume uses logical block IDs across epochs, so a resume after (for
 example) step 173 continues at the exact next repeated block. `--num-epochs 1`
-preserves the historical one-pass behavior. The canonical production `train`
-lane rejects `--num-epochs > 1`.
+preserves the historical one-pass behavior. Production `train` now uses the same
+exact-repeat mechanism when `--num-epochs > 1`, with an automatically distinct
+epoch-specific run ID.
 
 ## Default production training corpus
 
@@ -108,11 +109,19 @@ artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl
 
 It contains 16,716 unique normalized prompts: 7,683 unchanged Superior instruction rows, 8,403 unique accepted Variant-D rewrites, and 630 Gemini logic anchors. All 8,473 curation-v2 keepers were processed; 70 accepted rewrites were excluded for normalized-prompt collisions. SHA-256 is `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`, and every row fits the exact atomic 2,048-token serialization.
 
-Canonical Kaggle launch:
+Canonical one-epoch Kaggle launch:
 
 ```bash
 python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 ```
+
+A two-epoch production replay is now equally direct:
+
+```bash
+python kaggle/launch_r_sft.py train --model 100M --tokens 2B --num-epochs 2
+```
+
+For the 417-block expanded bundle this is 834 optimizer steps. The launcher automatically uses run ID `100m-2b-rsft-r0-16716-e2-001`; the one-epoch identity `100m-2b-rsft-r0-16716-001` cannot be reused for a multi-epoch run.
 
 With no `--dataset-dir`, the launcher validates the committed 16,716-row corpus from pinned worktree commit `2ae60bfa135017353f39da2ef34a6124cda465dc`, resolves the completed 100M/2B S0 parent, builds/verifies the 90/10 `atomic-production-v1` bundle with 32,768 target tokens per optimizer block, and uses fresh default run ID `100m-2b-rsft-r0-16716-001`. It must not resume the historical 12,306-row run.
 

@@ -95,8 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     train.add_argument(
         "--run-id",
-        default=rsft_runtime.PRODUCTION_RUN_ID,
-        help="stable production run identity",
+        help="optional stable production run identity; omitted IDs are epoch-specific",
     )
     train.add_argument(
         "--token-spec",
@@ -208,7 +207,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     num_epochs = int(args.num_epochs)
     delimiter_format = "atomic" if production else args.delimiter_format
     if production:
-        run_id = args.run_id
+        run_id = (
+            args.run_id
+            if args.run_id
+            else rsft_runtime.default_production_run_id(num_epochs=num_epochs)
+        )
     else:
         run_id = (
             args.run_id
@@ -224,7 +227,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             learning_rate=float(args.learning_rate),
             num_epochs=num_epochs,
         )
-        contract = "atomic-production-v1" if production else (
+        contract = (
+            "atomic-production-v1" if num_epochs == 1 else "atomic-production-repeat-v1"
+        ) if production else (
             "pilot-ablation-v1" if num_epochs == 1 else "pilot-repeat-v1"
         )
         print(
