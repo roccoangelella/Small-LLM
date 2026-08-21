@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Kaggle 2xT4 deep-decay entrypoint with one-time execution migration.
+"""Kaggle 2xT4 deep-decay entrypoint with automatic provider migration.
 
 The scientific deep-decay implementation lives in
-``deep_decay_10b_from_15500_impl.py``. Before delegating to it, this shim accepts
-an already-published deep-decay checkpoint created on the single-GPU lane with
-execution microbatch four, rewrites only execution slicing to Kaggle microbatch
-two, recomputes the checkpoint configuration hash, and then lets the strict
-implementation re-verify the migrated checkpoint.
+``deep_decay_10b_from_15500_impl.py``. Before delegating to it, this shim
+resolves the newest verified continuation checkpoint from the shared Hugging
+Face namespace and rewrites only provider execution topology when needed.
 
-Model, optimizer, scaler, RNG, data cursor, optimizer-block geometry, consumed
-tokens, and the ADR-0095 LR schedule are not changed by this migration.
+Authorized continuation slices are Kaggle microbatch 2, Beam microbatch 4, and
+Modal microbatch 16. Kaggle canonicalizes all of them to microbatch 2 with two
+CUDA RNG states while preserving model, optimizer, scaler, scheduler/LR, data
+cursor, optimizer-block geometry, consumed tokens, CPU RNG state, and the
+ADR-0095 scientific schedule.
 """
 from __future__ import annotations
 
@@ -22,10 +23,18 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 KAGGLE = Path(__file__).resolve().parent
+ROOT = KAGGLE.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 
 import deep_decay_10b_from_15500_impl as _impl
+from trainer.deep_decay_provider_migration import (
+    execution_rewrite_needed,
+    rewrite_execution_state,
+    validate_target_execution_state,
+)
 
 # Re-export the implementation surface so existing tooling/tests importing this
 # canonical module keep working.
@@ -123,12 +132,76 @@ def _dataset_configuration_hash(dataset: Path) -> str:
     return value
 
 
+def _remote_continuation(runtime_base: Any) -> tuple[str | None, int]:
+    store = runtime_base._hf_model_repo_store()
+    pointer = store.read_json(f"run/{RUN_ID}/latest.json")
+    if pointer is None:
+        return None, 0
+    if not isinstance(pointer, Mapping):
+        raise RuntimeError("HF deep-decay latest pointer is not an object")
+    checkpoint_id = pointer.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str):
+        raise RuntimeError("HF deep-decay latest pointer has no checkpoint_id")
+    step = _impl._checkpoint_step(checkpoint_id)
+    if not SOURCE_STEP <= step <= FINAL_STEP:
+        raise RuntimeError(f"HF deep-decay checkpoint step {step} is outside the frozen horizon")
+    return checkpoint_id, step
+
+
+def _restore_newest_verified_continuation(runtime_base: Any) -> tuple[str | None, int]:
+    """Prefer the newest verified checkpoint across Kaggle scratch and shared HF."""
+
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    local_id, local_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+    remote_id, remote_step = _remote_continuation(runtime_base)
+    if remote_id is None or local_step >= remote_step:
+        return local_id, local_step
+
+    refresh = RUN_DIR.parent / f".{RUN_ID}.hf-refresh"
+    shutil.rmtree(refresh, ignore_errors=True)
+    restored = _impl._restore_pointer(
+        runtime_base,
+        run_id=RUN_ID,
+        destination_run_dir=refresh,
+    )
+    if restored is None:
+        raise RuntimeError("HF continuation pointer disappeared during refresh")
+    restored_id = str(restored["checkpoint_id"])
+    restored_step = int(restored["step"])
+    if restored_id != remote_id or restored_step != remote_step:
+        raise RuntimeError(
+            "HF continuation changed during refresh: "
+            f"expected {remote_id}/{remote_step}, got {restored_id}/{restored_step}"
+        )
+
+    from dataset.src.joint_checkpoint import verify_local_manifest
+
+    source = refresh / "checkpoints" / restored_id
+    verify_local_manifest(source)
+    target = CHECKPOINT_DIR / restored_id
+    if not target.exists():
+        staging = CHECKPOINT_DIR / f".{restored_id}.hf-refresh"
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(source, staging)
+        verify_local_manifest(staging)
+        os.replace(staging, target)
+    else:
+        verify_local_manifest(target)
+    shutil.rmtree(refresh, ignore_errors=True)
+    print(
+        f"[kaggle-deep-decay] selected newer HF continuation {restored_id} "
+        f"over local step {local_step}",
+        flush=True,
+    )
+    return restored_id, restored_step
+
+
 def _install_execution_migration(
     *,
     checkpoint_id: str,
     dataset: Path,
 ) -> bool:
-    """Rewrite a verified deep-decay microbatch-4 checkpoint to microbatch 2."""
+    """Canonicalize an authorized provider checkpoint to Kaggle 2xT4 execution."""
 
     import torch
     from dataset.src.joint_checkpoint import verify_local_manifest
@@ -176,16 +249,6 @@ def _install_execution_migration(
                 "deep-decay checkpoint scientific config drifted: "
                 + json.dumps(scientific_drift, sort_keys=True)
             )
-
-        saved_microbatch = config.get("microbatch_size")
-        if saved_microbatch == MICROBATCH_SIZE:
-            return False
-        if saved_microbatch != SOURCE_MICROBATCH_SIZE:
-            raise RuntimeError(
-                "deep-decay checkpoint execution microbatch is neither the "
-                f"single-GPU source value {SOURCE_MICROBATCH_SIZE} nor the "
-                f"Kaggle value {MICROBATCH_SIZE}: {saved_microbatch!r}"
-            )
         if scheduler.get("committed_tokens") != step * TARGETS_PER_FULL_BLOCK:
             raise RuntimeError("deep-decay scheduler committed_tokens drifted")
         scheduler_config = scheduler.get("config")
@@ -197,35 +260,36 @@ def _install_execution_migration(
                 "deep-decay scheduler scientific config drifted: "
                 + json.dumps(scheduler_drift, sort_keys=True)
             )
-        if scheduler_config.get("microbatch_size") != SOURCE_MICROBATCH_SIZE:
-            raise RuntimeError("deep-decay scheduler execution microbatch drifted")
 
-        patched_config = dict(config)
-        patched_config["microbatch_size"] = MICROBATCH_SIZE
-        patched_scheduler = dict(scheduler)
-        patched_scheduler_config = dict(scheduler_config)
-        patched_scheduler_config["microbatch_size"] = MICROBATCH_SIZE
-        patched_scheduler["config"] = patched_scheduler_config
-        state["config"] = patched_config
-        state["scheduler"] = patched_scheduler
+        if not execution_rewrite_needed(state, target_microbatch=MICROBATCH_SIZE):
+            validate_target_execution_state(state, target_microbatch=MICROBATCH_SIZE)
+            return False
+        patched_state, migration = rewrite_execution_state(
+            state,
+            target_microbatch=MICROBATCH_SIZE,
+        )
+        patched_config = patched_state.get("config")
+        if not isinstance(patched_config, Mapping):
+            raise RuntimeError("execution migration lost trainer config")
 
         configuration_hash = canonical_hash(
             {
                 "version": 1,
                 "model": dict(model_config),
-                "trainer": patched_config,
+                "trainer": dict(patched_config),
                 "dataset_configuration_hash": _dataset_configuration_hash(dataset),
             }
         )
 
-        staging = CHECKPOINT_DIR / f".{checkpoint_id}.kaggle-micro2"
-        backup = CHECKPOINT_DIR / f".{checkpoint_id}.pre-kaggle-micro4"
+        staging = CHECKPOINT_DIR / f".{checkpoint_id}.kaggle-provider-migration"
+        backup = CHECKPOINT_DIR / f".{checkpoint_id}.pre-kaggle-provider"
         shutil.rmtree(staging, ignore_errors=True)
         shutil.rmtree(backup, ignore_errors=True)
-        staging.mkdir(parents=True, exist_ok=False)
+        shutil.copytree(root, staging)
+        (staging / "checkpoint_manifest.json").unlink(missing_ok=True)
 
         trainer_state_path = staging / "trainer_state.pkl"
-        torch.save(state, trainer_state_path)
+        torch.save(patched_state, trainer_state_path)
 
         patched_checkpoint = dict(checkpoint_payload)
         patched_checkpoint["configuration_hash"] = configuration_hash
@@ -233,6 +297,7 @@ def _install_execution_migration(
         _impl._write_json(
             staging / "local_manifest.json",
             {
+                "version": 1,
                 "files": [
                     {
                         "name": "trainer_state.pkl",
@@ -242,7 +307,7 @@ def _install_execution_migration(
                         "name": "checkpoint.json",
                         "sha256": sha256_path(staging / "checkpoint.json"),
                     },
-                ]
+                ],
             },
         )
         verify_local_manifest(staging)
@@ -256,9 +321,21 @@ def _install_execution_migration(
         else:
             shutil.rmtree(backup, ignore_errors=True)
 
+        strict_state = load_trainer_state_file(root / "trainer_state.pkl", map_location="cpu")
+        try:
+            validate_target_execution_state(
+                strict_state,
+                target_microbatch=MICROBATCH_SIZE,
+            )
+        finally:
+            del strict_state
+            release_host_memory()
+
         print(
-            f"[kaggle-deep-decay] migrated {checkpoint_id} execution slicing "
-            f"{SOURCE_MICROBATCH_SIZE}->{MICROBATCH_SIZE}; scientific state unchanged",
+            f"[kaggle-deep-decay] migrated {checkpoint_id} execution "
+            f"{migration['from_microbatch']}->{migration['to_microbatch']}; "
+            f"cuda_rng_states={migration['cuda_rng_states']}; "
+            f"policy={migration['cuda_rng_policy']}; scientific state unchanged",
             flush=True,
         )
         return True
@@ -268,20 +345,13 @@ def _install_execution_migration(
 
 
 def _migrate_existing_deep_decay_checkpoint(runtime_base: Any) -> bool:
-    """Migrate a local/HF deep-decay checkpoint before strict Kaggle prepare."""
+    """Refresh from HF if newer, then canonicalize execution before strict prepare."""
 
-    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    checkpoint_id, step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+    checkpoint_id, step = _restore_newest_verified_continuation(runtime_base)
     if checkpoint_id is None:
-        restored = _impl._restore_pointer(
-            runtime_base,
-            run_id=RUN_ID,
-            destination_run_dir=RUN_DIR,
-        )
-        if restored is None:
-            return False
-        checkpoint_id = str(restored["checkpoint_id"])
-        step = int(restored["step"])
+        return False
+    if not SOURCE_STEP <= step <= FINAL_STEP:
+        raise RuntimeError(f"deep-decay checkpoint step {step} is outside the frozen horizon")
 
     root = CHECKPOINT_DIR / checkpoint_id
     from dataset.src.joint_checkpoint import verify_local_manifest
@@ -290,23 +360,16 @@ def _migrate_existing_deep_decay_checkpoint(runtime_base: Any) -> bool:
     verify_local_manifest(root)
     state = load_trainer_state_file(root / "trainer_state.pkl", map_location="cpu")
     try:
-        config = state.get("config")
-        if not isinstance(config, Mapping):
-            raise RuntimeError("deep-decay checkpoint lacks config mapping")
-        saved_microbatch = config.get("microbatch_size")
-        if saved_microbatch == MICROBATCH_SIZE:
+        needs_migration = execution_rewrite_needed(
+            state,
+            target_microbatch=MICROBATCH_SIZE,
+        )
+        if not needs_migration:
+            validate_target_execution_state(state, target_microbatch=MICROBATCH_SIZE)
             return False
-        if saved_microbatch != SOURCE_MICROBATCH_SIZE:
-            raise RuntimeError(
-                "deep-decay checkpoint execution microbatch cannot be migrated: "
-                f"{saved_microbatch!r}"
-            )
     finally:
         del state
         release_host_memory()
-
-    if not SOURCE_STEP <= step <= FINAL_STEP:
-        raise RuntimeError(f"deep-decay checkpoint step {step} is outside the frozen horizon")
 
     # The manifest identity is invariant across rolling windows, so for a
     # completed final checkpoint use the final consumable block to obtain it.
