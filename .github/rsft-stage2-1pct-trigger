@@ -1,3 +1,4 @@
 2026-08-21 stage2 1% real build validation
 retrigger after workflow registration
 validate corrected stage2 train/domain contract
+validate append-only nested stage2 ordering
