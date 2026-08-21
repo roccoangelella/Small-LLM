@@ -15,6 +15,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Current scaling comparison
 
+- [`scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md`](scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md) — newest verified step-27,750 restore, exact one-H100 execution migration, frozen-LR confirmation, finite live updates, and fail-closed startup incidents.
 - [`scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md`](scaling/100m_10b_beam_step3250_failure_rtx4090_failover_2026-08-14.md) — healthy step-3,250 validation followed by RTX5090 worker loss, failed clean RTX5090 startup, and exact RTX4090 recovery from step 3,000.
 - [`scaling/100m_10b_beam_worker_loss_step1500_resume_2026-08-14.md`](scaling/100m_10b_beam_worker_loss_step1500_resume_2026-08-14.md) — abrupt RTX5090 worker disappearance after step 1,650 and independently verified exact recovery from step 1,500.
 - [`scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md`](scaling/100m_10b_step250_beam_fsync_resume_2026-08-14.md) — first validation/checkpoint boundary, Beam distributed-Volume fsync hang, independently verified step-250 checkpoint, and exact continuation.

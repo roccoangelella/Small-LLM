@@ -13,9 +13,24 @@ The intrinsic scaling result is clear: 20M still gains from 500M→2B, but uneve
 
 ## Active scaling trajectory — deep-decay step-15,500 continuation through 10B
 
-ADR 0099 supersedes ADR 0095's Beam execution choice while retaining its complete scientific schedule; ADR 0095 had already superseded ADR 0094, ADR 0093, ADR 0092, and the original long flat-`3e-4` WSD trajectory. The main continuation must fork the exact uncooled `100m-10b-data-001/checkpoints/step-00015500` state under the separate run ID `100m-10b-deep-decay-from-step15500` and execute through `python kaggle/launch.py deep-decay --model 100M --tokens 10B` on two Kaggle Tesla T4 GPUs.
+ADR 0114 supersedes ADR 0099's Kaggle execution choice while retaining ADR
+0095's complete scientific schedule. ADR 0095 had already superseded ADR 0094,
+ADR 0093, ADR 0092, and the original long flat-`3e-4` WSD trajectory. The main
+continuation keeps the separate run ID
+`100m-10b-deep-decay-from-step15500` and executes through
+`modal run --detach modal/launch.py --action deep-decay --model 100M --tokens
+10B` on one exact Modal H100.
 
-Preserve the step-15,500 model, optimizer, scaler, RNG, data cursor, exact 10B corpus order, frozen 16-block validation prefix, global 64-sequence optimizer block, FP16, GDN-2, and hybrid Muon+AdamW. The source checkpoint used execution microbatch 4; Kaggle rewrites only that execution-slicing field to microbatch 2 because microbatch 4 OOMed on the 100M/T4 path while microbatch 2 completed 250 real updates with material headroom. Kaggle DDP splits each ordered optimizer block 32/32 across the two ranks, giving sixteen local microbatches per rank while preserving one 64-sequence optimizer update.
+Preserve the step-15,500 model ancestry, optimizer, scaler, RNG, data cursor,
+exact 10B corpus order, frozen 16-block validation prefix, global 64-sequence
+optimizer block, FP16, GDN-2, and hybrid Muon+AdamW. Modal resumes the newest
+manifest-verified checkpoint in its own continuation namespace, currently
+`step-00027750`; only an empty continuation namespace may fall back to the
+exact original step 15,500. One H100 rewrites only execution slicing to
+microbatch 16, giving four ordered accumulations per unchanged optimizer
+update. For the prior two-T4 state, byte-identical rank-zero CUDA RNG bytes
+become the single live device state while the original two-rank tree remains
+in the hidden provider-migration backup.
 
 The accepted schedule is:
 
@@ -47,9 +62,18 @@ final targets:               10,000,007,168
 
 The calibrated phase-2 exponent is chosen from the exact `1e-4 -> 1e-5` endpoint requirement rather than from a generic inverse-square-root default. This is materially steeper than the approximately `0.5` power used by standard WSqD-like continuation schedules and is intentionally project-specific evidence-driven experimentation. Approximate phase-2 landmarks are `8.26e-5` at step 20,000, `5.75e-5` at step 25,000, `4.27e-5` at step 30,000, `2.68e-5` at step 40,000, `1.86e-5` at step 50,000, `1.38e-5` at step 60,000, and `1.08e-5` at step 70,000.
 
-The launcher must fail closed if neither a manifest-verified Kaggle deep-decay continuation checkpoint nor the exact original step-15,500 source is available. It must CPU-stage and verify the checkpoint-aligned dataset window before training and keep local/W&B/HF checkpoint namespaces separate from the original run and all superseded continuation branches. Kaggle publishes the live continuation to HF every 250 successful updates. The first bounded 250-update dual-T4 segment is the live block-64 pretraining execution gate before relying on long unattended notebook segments.
+The launcher must fail closed if neither a manifest-verified deep-decay
+continuation checkpoint nor the exact original step-15,500 source is available.
+It CPU-stages and verifies the checkpoint-aligned dataset window before H100
+allocation and keeps local/W&B/HF checkpoint namespaces separate from the
+original run and all superseded continuation branches. Modal publishes the live
+continuation to HF every 250 successful updates and at a segment boundary. The
+live app `ap-jcW589PrB43z2tOdfeLOpS` restored step 27,750 at the exact expected
+LR and is producing finite one-H100 updates near 66k target tokens/s after
+first-step compilation. Step 28,000 passed validation and was independently
+confirmed as the newest two-phase HF pointer before the worker continued.
 
-Canonical procedure: [`../runbooks/100m_10b_deep_decay_kaggle.md`](../runbooks/100m_10b_deep_decay_kaggle.md).
+Canonical procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
 ## Active diagnostics — earlier post-15,500 branches
 
@@ -66,13 +90,13 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - upload + independent remote hash verification before durable cursor/READY publication;
 - frozen 16-block validation prefix;
 - CPU staging establishes the checkpoint-aligned current+successor lead window before GPU work;
-- the active Kaggle worker consumes exact block order and fails closed rather than skipping or reordering;
-- Kaggle exact-batch DDP keeps the frozen 64-sequence global optimizer block, split 32/32 across two T4 ranks, with execution microbatch 2;
+- the active Modal worker consumes exact block order and fails closed rather than skipping or reordering;
+- Modal keeps the frozen 64-sequence global optimizer block on one exact H100, with execution microbatch 16 and four ordered slices;
 - model checkpoints remain in the HF model repository and dataset shards remain in the HF dataset Storage Bucket.
 
 The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0099/0095.
 
-Historical Beam full-run procedure: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md). Active deep-decay procedure: [`../runbooks/100m_10b_deep_decay_kaggle.md`](../runbooks/100m_10b_deep_decay_kaggle.md).
+Historical Beam full-run procedure: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md). Historical Kaggle deep-decay procedure: [`../runbooks/100m_10b_deep_decay_kaggle.md`](../runbooks/100m_10b_deep_decay_kaggle.md). Active deep-decay procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
 ## Post-training lane
 
@@ -95,10 +119,10 @@ The first 20M/500M S0 behavioral failure remains historical evidence and does no
 
 ## Frozen boundaries still in force
 
-- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091 and 0099 are explicit continuation/diagnostic exceptions.
+- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091, 0099, and 0114 are explicit continuation/diagnostic exceptions.
 - Context remains 2,048 for these comparisons.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
-- Kaggle dual-T4 execution may replace single-GPU Beam only when the exact 64-sequence global optimizer update and topology-neutral checkpoint semantics are preserved as in ADR 0099.
+- The ADR-0114 Modal lane may change only execution slicing/topology while preserving the exact 64-sequence optimizer update and checkpointed scientific state.
 - New dataset durability uses HF Storage Buckets, not Google Drive.
 - Stable model artifacts use the `models/...` namespace; live exact-resume checkpoints use `run/...`.
 - Canonical qualitative comparison settings come from ADR 0025, not software sampling defaults.

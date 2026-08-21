@@ -58,22 +58,23 @@ repetitive, exposes more facts under matched sampled decoding, and has the
 strong uniform intrinsic gains above. See
 [`../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md`](../evidence/scaling/100m_2b_behavioral_qualification_2026-08-13.md).
 
-ADR 0071 records the user's explicit decision that this evidence is sufficient
-to launch the fresh 100M/10B trajectory. The full run is now active on one Beam
-RTX4090 from source commit `1f9dff920ecc45ce2fdb43fd875514a18391273d`. Its
-current segment resumed exactly from the verified HF step-3,000 checkpoint
-after repeated Beam RTX5090 worker/startup failures; the earlier step-250
-infrastructure migration from launch source `42b0376` remains part of the
-checkpoint ancestry.
-Training is uncapped and will run through the full 76,294-update plan without a
-5B pause. The approximately-5B checkpoint will be evaluated concurrently on
-Kaggle and will not act as a continuation gate.
+ADR 0071 authorized the original fresh 100M/10B trajectory. ADR 0095 later
+froze the current deep-decay schedule from the exact uncooled step-15,500
+state, and ADR 0114 authorizes its current execution on one Modal H100. The
+uncapped live app `ap-jcW589PrB43z2tOdfeLOpS` resumed the newest verified
+continuation, `step-00027750`, from source commit
+`c57a9b3ce3aedcdefd445cb6f664caf00ececfa0`. It retains the unchanged
+`100m-10b-deep-decay-from-step15500` W&B/HF namespace and runs through the
+full 76,294-update plan without a 5B continuation gate.
 
 ## GDN-2 production execution
 
 Production CUDA GDN-2 execution is mixed FLA on `fla-core==0.5.2` with FP32 master parameters plus CUDA FP16 autocast. Saved/configured `gdn_chunk_size` is 32; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence remains the correctness/reference fallback. See [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md).
 
-Kaggle production training uses exact-batch two-T4 DDP under ADR 0056. Modal remains the one-H100 lane. Beam is now an alternate single-GPU lane under ADR 0061/0062, restricted to serverless `RTX5090`, `RTX4090`, or `A10G`, with RTX5090 as the default. On the live RTX5090, microbatch 8 exceeded VRAM. Explicit microbatch 4 then passed four finite updates at median 42,018 target tokens/s with 20,904,411,136 peak reserved bytes, 62.08% of the 33,670,758,400-byte device. The frozen optimizer block remains 64 sequences.
+The current production continuation uses one exact Modal H100 under ADR 0114.
+It preserves the 64-sequence optimizer block and changes only execution slicing
+to four ordered microbatch-16 accumulations. Kaggle two-T4 DDP and Beam remain
+historical/alternate execution evidence, not the live lane.
 
 ## Dataset and checkpoint durability
 
@@ -99,9 +100,9 @@ and final manifest SHA-256
 Canonical evidence is
 [`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
 
-The VPS-fed Beam wrapper is active on RTX4090 with no session cap. ADR 0072
-pins the live gateway-compatible `beam-client==0.2.207`. The training run ID is
-`100m-10b-data-001`, and W&B is online on the unchanged resumable run. Finite
+The historical VPS-fed Beam wrapper ran on RTX4090 with no session cap. ADR 0072
+pinned the gateway-compatible `beam-client==0.2.207`. The training run ID was
+`100m-10b-data-001`, and W&B was online on the unchanged resumable run. Finite
 production metrics were observed through step 250, followed by 16-block validation loss
 8.827006. The first Beam checkpoint then hung after its atomic rename during a
 POSIX parent-directory `fsync`. The checkpoint independently verified on CPU as
@@ -111,16 +112,16 @@ disappeared without a trainer traceback after finite updates beyond step 1,650;
 an exact step-1,500 recovery then remained finite through step 3,250 and
 validation loss 3.722389 before failing as an incomplete checkpoint staging
 directory was created. A clean RTX5090 retry subsequently failed before the
-trainer command. The active segment therefore uses the supported RTX4090 lane,
+trainer command. That recovery segment therefore used the supported RTX4090 lane,
 resumed exact HF `step-00003000`, and advanced through at least step 3,009 with
 finite loss 3.639936. The RTX4090 segment advanced through step 4,535 before
 the container stopped around 14:30 UTC. Checkpoint `step-00004500` was verified
 intact on Hugging Face (validation loss 3.440967, perplexity 31.217146). The run
 was cleanly relaunched on Beam RTX4090 from pinned commit `1f9dff9`, exact-restoring
 `step-00004500` with 71,794 planned steps remaining and resuming W&B online
-telemetry in `running` state. The active path keeps Triton compilation on
-container-local scratch, makes the VPS preseed guard initialize fail-closed, and
-retries Beam Volume `EAGAIN` during CPU staging.
+telemetry in `running` state. That path kept Triton compilation on
+container-local scratch, made the VPS preseed guard initialize fail-closed, and
+retried Beam Volume `EAGAIN` during CPU staging.
 Canonical launch evidence is
 [`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
 The step-250 checkpoint incident and verified resume are recorded in
@@ -133,7 +134,7 @@ step-3,000 failover are recorded in
 The step-4,535 container exit and verified step-4,500 resume are recorded in
 [`../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md`](../evidence/scaling/100m_10b_beam_step4500_resume_2026-08-14.md).
 On 2026-08-17, the exact uncooled `step-00015500` checkpoint was found in the
-old Beam `jourme` workspace and copied into the active workspace with all five
+old Beam `jourme` workspace and copied into the then-active workspace with all five
 files present: the four manifests plus the 871.54 MiB `trainer_state.pkl`.
 The local and remote checkpoint identities were verified before allocation.
 The initial aggressive GPU worker progressed through locally valid
@@ -141,14 +142,14 @@ The initial aggressive GPU worker progressed through locally valid
 was lost during `step-00017000` staging, leaving only an ignored incomplete
 `.step-00017000...` directory. Beam retried that same GPU invocation with its
 original immutable `step-00015500` argument, so the duplicate retry was stopped
-at step 15,630 rather than allowed to repeat work. The launcher now resolves
+at step 15,630 rather than allowed to repeat work. The replacement launcher resolved
 the highest manifest-verified continuation checkpoint inside every GPU worker
 start, before it invokes the trainer. The prior replacement task ran from clean
 local commit `af0ff1ea207ba775e23278fc86217ae8c86e2a67`; its CPU and visibility
 gates and GPU-side retry resolver selected exact `step-00016750`, leaving
-59,544 steps. The function requested RTX4090, but Beam's live worker reports
+59,544 steps. The function requested RTX4090, but Beam's worker reported
 `NVIDIA A10G` in the trainer telemetry tag; this allocation mismatch remains
-visible rather than being hidden by the requested label. It runs in tmux
+visible rather than being hidden by the requested label. It ran in tmux
 session `aggressive-wsqd-10b`. The A10G worker later reached step 16,785, but
 was intentionally cancelled before its next checkpoint cadence to switch lanes;
 `step-00016750` remains the highest valid durable restart point. The queued
@@ -157,15 +158,26 @@ immediate RTX4090 switch at the user's direction. The
 account-zero billing baseline was reset at `2026-08-17T12:04:26Z`; the monitor
 recorded the A10G interval and retains a conservative RTX5090-equivalent rate
 after the RTX4090 switch, preserving the `$30` notional hard stop. The dedicated
-`ops/monitor_aggressive_wsqd_10b_beam.py` runs every five minutes in the
-persistent `small-llm-billing-guard` tmux supervisor, recognizes only this
-aggressive task, stops it at the cap, and relaunches the same RTX4090 tmux
-command after a crash when control-plane state is readable. A matching UTC
-crontab entry is retained for hosts with a running cron daemon.
+`ops/monitor_aggressive_wsqd_10b_beam.py` ran every five minutes in the
+historical `small-llm-billing-guard` tmux supervisor, recognized only this
+aggressive task, stopped it at the cap, and relaunched the same RTX4090 tmux
+command after a crash when control-plane state was readable.
+
+The current ADR-0114 Modal segment resumed verified HF `step-00027750` after a
+CPU-only checkpoint and data gate reported committed LR
+`4.850625030893043e-05`. The one-H100 worker then completed finite updates
+through at least step 28,024 with the exact per-target LR, no overflow retries,
+and approximately 66k target tokens/s after first-step compilation. The
+global block remains 64; microbatch 16 is an execution-only four-slice
+adaptation. Its first post-migration checkpoint, `step-00028000`, completed
+16-block validation at loss `2.915511`, published under the unchanged HF
+namespace, independently resolved through the remote pointer, and is now the
+newest durable resume point. Canonical live evidence is
+[`../evidence/scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md`](../evidence/scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 
-Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../reference/100m_10b_incremental_dataset.md). Active operational procedure: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md).
+Technical contract: [`../reference/100m_10b_incremental_dataset.md`](../reference/100m_10b_incremental_dataset.md). Active operational procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
 ## Post-training status
 
