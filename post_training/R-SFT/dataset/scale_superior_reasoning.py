@@ -12,6 +12,10 @@ The upstream *text* dataset exposes config ``stage2`` with split ``train`` and a
 ``domain == instruction_following`` exactly as the Stage-1 producer filters its
 single train JSONL. (The domain-specific Stage-2 splits belong to the separate
 logprob companion dataset.)
+
+Scaling order is the deterministic Stage-2 instruction-stream index. That makes
+larger source scans append-only: once a row belongs to the 1% prefix, later 2%
+or 4% builds cannot insert newly discovered rows ahead of it.
 """
 from __future__ import annotations
 
@@ -53,6 +57,7 @@ STAGE2_DOMAIN = "instruction_following"
 STAGE2_FILENAME = "Superior-Reasoning-SFT-gpt-oss-120b-stage2-train-data.jsonl"
 SCALING_SCHEMA = "small-llm-superior-stage2-scaling-v1"
 CANDIDATE_SCHEMA = "small-llm-superior-overcontext-candidates-v1"
+ORDERING_POLICY = "stage2-instruction-stream-index-v1"
 PARENT_TRAIN_TARGETS = 2_001_000_448
 REASONING_SHARE = 0.90
 RETENTION_SHARE = 0.10
@@ -271,6 +276,7 @@ def prepare_stage2(
     manifest = {
         "schema": CANDIDATE_SCHEMA,
         "scaling_schema": SCALING_SCHEMA,
+        "ordering_policy": ORDERING_POLICY,
         "dataset_id": superior.DATASET_ID,
         "dataset_config": STAGE2_CONFIG,
         "dataset_split": STAGE2_SPLIT,
@@ -374,16 +380,18 @@ def _load_base_records(path: Path) -> list[dict[str, str]]:
     return records
 
 
-def _load_stage2_pool(work_dir: Path, *, include_adapted: bool) -> list[tuple[str, dict[str, str]]]:
-    pool: list[tuple[str, dict[str, str]]] = []
+def _load_stage2_pool(
+    work_dir: Path, *, include_adapted: bool
+) -> list[tuple[int, str, dict[str, str]]]:
+    pool: list[tuple[int, str, dict[str, str]]] = []
     for raw in _read_jsonl(work_dir / "fit.jsonl"):
-        pool.append((str(raw["id"]), _rsft_record(raw)))
+        pool.append((int(raw["source_index"]), str(raw["id"]), _rsft_record(raw)))
     adapted_path = work_dir / "adapted.jsonl"
     if include_adapted:
         if not adapted_path.is_file():
             raise RuntimeError("--include-adapted requested but adapted.jsonl is missing")
         for raw in _read_jsonl(adapted_path):
-            pool.append((str(raw["id"]), _rsft_record(raw)))
+            pool.append((int(raw["source_index"]), str(raw["id"]), _rsft_record(raw)))
     return pool
 
 
@@ -408,19 +416,19 @@ def build_percent_corpus(
     base_prompts = {superior._normalized_input_hash(row["problem"]) for row in base}
     raw_pool = _load_stage2_pool(work_dir, include_adapted=include_adapted)
 
+    # Use source order, not a hash over the currently prepared pool. This is what
+    # makes later scans append-only and keeps 1% literally nested inside 2%/4%.
+    raw_pool.sort(key=lambda item: (item[0], item[1]))
     seen = set(base_prompts)
-    deduped: list[tuple[str, dict[str, str]]] = []
+    deduped: list[tuple[int, str, dict[str, str]]] = []
     collision_ids: list[str] = []
-    for source_id, record in raw_pool:
+    for source_index, source_id, record in raw_pool:
         normalized = superior._normalized_input_hash(record["problem"])
         if normalized in seen:
             collision_ids.append(source_id)
             continue
         seen.add(normalized)
-        deduped.append((source_id, record))
-    deduped.sort(
-        key=lambda item: hashlib.sha256(f"{seed}\x1f{item[0]}".encode("utf-8")).digest()
-    )
+        deduped.append((source_index, source_id, record))
 
     requested_total, requested_reasoning = _requested_targets(percent)
     base_reasoning = projected_train_reasoning_targets(base, seed=seed)
@@ -434,7 +442,7 @@ def build_percent_corpus(
 
     def measure(prefix: int) -> int:
         return projected_train_reasoning_targets(
-            [*base, *(record for _, record in deduped[:prefix])], seed=seed
+            [*base, *(record for _, _, record in deduped[:prefix])], seed=seed
         )
 
     high_value = measure(len(deduped))
@@ -461,7 +469,7 @@ def build_percent_corpus(
             break
     chosen_targets = measure(chosen)
 
-    combined = [*base, *(record for _, record in deduped[:chosen])]
+    combined = [*base, *(record for _, _, record in deduped[:chosen])]
     random.Random(seed).shuffle(combined)
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_jsonl.with_suffix(output_jsonl.suffix + ".tmp")
@@ -478,6 +486,7 @@ def build_percent_corpus(
         "stage2_dataset_config": STAGE2_CONFIG,
         "stage2_dataset_split": STAGE2_SPLIT,
         "stage2_domain": STAGE2_DOMAIN,
+        "stage2_ordering_policy": ORDERING_POLICY,
         "stage2_policy": "same-R0-filter-and-atomic-context-contract-as-stage1",
         "adaptation_policy": "ADR-0103-variant-D-fidelity-first for curated keepers only",
         "percent_of_parent_requested": percent,
@@ -493,6 +502,7 @@ def build_percent_corpus(
         "seed": seed,
         "base_rows": len(base),
         "stage2_rows_added": chosen,
+        "stage2_last_source_index": deduped[chosen - 1][0] if chosen else None,
         "combined_rows": len(combined),
         "stage2_pool_rows": len(deduped),
         "normalized_prompt_collisions_excluded": len(collision_ids),
