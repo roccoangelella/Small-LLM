@@ -37,13 +37,39 @@ def _base_row(i: int, *, reasoning_words: int = 4) -> dict[str, str]:
     }
 
 
-def _source_row(uuid: str, problem: str, reasoning: str, answer: str = "ok") -> dict[str, str]:
+def _source_row(
+    uuid: str,
+    problem: str,
+    reasoning: str,
+    answer: str = "ok",
+    *,
+    domain: str = "instruction_following",
+) -> dict[str, str]:
     return {
         "uuid": uuid,
-        "domain": "instruction_following",
+        "domain": domain,
         "input": problem,
         "output": f"<think>{reasoning}</think>{answer}",
     }
+
+
+def test_stage2_source_jsonl_filters_train_rows_by_domain(tmp_path):
+    module = _load_module()
+    source = tmp_path / "stage2.jsonl"
+    _write_jsonl(
+        source,
+        [
+            _source_row("instruction", "Summarize this.", "reason"),
+            _source_row("math", "Compute 2 + 2.", "reason", domain="math"),
+            _source_row("science", "Explain gravity.", "reason", domain="science"),
+            _source_row("code", "Write code.", "reason", domain="code"),
+        ],
+    )
+    rows = list(module.iter_stage2_instruction_rows(source_jsonl=source))
+    assert [row["uuid"] for row in rows] == ["instruction"]
+    assert module.STAGE2_CONFIG == "stage2"
+    assert module.STAGE2_SPLIT == "train"
+    assert module.STAGE2_DOMAIN == "instruction_following"
 
 
 def test_prepare_stage2_reuses_stage1_filter_and_context_contract(tmp_path, monkeypatch):
