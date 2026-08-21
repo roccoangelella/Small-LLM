@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md`](0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md)
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0113-use-superior-reasoning-stage2-for-rsft-scaling.md`](0113-use-superior-reasoning-stage2-for-rsft-scaling.md)
 - [`0112-scale-rsft-with-nested-1-2-4-percent-superior-reasoning-corpora.md`](0112-scale-rsft-with-nested-1-2-4-percent-superior-reasoning-corpora.md)
@@ -27,7 +28,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0006-calibrate-fp16-loss-scale-before-failing-block.md`](0006-calibrate-fp16-loss-scale-before-failing-block.md)
 - [`0007-render-teacher-forced-examples-as-readable-ground-truth.md`](0007-render-teacher-forced-examples-as-readable-ground-truth.md)
 - [`0009-start-500m-at-microbatch-4-with-250-step-durability.md`](0009-start-500m-at-microbatch-4-with-250-step-durability.md)
-- [`0010-self-provision-eval-core-from-main-evaluator.md`](0010-self-provision-eval-core-from-main-evaluator.md)
+- [`0010-self-provision-eval-core-from-main-evaluator.md`](0010-self-provision-eval-core-v1-and-unified-cli.md)
 - [`0011-publish-standalone-gated-delta-rule-package.md`](0011-publish-standalone-gated-delta-rule-package.md)
 - [`0013-rename-public-gdr2-repository.md`](0013-rename-public-gdr2-repository.md)
 - [`0014-simplify-public-gdr2-repository-docs.md`](0014-simplify-public-gdr2-repository-docs.md)
