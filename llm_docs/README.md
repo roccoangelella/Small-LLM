@@ -39,6 +39,7 @@ This directory is the repository's system of record and uses progressive disclos
 
 ## Current operational entry points
 
+- [`runbooks/100m_10b_deep_decay_modal.md`](runbooks/100m_10b_deep_decay_modal.md)
 - [`runbooks/100m_10b_beam.md`](runbooks/100m_10b_beam.md)
 - [`runbooks/100m_10b_incremental_modal.md`](runbooks/100m_10b_incremental_modal.md)
 - [`runbooks/modal_training_launcher.md`](runbooks/modal_training_launcher.md)

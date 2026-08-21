@@ -4,6 +4,7 @@ Runbooks contain executable or intentionally reproducible procedures, prerequisi
 
 ## Active
 
+- [`100m_10b_deep_decay_modal.md`](100m_10b_deep_decay_modal.md) — active ADR-0114 one-H100 exact-resume procedure for the frozen step-15,500 deep-decay continuation.
 - [`100m_10b_beam.md`](100m_10b_beam.md) — authorized full 100M/10B RTX5090 launch, concurrent approximately-5B Kaggle capture, and exact-resume procedure.
 - [`100m_10b_incremental_modal.md`](100m_10b_incremental_modal.md) — ADR-0058 CPU producer/frontier/staging/H100 procedure for the conditional fresh 100M/10B trajectory; technical readiness is separate from ADR-0050 launch authorization.
 - [`unified_kaggle_launcher.md`](unified_kaggle_launcher.md) — canonical finite-profile Kaggle publication/training command surface.

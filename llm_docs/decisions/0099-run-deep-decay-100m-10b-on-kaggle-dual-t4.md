@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-18
 supersedes: 0095
+superseded_by: 0114
 ---
 
 # 0099 — Run the 100M/10B deep-decay continuation on Kaggle dual T4

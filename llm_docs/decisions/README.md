@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0113-use-superior-reasoning-stage2-for-rsft-scaling.md`](0113-use-superior-reasoning-stage2-for-rsft-scaling.md)
 - [`0112-scale-rsft-with-nested-1-2-4-percent-superior-reasoning-corpora.md`](0112-scale-rsft-with-nested-1-2-4-percent-superior-reasoning-corpora.md)
 - [`0111-allow-production-rsft-epoch-count.md`](0111-allow-production-rsft-epoch-count.md)
@@ -88,6 +89,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Superseded ADRs
 
+- [`0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md`](0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md) — superseded by ADR 0114, which retains the ADR-0095 schedule and namespace but moves execution to one exact Modal H100 with microbatch-16 slicing inside the same global block 64.
 - [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md) — superseded by ADR 0071 after the user authorized the full 10B run with a concurrent, non-blocking approximately-5B Kaggle evaluation.
 - [`0068-make-plain-uv-sync-install-complete-runtime.md`](0068-make-plain-uv-sync-install-complete-runtime.md) — its complete-runtime rule is retained, but ADR 0072 replaces the gateway-rejected Beam 0.2.201 pin with 0.2.207.
 - [`0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md`](0066-run-100m-2b-sft-at-10-percent-on-dual-t4.md) — superseded by ADR 0067, which retains dual-T4 execution but restores the 4%-of-parent SFT budget.

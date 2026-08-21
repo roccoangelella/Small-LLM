@@ -102,6 +102,7 @@ def remote_import_preflight() -> dict[str, object]:
     checkpoint_transport_path = REMOTE_MODAL / "model_repo_checkpoint.py"
     rolling_path = REMOTE_MODAL / "rolling_dataset.py"
     producer_path = REMOTE_MODAL / "rolling_producer.py"
+    deep_decay_path = REMOTE_MODAL / "deep_decay_10b_from_15500.py"
     if not profiles_path.is_file():
         raise RuntimeError(f"Modal image is missing explicitly packaged profiles helper: {profiles_path}")
     if not runtime_path.is_file():
@@ -114,6 +115,8 @@ def remote_import_preflight() -> dict[str, object]:
         raise RuntimeError(f"Modal image is missing rolling-dataset runtime: {rolling_path}")
     if not producer_path.is_file():
         raise RuntimeError(f"Modal image is missing rolling-dataset producer adapter: {producer_path}")
+    if not deep_decay_path.is_file():
+        raise RuntimeError(f"Modal image is missing deep-decay adapter: {deep_decay_path}")
     sys.path.insert(0, str(REMOTE_MODAL))
     import model_repo_checkpoint as checkpoint_transport  # noqa: PLC0415
 
@@ -122,6 +125,7 @@ def remote_import_preflight() -> dict[str, object]:
     import runtime as remote_runtime  # noqa: F401, PLC0415
     import rolling_dataset as remote_rolling  # noqa: F401, PLC0415
     import rolling_producer as remote_producer  # noqa: F401, PLC0415
+    import deep_decay_10b_from_15500 as remote_deep_decay  # noqa: F401, PLC0415
     from dataset.src.remote import ensure_safe_directory  # noqa: PLC0415
 
     run_root = RUN_ROOT.resolve(strict=True)
@@ -138,6 +142,7 @@ def remote_import_preflight() -> dict[str, object]:
         "checkpoint_transport": str(checkpoint_transport_path),
         "rolling_runtime": str(rolling_path),
         "rolling_producer": str(producer_path),
+        "deep_decay": str(deep_decay_path),
         "run_root": str(run_root),
     }
 
@@ -193,6 +198,33 @@ def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
     )
     getattr(CACHE_VOLUME, "commit")()
     return result
+
+
+@app.function(
+    cpu=4.0,
+    memory=16384,
+    timeout=24 * 60 * 60,
+    single_use_containers=True,
+    secrets=[TRAINING_SECRET],
+    volumes={
+        str(RUN_ROOT): RUN_VOLUME,
+        str(CACHE_ROOT): CACHE_VOLUME,
+    },
+)
+def prepare_deep_decay_remote(source_commit: str) -> dict[str, object]:
+    """CPU-only restore, verification, dataset staging, and slicing migration gate."""
+
+    del source_commit
+    sys.path.insert(0, str(REMOTE_MODAL))
+    from deep_decay_10b_from_15500 import prepare  # noqa: PLC0415
+
+    return prepare(
+        repo_root=REMOTE_REPO,
+        run_root=RUN_ROOT.resolve(strict=True),
+        cache_root=CACHE_ROOT.resolve(strict=True),
+        run_volume=RUN_VOLUME,
+        cache_volume=CACHE_VOLUME,
+    )
 
 
 @app.function(
@@ -316,10 +348,45 @@ def train_rolling_remote(
     return result
 
 
+@app.function(
+    gpu="H100!",
+    timeout=24 * 60 * 60,
+    single_use_containers=True,
+    secrets=[TRAINING_SECRET],
+    volumes={
+        str(RUN_ROOT): RUN_VOLUME,
+        str(CACHE_ROOT): CACHE_VOLUME,
+    },
+)
+def train_deep_decay_remote(
+    source_commit: str,
+    dataset_dir: str,
+    resume_checkpoint_id: str,
+    steps: int,
+) -> dict[str, object]:
+    """One-H100 execution of a CPU-authorized deep-decay segment."""
+
+    sys.path.insert(0, str(REMOTE_MODAL))
+    from deep_decay_10b_from_15500 import train  # noqa: PLC0415
+
+    return train(
+        source_commit=source_commit,
+        dataset_dir=dataset_dir,
+        resume_checkpoint_id=resume_checkpoint_id,
+        steps=steps,
+        repo_root=REMOTE_REPO,
+        run_root=RUN_ROOT.resolve(strict=True),
+        cache_root=CACHE_ROOT.resolve(strict=True),
+        run_volume=RUN_VOLUME,
+        cache_volume=CACHE_VOLUME,
+    )
+
+
 @app.local_entrypoint()
 def main(
     model: str,
     tokens: str,
+    action: str = "train",
     gpu: str = DEFAULT_GPU,
     dataset_dir: str = "",
     max_steps_this_session: int = 0,
@@ -328,6 +395,8 @@ def main(
     dry_run: bool = False,
 ) -> None:
     model_preset, token_preset = resolve_presets(model, tokens)
+    if action not in {"train", "deep-decay"}:
+        raise ValueError("action must be 'train' or 'deep-decay'")
     if gpu not in SUPPORTED_GPUS:
         raise ValueError(f"unsupported Modal GPU {gpu!r}")
     if not 0 <= microbatch_size <= SEQUENCES_PER_BLOCK:
@@ -340,12 +409,19 @@ def main(
         raise ValueError(
             "rolling HF datasets use the CPU-managed Modal cache path; do not supply --dataset-dir"
         )
+    if action == "deep-decay":
+        if model_preset.label != "100M" or token_preset.label != "10B":
+            raise ValueError("deep-decay is frozen to --model 100M --tokens 10B")
+        if gpu != DEFAULT_GPU:
+            raise ValueError("deep-decay is frozen to one exact Modal H100; omit --gpu")
+        if microbatch_size not in {0, 16}:
+            raise ValueError("deep-decay freezes H100 execution microbatch 16; omit --microbatch-size")
     from dataset.qualification import get_profile  # noqa: PLC0415
 
     dataset_profile = get_profile(token_preset.dataset_profile)
     source_commit = _local_source_commit()
     payload = {
-        "action": "train",
+        "action": action,
         "runtime": "modal/launch.py",
         "model": model_preset.label,
         "tokens": token_preset.label,
@@ -370,6 +446,12 @@ def main(
         "max_steps_this_session": max_steps_this_session or "remaining plan",
         "resume": "automatic_verified_modal_volume_then_hf_model_repo",
     }
+    if action == "deep-decay":
+        sys.path.insert(0, str(LOCAL_MODAL))
+        from deep_decay_10b_from_15500 import dry_run_payload  # noqa: PLC0415
+
+        payload = dry_run_payload(max_steps_this_session)
+        payload["source_commit"] = source_commit
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
         return
@@ -383,8 +465,50 @@ def main(
         runtime=preflight.get("runtime"),
         rolling_runtime=preflight.get("rolling_runtime"),
         rolling_producer=preflight.get("rolling_producer"),
+        deep_decay=preflight.get("deep_decay"),
         run_root=preflight.get("run_root"),
     )
+
+    if action == "deep-decay":
+        _stage("deep_decay_cpu_prepare_start")
+        prepared = dict(prepare_deep_decay_remote.remote(source_commit))
+        _stage(
+            "deep_decay_cpu_prepare_complete",
+            status=prepared.get("status"),
+            checkpoint_id=prepared.get("resume_checkpoint_id") or prepared.get("checkpoint_id"),
+            completed_steps=prepared.get("completed_steps"),
+            expected_lr=prepared.get("expected_lr"),
+            migration=prepared.get("migration"),
+        )
+        if prepared.get("status") == "training_complete":
+            print(json.dumps(prepared, indent=2, sort_keys=True), flush=True)
+            return
+        if prepared.get("status") != "ready":
+            raise RuntimeError("deep-decay CPU preparation did not authorize H100 dispatch")
+        dataset = prepared.get("dataset_dir")
+        checkpoint_id = prepared.get("resume_checkpoint_id")
+        remaining = prepared.get("remaining_steps")
+        if not isinstance(dataset, str) or not dataset:
+            raise RuntimeError("deep-decay preparation returned no dataset directory")
+        if not isinstance(checkpoint_id, str):
+            raise RuntimeError("deep-decay preparation returned no resume checkpoint")
+        if isinstance(remaining, bool) or not isinstance(remaining, int) or remaining <= 0:
+            raise RuntimeError("deep-decay preparation returned invalid remaining steps")
+        steps = min(remaining, max_steps_this_session or remaining)
+        _stage(
+            "deep_decay_h100_dispatch",
+            resume_checkpoint_id=checkpoint_id,
+            steps=steps,
+            gpu="H100!",
+        )
+        result = train_deep_decay_remote.spawn(
+            source_commit,
+            dataset,
+            checkpoint_id,
+            steps,
+        ).get()
+        print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+        return
 
     producer_call = None
     producer_result: dict[str, object] | None = None
@@ -498,6 +622,6 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(
-        "Use: modal run --detach modal/launch.py --model 100M --tokens 2B "
-        "or --model 100M --tokens 10B"
+        "Use: modal run --detach modal/launch.py --model 100M --tokens 2B, "
+        "--model 100M --tokens 10B, or --action deep-decay --model 100M --tokens 10B"
     )
