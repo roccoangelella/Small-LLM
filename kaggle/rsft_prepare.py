@@ -138,10 +138,20 @@ def _download_s0_bundle(*, worktree: Path, handle: str) -> Path:
         handle,
     ]
     print("$ " + " ".join(command), flush=True)
+    # KaggleHub normally selects its Kaggle-cache resolver inside a Kaggle
+    # notebook. For an unattached private dataset that resolver tries to attach
+    # a new datasource, which Kaggle forbids for committed/non-interactive
+    # sessions. Force KaggleHub's authenticated HTTP resolver instead so the
+    # frozen private S0 bundle can be downloaded without notebook attachment.
     result = subprocess.run(
         command,
         cwd=worktree,
-        env={**os.environ, "PYTHONUNBUFFERED": "1", "UV_LINK_MODE": "copy"},
+        env={
+            **os.environ,
+            "DISABLE_KAGGLE_CACHE": "true",
+            "PYTHONUNBUFFERED": "1",
+            "UV_LINK_MODE": "copy",
+        },
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -150,8 +160,8 @@ def _download_s0_bundle(*, worktree: Path, handle: str) -> Path:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n", flush=True)
     if result.returncode:
         raise base.RuntimeFailure(
-            f"failed to download private S0 Kaggle dataset {handle!r}; "
-            "attach it to the notebook or pass --s0-bundle explicitly"
+            f"failed to download private S0 Kaggle dataset {handle!r} through the "
+            "authenticated HTTP resolver; attach it to the notebook or pass --s0-bundle explicitly"
         )
     prefix = "__SMALL_LLM_S0_PATH__="
     resolved = None

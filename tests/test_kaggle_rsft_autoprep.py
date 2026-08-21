@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -60,6 +61,20 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
             plan["s0_kaggle_handle"],
             "roccoangelella/small-llm-100m-2b-sft-s0-001",
         )
+
+    def test_private_s0_download_bypasses_noninteractive_kaggle_attach_resolver(self) -> None:
+        fake = mock.Mock(returncode=1, stdout="simulated failure\n")
+        with mock.patch.object(rsft_prepare.subprocess, "run", fake):
+            with self.assertRaises(rsft_prepare.base.RuntimeFailure):
+                rsft_prepare._download_s0_bundle(
+                    worktree=REPO,
+                    handle="owner/private-s0",
+                )
+        self.assertEqual(fake.call_count, 1)
+        kwargs = fake.call_args.kwargs
+        self.assertEqual(kwargs["env"]["DISABLE_KAGGLE_CACHE"], "true")
+        self.assertEqual(kwargs["env"]["PYTHONUNBUFFERED"], "1")
+        self.assertEqual(kwargs["env"]["UV_LINK_MODE"], "copy")
 
     def test_production_reasoning_manifest_is_sha_pinned(self) -> None:
         reasoning = (REPO / rsft_prepare.PRODUCTION_REASONING_RELATIVE_PATH).resolve()

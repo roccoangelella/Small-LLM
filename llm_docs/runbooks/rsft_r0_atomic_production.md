@@ -37,6 +37,8 @@ python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 
 With no `--dataset-dir`, the launcher pins a detached worktree to `2ae60bfa135017353f39da2ef34a6124cda465dc`, SHA-validates the 16,716-row corpus, resolves completed S0 parent `100m-2b-sft-s0-001`, builds/verifies the native `atomic-production-v1` bundle, and launches 2xT4 DDP under fresh default run ID `100m-2b-rsft-r0-16716-001`.
 
+For committed/non-interactive Kaggle sessions, the S0 resolver must not ask KaggleHub to attach a new datasource at runtime. If the private S0 bundle is not already under `/kaggle/input`, the launcher sets `DISABLE_KAGGLE_CACHE=true` for the KaggleHub subprocess so it uses the authenticated HTTP resolver instead of the notebook attachment resolver. This keeps the minimal canonical command self-contained in non-interactive runs.
+
 Never point the expanded corpus at `100m-2b-rsft-r0-12306-001`; that ID belongs to the completed historical trajectory.
 
 Useful dry run:
