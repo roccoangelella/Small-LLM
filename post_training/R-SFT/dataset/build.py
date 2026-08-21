@@ -61,6 +61,46 @@ SOURCE_PRIORITY = {
 }
 
 
+def _source_input_identity(
+    stage1_jsonl: Path | None,
+    stage2_jsonl: Path | None,
+) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for stage, path in (("stage1", stage1_jsonl), ("stage2", stage2_jsonl)):
+        if path is None:
+            continue
+        resolved = Path(path).expanduser().resolve()
+        result[stage] = {
+            "path": str(resolved),
+            "sha256": common.sha256_path(resolved),
+            "byte_size": resolved.stat().st_size,
+        }
+    return result
+
+
+def _assert_build_identity(
+    work_dir: Path,
+    *,
+    base_jsonl: Path,
+    superior_stages: Sequence[str],
+    superior_stage1_jsonl: Path | None,
+    superior_stage2_jsonl: Path | None,
+) -> None:
+    path = work_dir / "build.manifest.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping) or payload.get("schema") != BUILD_MANIFEST_SCHEMA:
+        raise RuntimeError("existing R-SFT build manifest has the wrong schema")
+    if payload.get("base_sha256") != common.sha256_path(base_jsonl):
+        raise RuntimeError("existing R-SFT work directory was prepared from a different base")
+    if payload.get("superior_stages") != list(superior_stages):
+        raise RuntimeError("existing R-SFT work directory was prepared from different Superior stages")
+    expected_inputs = _source_input_identity(
+        superior_stage1_jsonl, superior_stage2_jsonl
+    )
+    if payload.get("source_input_identity", {}) != expected_inputs:
+        raise RuntimeError("existing R-SFT work directory was prepared from different source inputs")
+
+
 def _base_records(path: Path | None) -> list[dict[str, str]]:
     if path is None:
         return []
@@ -167,6 +207,9 @@ def prepare(
         "base_sha256": common.sha256_path(base_jsonl) if base_jsonl is not None else None,
         "sources": ["superior_reasoning"],
         "superior_stages": list(superior_stages),
+        "source_input_identity": _source_input_identity(
+            superior_stage1_jsonl, superior_stage2_jsonl
+        ),
         "source_results": {"superior_reasoning": source_result},
         "aggregate": aggregate,
     }
@@ -365,6 +408,14 @@ def build(
             superior_stage1_jsonl=superior_stage1_jsonl,
             superior_stage2_jsonl=superior_stage2_jsonl,
             progress_every=progress_every,
+        )
+    else:
+        _assert_build_identity(
+            work_dir,
+            base_jsonl=base_jsonl,
+            superior_stages=superior_stages,
+            superior_stage1_jsonl=superior_stage1_jsonl,
+            superior_stage2_jsonl=superior_stage2_jsonl,
         )
     return assemble(
         work_dir=work_dir,
