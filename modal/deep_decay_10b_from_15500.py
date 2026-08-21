@@ -109,10 +109,7 @@ def contract() -> dict[str, object]:
         "final_step": FINAL_STEP,
         "final_targets": TOTAL_TARGETS,
         "remote_checkpoint_every": REMOTE_EVERY,
-        "scientific_change": (
-            "none; Modal changes execution slicing and projects the unchanged rank-0 "
-            "CUDA RNG state onto the one-device topology"
-        ),
+        "scientific_change": "none; Modal changes execution slicing only for an existing deep-decay checkpoint",
     }
 
 
