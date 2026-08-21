@@ -53,6 +53,21 @@ def _source_row(
     }
 
 
+def _fit_row(i: int, *, source_index: int | None = None) -> dict[str, object]:
+    source_index = i if source_index is None else source_index
+    return {
+        "id": f"s2-{i}",
+        "source_index": source_index,
+        "domain": "instruction_following",
+        "difficulty": "clean_fit",
+        "problem": f"Stage two prompt {i}",
+        "reasoning": "reason reason",
+        "answer": f"answer {i}",
+        "serialized_token_count": 20,
+        "target_token_count": 8,
+    }
+
+
 def test_stage2_source_jsonl_filters_train_rows_by_domain(tmp_path):
     module = _load_module()
     source = tmp_path / "stage2.jsonl"
@@ -121,22 +136,7 @@ def test_build_percent_uses_projected_train_reasoning_targets(tmp_path, monkeypa
 
     work = tmp_path / "work"
     work.mkdir()
-    fit_rows = []
-    for i in range(30):
-        fit_rows.append(
-            {
-                "id": f"s2-{i}",
-                "source_index": i,
-                "domain": "instruction_following",
-                "difficulty": "clean_fit",
-                "problem": f"Stage two prompt {i}",
-                "reasoning": "reason reason",
-                "answer": f"answer {i}",
-                "serialized_token_count": 20,
-                "target_token_count": 8,
-            }
-        )
-    _write_jsonl(work / "fit.jsonl", fit_rows)
+    _write_jsonl(work / "fit.jsonl", [_fit_row(i) for i in range(30)])
 
     output = tmp_path / "one-percent.jsonl"
     result = module.build_percent_corpus(
@@ -152,3 +152,52 @@ def test_build_percent_uses_projected_train_reasoning_targets(tmp_path, monkeypa
     assert result["combined_rows"] == 10 + result["stage2_rows_added"]
     assert output.is_file()
     assert output.with_suffix(".jsonl.manifest.json").is_file()
+
+
+def test_percent_corpora_are_literal_source_order_prefixes(tmp_path, monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        module.superior,
+        "_default_token_counter",
+        lambda: (lambda text: len(text.split())),
+    )
+    monkeypatch.setattr(module, "PARENT_TRAIN_TARGETS", 10_000)
+
+    base = tmp_path / "base.jsonl"
+    _write_jsonl(base, [_base_row(i, reasoning_words=2) for i in range(10)])
+
+    work = tmp_path / "work"
+    work.mkdir()
+    # Deliberately write rows in reverse source order. The assembler must ignore
+    # file/UUID order and use the immutable Stage-2 instruction-stream index.
+    _write_jsonl(
+        work / "fit.jsonl",
+        [_fit_row(i, source_index=i) for i in reversed(range(40))],
+    )
+
+    one = tmp_path / "one.jsonl"
+    two = tmp_path / "two.jsonl"
+    one_result = module.build_percent_corpus(
+        base_jsonl=base,
+        work_dir=work,
+        output_jsonl=one,
+        percent=1.0,
+    )
+    two_result = module.build_percent_corpus(
+        base_jsonl=base,
+        work_dir=work,
+        output_jsonl=two,
+        percent=2.0,
+    )
+
+    one_stage2 = {
+        row["problem"] for row in module._read_jsonl(one) if row["problem"].startswith("Stage two")
+    }
+    two_stage2 = {
+        row["problem"] for row in module._read_jsonl(two) if row["problem"].startswith("Stage two")
+    }
+    assert one_stage2 < two_stage2
+    assert one_result["stage2_last_source_index"] < two_result["stage2_last_source_index"]
+    expected_one = {f"Stage two prompt {i}" for i in range(one_result["stage2_rows_added"])}
+    assert one_stage2 == expected_one
+    assert one_result["stage2_ordering_policy"] == module.ORDERING_POLICY
