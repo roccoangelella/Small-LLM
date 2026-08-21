@@ -2,7 +2,7 @@
 
 ## Decision
 
-ADR 0114 refactors new R-SFT corpus creation into source adapters, generic over-context repair, and one main builder. The completed Stage-1 artifacts and their historical scripts remain immutable/reproducible; the new active path does not rewrite them.
+ADR 0115 refactors new R-SFT corpus creation into source adapters, generic over-context repair, and one main builder. The completed Stage-1 artifacts and their historical scripts remain immutable/reproducible; the new active path does not rewrite them.
 
 ## Active implementation
 
