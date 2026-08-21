@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0116-promote-expanded-e3-rsft-as-current-default-r0.md`](0116-promote-expanded-e3-rsft-as-current-default-r0.md)
 - [`0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md`](0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md)
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0113-use-superior-reasoning-stage2-for-rsft-scaling.md`](0113-use-superior-reasoning-stage2-for-rsft-scaling.md)
@@ -75,7 +76,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0069-own-beam-launch-namespace-in-synced-checkout.md`](0069-own-beam-launch-namespace-in-synced-checkout.md)
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0071-run-full-100m-10b-with-concurrent-5b-evaluation.md`](0071-run-full-100m-10b-with-concurrent-5b-evaluation.md)
-- [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-for-live-gateway.md)
+- [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-pin-beam-client-0207-for-live-gateway.md)
 - [`0073-persist-sft-cadence-checkpoints-before-evaluation.md`](0073-persist-sft-cadence-checkpoints-before-evaluation.md)
 - [`0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md`](0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md)
 - [`0075-bound-dual-t4-sft-inline-qualification.md`](0075-bound-dual-t4-sft-inline-qualification.md)
