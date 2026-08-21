@@ -2,7 +2,7 @@
 
 _Last updated: 2026-08-21 Europe/Rome_
 
-This runbook implements ADR 0111/0112. The frozen 16,716-row Stage-1-expanded reasoning corpus is the immutable base; Superior Reasoning Stage 2 `instruction_following` is additive scaling data for the nested 1% / 2% / 4% sweep.
+This runbook implements ADR 0112/0113. The frozen 16,716-row Stage-1-expanded reasoning corpus is the immutable base; Superior Reasoning Stage 2 `instruction_following` is additive scaling data for the nested 1% / 2% / 4% sweep.
 
 ## Contract
 
