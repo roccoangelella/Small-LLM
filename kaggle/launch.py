@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ DUAL_T4_TRITON_VERSION = "3.6.0"
 DUAL_T4_FLA_VERSION = "0.5.2"
 DEEP_DECAY_MODEL = 100_000_000
 DEEP_DECAY_TOKENS = 10_000_000_000
+DEEP_DECAY_HF_REPO_ID = "roccoangelella/small-llm-100m-qualification"
 
 
 def parse_quantity(value: str) -> int:
@@ -264,7 +266,13 @@ def _deep_decay_command(args: argparse.Namespace) -> list[str]:
 def _run_deep_decay(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.model != DEEP_DECAY_MODEL or args.tokens != DEEP_DECAY_TOKENS:
         parser.error("deep-decay is frozen to --model 100M --tokens 10B")
-    return int(subprocess.call(_deep_decay_command(args), cwd=REPO))
+    env = dict(os.environ)
+    env["SMALL_LLM_HF_REPO_ID"] = (
+        env.get("SMALL_LLM_100M_HF_REPO_ID", "").strip()
+        or DEEP_DECAY_HF_REPO_ID
+    )
+    print(f"[launch] deep-decay hf_repo={env['SMALL_LLM_HF_REPO_ID']}", flush=True)
+    return int(subprocess.call(_deep_decay_command(args), cwd=REPO, env=env))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
