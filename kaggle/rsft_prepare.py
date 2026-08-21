@@ -19,20 +19,20 @@ import sft_runtime as base
 
 DEFAULT_S0_KAGGLE_HANDLE = "roccoangelella/small-llm-100m-2b-sft-s0-001"
 DEFAULT_MATCHED_BUNDLE_NAME = "rsft-r0-pilot-630-bundles"
-DEFAULT_PRODUCTION_BUNDLE_NAME = "rsft-r0-superior-instruction-checkpoint-12306"
+DEFAULT_PRODUCTION_BUNDLE_NAME = "rsft-r0-superior-instruction-expanded-16716"
 REASONING_RELATIVE_PATH = Path("artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl")
-PRODUCTION_REASONING_RELATIVE_PATH = Path("artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl")
+PRODUCTION_REASONING_RELATIVE_PATH = Path("artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl")
 TOKEN_SPEC_RELATIVE_PATH = Path("post_training/R-SFT/reasoning-tokens.json")
 PILOT_OPTIMIZER_TARGET_TOKENS = 2_048
 PRODUCTION_OPTIMIZER_TARGET_TOKENS = 32_768
 PRODUCTION_HELDOUT_FRACTION = 0.01
-PRODUCTION_REASONING_SCHEMA = "small-llm-superior-reasoning-checkpoint-v1"
+PRODUCTION_REASONING_SCHEMA = "small-llm-superior-reasoning-curated-complete-v1"
 PRODUCTION_REASONING_POLICY = "instruction-no-math-code-v1"
-PRODUCTION_REASONING_ROWS = 12_306
-PRODUCTION_ADAPTED_ROWS = 3_993
-PRODUCTION_PENDING_KEEP_ROWS = 4_476
-PRODUCTION_DUPLICATE_REWRITE_EXCLUSIONS = 28
-PRODUCTION_REASONING_SHA256 = "e7d83f9809a65bcb50a6dea3087813d92fea1950a716b3c1eb13e87bfe263a5e"
+PRODUCTION_REASONING_ROWS = 16_716
+PRODUCTION_ADAPTED_ROWS = 8_403
+PRODUCTION_ACCEPTED_KEEP_REWRITES = 8_473
+PRODUCTION_DUPLICATE_REWRITE_EXCLUSIONS = 70
+PRODUCTION_REASONING_SHA256 = "d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405"
 
 
 def _read_json(path: Path, *, label: str) -> dict[str, object]:
@@ -60,12 +60,12 @@ def _require_production_reasoning_manifest(reasoning: Path) -> dict[str, object]
         "schema": PRODUCTION_REASONING_SCHEMA,
         "policy": PRODUCTION_REASONING_POLICY,
         "production_domain": "instruction_following",
-        "checkpoint_contract": "validated-accepted-batches-only-v1",
         "context_length": 2_048,
         "gemini_rows": 630,
         "combined_rows": PRODUCTION_REASONING_ROWS,
         "adapted_superior_rows": PRODUCTION_ADAPTED_ROWS,
-        "pending_kept_adaptation_rows": PRODUCTION_PENDING_KEEP_ROWS,
+        "accepted_keep_rewrites": PRODUCTION_ACCEPTED_KEEP_REWRITES,
+        "serialized_token_range": {"min": 61, "max": 2_048},
         "duplicate_rewrite_exclusions": PRODUCTION_DUPLICATE_REWRITE_EXCLUSIONS,
     }
     drift = {key: (manifest.get(key), value) for key, value in expected.items() if manifest.get(key) != value}
@@ -75,7 +75,7 @@ def _require_production_reasoning_manifest(reasoning: Path) -> dict[str, object]
     if manifest.get("output_sha256") != actual_sha:
         raise base.RuntimeFailure("production reasoning JSONL SHA-256 does not match its manifest")
     if actual_sha != PRODUCTION_REASONING_SHA256:
-        raise base.RuntimeFailure("production reasoning JSONL drifted from the pinned 12,306-row checkpoint")
+        raise base.RuntimeFailure("production reasoning JSONL drifted from the pinned 16,716-row expanded corpus")
     rows = manifest.get("combined_rows")
     if isinstance(rows, bool) or not isinstance(rows, int) or rows <= 630:
         raise base.RuntimeFailure("production reasoning manifest has no positive Superior corpus")
@@ -358,7 +358,7 @@ __all__ = [
     "PRODUCTION_OPTIMIZER_TARGET_TOKENS",
     "PRODUCTION_ADAPTED_ROWS",
     "PRODUCTION_DUPLICATE_REWRITE_EXCLUSIONS",
-    "PRODUCTION_PENDING_KEEP_ROWS",
+    "PRODUCTION_ACCEPTED_KEEP_REWRITES",
     "PRODUCTION_REASONING_RELATIVE_PATH",
     "PRODUCTION_REASONING_ROWS",
     "PRODUCTION_REASONING_SHA256",

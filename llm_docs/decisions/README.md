@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0108-promote-expanded-rsft-corpus-to-kaggle-default.md`](0108-promote-expanded-rsft-corpus-to-kaggle-default.md)
 - [`0106-resume-expanded-rsft-with-curation-v2-and-keeper-only-gemini.md`](0106-resume-expanded-rsft-with-curation-v2-and-keeper-only-gemini.md)
 - [`0001-use-structured-markdown-project-memory.md`](0001-use-structured-markdown-project-memory.md)
 - [`0002-freeze-eval-core-v1-and-unified-cli.md`](0002-freeze-eval-core-v1-and-unified-cli.md)

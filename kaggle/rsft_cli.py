@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     _profile_args(train)
     train.add_argument(
         "--dataset-dir",
-        help="optional prebuilt atomic-production-v1 bundle; omit to build from the committed 12,306-row Superior instruction checkpoint corpus",
+        help="optional prebuilt atomic-production-v1 bundle; omit to build from the committed 16,716-row expanded Superior instruction corpus",
     )
     train.add_argument(
         "--s0-bundle",
@@ -149,7 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             profile = rsft_runtime.resolve_profile(
                 args.model,
                 args.tokens,
-                run_id=rsft_runtime.PRODUCTION_RUN_ID,
+                run_id=rsft_runtime.ACCEPTED_RUN_ID,
                 delimiter_format="atomic",
             )
             eval_dir = sft_cli._discover_eval_dir(args.eval_dir)

@@ -1,167 +1,69 @@
 # R-SFT R0 atomic runbook
 
-_Last updated: 2026-08-19 Europe/Rome_
+_Last updated: 2026-08-21 Europe/Rome_
 
-The current accepted 100M / 2B R0 R-SFT artifact is the completed 12,306-row Superior/Gemini checkpoint:
+The current accepted trained 100M / 2B R-SFT model remains `100m-2b-rsft-r0-12306-001` at Hugging Face step `step-00000361`. The standard next training corpus is the completed 16,716-row expansion promoted by ADR 0108.
 
-```text
-100m-2b-rsft-r0-12306-001
-```
-
-The verified Hugging Face latest pointer is the completed final optimizer boundary:
-
-```text
-step-00000361
-```
-
-It uses the frozen atomic special-token protocol:
+## 1. Frozen atomic contract
 
 ```text
 50257  <think>
 50258  </think>
 50259  <answer>
+context length: 2,048
+optimizer target tokens/block: 32,768
+reasoning/S0-retention target mix: approximately 90/10
 ```
 
-The historical 630-example delimiter pilot and 10-epoch repeat probe are no longer accepted model artifacts. Their Hugging Face run namespaces were deleted on 2026-08-19 after the 12,306-row run completed. Their experiment definitions remain reproducible from Git for audit purposes.
+Production R-SFT is atomic-only. The historical textual delimiter arm remains ablation evidence only.
 
-## 1. Current accepted R0 state
-
-The frozen reasoning corpus is:
+## 2. Standard production corpus
 
 ```text
-artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
+artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl
+rows:   16,716
+sha256: d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405
 ```
 
-It contains 12,306 unique normalized prompts:
+Composition is 7,683 unchanged Superior instruction rows, 8,403 unique simplified Superior rows, and 630 Gemini logic anchors. All 8,473 curation-v2 keepers were processed; 70 accepted rewrites were excluded for normalized-prompt collisions. Every row fits the exact atomic 2,048-token serialization.
 
-- 7,683 unchanged, context-fit Superior instruction rows;
-- 3,993 unique accepted Variant-D Superior rewrites;
-- 630 frozen Gemini logic anchors.
+The intermediate 12,306-row checkpoint corpus used to train the currently accepted model is no longer stored in the current tree. Its historical identity is SHA-256 `e7d83f9809a65bcb50a6dea3087813d92fea1950a716b3c1eb13e87bfe263a5e`; the deleted file remains recoverable from Git commit `2ae60bfa135017353f39da2ef34a6124cda465dc` for historical reproduction.
 
-The adjacent manifest records 28 accepted rewrites omitted because compression created normalized-prompt collisions, and 4,476 manually-kept over-context candidates that remain pending future compression. Every emitted row passes the exact atomic R-SFT serialization at the 2,048-token model context.
-
-The native training bundle used 32,768 loss-bearing target tokens per optimizer block and one exact pass. It contained 361 train blocks and 11,609,452 train target tokens: 10,448,098 reasoning targets plus 1,161,354 S0-retention targets, preserving the approximately 90/10 reasoning/retention contract.
-
-## 2. Chat with the accepted artifact
-
-Configure Hugging Face access. R-SFT first checks `SMALL_LLM_RSFT_HF_REPO_ID`, then falls back to the SFT/base checkpoint repository variables. In the current shared setup, `SMALL_LLM_HF_REPO_ID=roccoangelella/small-llm-100m-qualification` is sufficient.
-
-Run the registered current R-SFT model:
-
-```bash
-.venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
-```
-
-The explicit equivalent is:
-
-```bash
-.venv/bin/python chat.py \
-  --model_params 100M \
-  --num_tokens 2B \
-  --r-sft \
-  --run-id 100m-2b-rsft-r0-12306-001
-```
-
-`chat.py` fails closed unless the downloaded checkpoint is complete and carries:
-
-```text
-semantic_vocab_size = 50260
-pipeline_state.rsft_format.version = 1
-pipeline_state.rsft_format.stage = r_sft_r0
-pipeline_state.rsft_format.delimiter_format = atomic
-```
-
-plus the exact `<think>`, `</think>`, `<answer>` token metadata at IDs 50257-50259.
-
-## 3. Hugging Face R-SFT state
-
-The checkpoint repository is:
-
-```text
-roccoangelella/small-llm-100m-qualification
-```
-
-The only retained 100M / 2B R-SFT run namespace is:
-
-```text
-run/100m-2b-rsft-r0-12306-001/
-```
-
-Its `latest.json` points to `step-00000361`. The completed S0 parent `100m-2b-sft-s0-001` is preserved.
-
-The following superseded R-SFT namespaces were deliberately deleted from Hugging Face on 2026-08-19:
-
-```text
-100m-2b-rsft-r0-atomic-pilot-001
-100m-2b-rsft-r0-atomic-repeat-e10-001
-100m-2b-rsft-r0-textual-pilot-001
-```
-
-Do not treat those names as remotely loadable checkpoints. They remain historical experiment identities only.
-
-## 4. Training/reproduction
-
-The canonical production launch for the frozen 12,306-row checkpoint is:
+## 3. Canonical Kaggle training launch
 
 ```bash
 python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 ```
 
-The launcher pins the committed corpus and implementation, resolves the completed 100M/2B S0 parent bundle, builds/verifies the atomic production bundle, and uses the distinct run ID `100m-2b-rsft-r0-12306-001`.
+With no `--dataset-dir`, the launcher pins a detached worktree to `2ae60bfa135017353f39da2ef34a6124cda465dc`, SHA-validates the 16,716-row corpus, resolves completed S0 parent `100m-2b-sft-s0-001`, builds/verifies the native `atomic-production-v1` bundle, and launches 2xT4 DDP under fresh default run ID `100m-2b-rsft-r0-16716-001`.
 
-The production builder can be run directly with:
+Never point the expanded corpus at `100m-2b-rsft-r0-12306-001`; that ID belongs to the completed historical trajectory.
+
+Useful dry run:
+
+```bash
+python kaggle/launch_r_sft.py train --model 100M --tokens 2B --dry-run
+```
+
+Direct deterministic bundle build:
 
 ```bash
 python post_training/R-SFT/build_atomic.py \
-  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl \
-  --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --output-dir /path/to/rsft-r0-superior-instruction-checkpoint-12306
-```
-
-Do not relaunch this run under the same run ID unless intentionally resuming the same verified trajectory. Any expanded corpus must use a new corpus identity and a new R-SFT run ID.
-
-## 5. Expanded-corpus adaptation lane
-
-ADR 0106 resumes the over-context lane without changing the historical curation used by the completed model. Expansion work uses:
-
-```text
-artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl
-```
-
-Curation v2 contains 8,473 keepers, 829 code exclusions, 212 math exclusions, and 110 safety exclusions. The keeper-only resume reuses 4,009 valid historical accepted rewrites and sends only the remaining 4,464 keepers to Gemini.
-
-Before any teacher request, require GemRouter to have `GEMROUTER_BACKEND_ORDER=gemini-api` and `GEMROUTER_NVIDIA_ENABLED=false`; `/health` must show only `gemini-api` and `fallbackEnabled=false`. Never enable NVIDIA for this dataset.
-
-Prepare/status commands:
-
-```bash
-.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py prepare \
-  --work-dir artifacts/rsft-superior-instruction-r0-adaptation \
-  --manual-curation-jsonl artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl \
-  --baseline-manifest artifacts/rsft-superior-instruction-r0/reasoning.jsonl.manifest.json
-
-.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py status \
-  --work-dir artifacts/rsft-superior-instruction-r0-adaptation
-```
-
-Provider batches and attempts under `keep-resume/` are generated local state and remain ignored by Git. The keeper lane completed on 2026-08-21 with `resume_pending_records=0`. Finalize deterministically with:
-
-```bash
-.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py finalize \
-  --work-dir artifacts/rsft-superior-instruction-r0-adaptation \
-  --baseline-jsonl artifacts/rsft-superior-instruction-r0/reasoning.jsonl \
-  --baseline-manifest artifacts/rsft-superior-instruction-r0/reasoning.jsonl.manifest.json \
-  --manual-curation-jsonl artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl \
-  --output-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl
-```
-
-The frozen result is 16,716 rows at SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`, after 70 normalized-prompt collision exclusions. Build the verified native bundle with:
-
-```bash
-.venv/bin/python post_training/R-SFT/build_atomic.py \
   --reasoning-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl \
-  --s0-bundle /home/ubuntu/Projects/small-llm-work/small-llm-100m-2b-sft-bundle \
-  --output-dir /home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716
+  --s0-bundle /path/to/100m-2b-sft-s0-bundle \
+  --output-dir /path/to/rsft-r0-superior-instruction-expanded-16716
 ```
 
-The completed bundle has 417 train blocks and 13,420,823 train targets (12,077,733 reasoning + 1,343,090 S0 retention). Any training from this bundle requires a new run identity; do not resume the completed 12,306-row trajectory.
+The verified reference build has 417 train blocks, 20,313 packed train records, 12,077,733 reasoning targets, 1,343,090 S0-retention targets, and 13,420,823 total train targets. Validation and test each contain four blocks.
+
+## 4. Current accepted trained model
+
+```bash
+.venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
+```
+
+The accepted checkpoint repository remains `roccoangelella/small-llm-100m-qualification`, with `run/100m-2b-rsft-r0-12306-001/latest.json` pointing to step 361. The default `eval` command continues to resolve this accepted model until a new 16,716-row run is trained and promoted.
+
+## 5. Historical expansion provenance
+
+Expansion curation v2 remains at `artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl`: 8,473 keepers, 829 code exclusions, 212 math exclusions, and 110 safety exclusions. The committed final corpus and manifest are now the production identity. Completion evidence is recorded in [`../evidence/rsft_expanded_corpus_completion_2026-08-21.md`](../evidence/rsft_expanded_corpus_completion_2026-08-21.md).

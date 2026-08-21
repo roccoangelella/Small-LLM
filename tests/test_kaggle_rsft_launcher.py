@@ -116,8 +116,8 @@ def test_profile_is_fixed_to_100m_2b() -> None:
     )
     assert profile.parent_run_id == "100m-2b-sft-s0-001"
     assert profile.microbatch_size == 2
-    assert profile.sft_run_id == "100m-2b-rsft-r0-12306-001"
-    assert profile.launch_commit == "b6bf8df5aa3c835278214a4ba4adb91225b6b672"
+    assert profile.sft_run_id == "100m-2b-rsft-r0-16716-001"
+    assert profile.launch_commit == "2ae60bfa135017353f39da2ef34a6124cda465dc"
 
     with pytest.raises(rsft_runtime.base.RuntimeFailure):
         rsft_runtime.resolve_profile(
@@ -204,7 +204,7 @@ def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     output = capsys.readouterr().out
     assert '"contract": "atomic-production-v1"' in output
     assert '"delimiter_format": "atomic"' in output
-    assert '"run_id": "100m-2b-rsft-r0-12306-001"' in output
+    assert '"run_id": "100m-2b-rsft-r0-16716-001"' in output
     assert '"bundle_target_tokens_one_pass": 63000' in output
     assert '"num_epochs": 1' in output
     assert "torch.distributed.run" in output
@@ -232,7 +232,7 @@ def test_production_dry_run_auto_prepares_committed_superior_corpus(
     )
     assert result == 0
     output = capsys.readouterr().out
-    assert "artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl" in output
+    assert "artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl" in output
     assert '"reasoning_share": 0.9' in output
     assert '"s0_retention_share": 0.1' in output
     assert '"heldout_fraction_per_split": 0.01' in output

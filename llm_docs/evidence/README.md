@@ -4,6 +4,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## R-SFT evidence
 
+- [`rsft_expanded_corpus_kaggle_default_2026-08-21.md`](rsft_expanded_corpus_kaggle_default_2026-08-21.md) — promotes the completed 16,716-row corpus to the default Kaggle training input, assigns the fresh default run ID, and retires the intermediate 12,306-row corpus from the current tree.
 - [`rsft_expanded_corpus_completion_2026-08-21.md`](rsft_expanded_corpus_completion_2026-08-21.md) — full 8,473-keeper completion, audited batch-305 safety recovery, frozen 16,716-row corpus identity, and verified 417-block atomic bundle.
 - [`rsft_expansion_resume_2026-08-20.md`](rsft_expansion_resume_2026-08-20.md) — Gemini-only resume gate, expansion curation v2, keeper-only adaptation contract, and initial live progress.
 - [`rsft_r0_12306_training_completion_2026-08-19.md`](rsft_r0_12306_training_completion_2026-08-19.md) — frozen 12,306-row corpus identity, 361-block one-pass training completion, Hugging Face step-361 publication, old R-SFT namespace cleanup, and preserved future-adaptation state.

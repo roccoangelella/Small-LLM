@@ -12,13 +12,7 @@ The current accepted 100M / 2B R0 R-SFT checkpoint is:
 100m-2b-rsft-r0-12306-001
 ```
 
-It completed one exact production pass at `step-00000361`. The frozen reasoning corpus is:
-
-```text
-artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
-```
-
-It contains 12,306 unique normalized prompts: 7,683 unchanged context-fit Superior instruction rows, 3,993 unique accepted Variant-D rewrites, and 630 frozen Gemini logic anchors. The earlier 630-example atomic/textual delimiter runs and the 10-epoch atomic repeat are historical experiments only; their Hugging Face run namespaces were deleted after this checkpoint completed.
+It completed one exact production pass at `step-00000361`. Its historical training corpus contained 12,306 unique normalized prompts (7,683 unchanged context-fit Superior instruction rows, 3,993 unique accepted Variant-D rewrites, and 630 frozen Gemini logic anchors) at SHA-256 `e7d83f9809a65bcb50a6dea3087813d92fea1950a716b3c1eb13e87bfe263a5e`. The intermediate 12,306-row corpus file has been retired from the current tree now that the expanded corpus is complete; it remains recoverable from Git history at commit `2ae60bfa135017353f39da2ef34a6124cda465dc`. The earlier 630-example atomic/textual delimiter runs and the 10-epoch atomic repeat are historical experiments only.
 
 ## Accepted token contract
 
@@ -104,27 +98,15 @@ example) step 173 continues at the exact next repeated block. `--num-epochs 1`
 preserves the historical one-pass behavior. The canonical production `train`
 lane rejects `--num-epochs > 1`.
 
-## Current large R-SFT checkpoint
+## Default production training corpus
 
-ADR 0105 promotes the currently available, fully validated adaptation checkpoint at:
+The standard production R-SFT training input is now:
 
 ```text
-artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl
+artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl
 ```
 
-The checkpoint contains 12,306 trainable reasoning examples: 7,683 unchanged
-context-fit Superior instruction rows, 3,993 unique accepted Variant-D rewrites,
-and the frozen 630 Gemini logic anchors. Manual curation covers all 9,624
-over-context candidates; 4,476 kept candidates are still awaiting compression.
-Twenty-eight accepted rewrites are deliberately omitted because compression
-collapsed them onto a prompt already present in the training corpus (22 against
-the baseline and 6 against another accepted rewrite), which would otherwise
-create conflicting supervision for identical normalized inputs. The JSONL is
-SHA-pinned by its adjacent manifest.
-
-The production mixture remains 90% reasoning and 10% completed S0 instruction
-retention by loss-bearing target tokens. The S0 lane preserves its original
-instruction-source proportions and excludes ClimbMix replay from retention.
+It contains 16,716 unique normalized prompts: 7,683 unchanged Superior instruction rows, 8,403 unique accepted Variant-D rewrites, and 630 Gemini logic anchors. All 8,473 curation-v2 keepers were processed; 70 accepted rewrites were excluded for normalized-prompt collisions. SHA-256 is `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`, and every row fits the exact atomic 2,048-token serialization.
 
 Canonical Kaggle launch:
 
@@ -132,40 +114,25 @@ Canonical Kaggle launch:
 python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 ```
 
-No `--dataset-dir` is required. The launcher resolves the completed 100M/2B S0
-bundle, validates the committed 12,306-row checkpoint and its SHA-256, builds a
-native `atomic-production-v1` bundle with 32,768 loss-bearing target tokens per
-optimizer block, verifies it, and starts the qualified 2xT4 DDP trainer. This
-checkpoint uses the distinct run identity `100m-2b-rsft-r0-12306-001` so the
-eventual complete corpus cannot accidentally resume from it.
+With no `--dataset-dir`, the launcher validates the committed 16,716-row corpus from pinned worktree commit `2ae60bfa135017353f39da2ef34a6124cda465dc`, resolves the completed 100M/2B S0 parent, builds/verifies the 90/10 `atomic-production-v1` bundle with 32,768 target tokens per optimizer block, and uses fresh default run ID `100m-2b-rsft-r0-16716-001`. It must not resume the historical 12,306-row run.
 
-The production builder can also be run directly:
+Direct bundle build:
 
 ```bash
 python post_training/R-SFT/build_atomic.py \
-  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-checkpoint-12306/reasoning.jsonl \
+  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl \
   --s0-bundle /path/to/100m-2b-sft-s0-bundle \
-  --output-dir /path/to/rsft-r0-superior-instruction-checkpoint-12306
+  --output-dir /path/to/rsft-r0-superior-instruction-expanded-16716
 ```
 
-The builder deterministically partitions heterogeneous `skill × difficulty`
-groups, holds out 1% validation and 1% test per group, uses only the frozen
-atomic `<think>`, `</think>`, `<answer>` token mapping, computes the S0 retention
-target from reasoning loss-bearing tokens, and verifies the resulting native
-bundle.
+The verified reference build contains 417 train blocks and 13,420,823 train targets: 12,077,733 reasoning plus 1,343,090 S0 retention.
 
-### Completed checkpoint
+## Current accepted trained checkpoint
 
-The `100m-2b-rsft-r0-12306-001` trajectory completed on 2026-08-19 at
-`step-00000361` and is the current accepted 100M/2B R-SFT artifact. Chat with it
-using:
+The `100m-2b-rsft-r0-12306-001` trajectory completed on 2026-08-19 at `step-00000361` and remains the accepted R-SFT model until a 16,716-row run is actually trained and qualified. Chat remains:
 
 ```bash
 .venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
 ```
 
-The explicit `--run-id 100m-2b-rsft-r0-12306-001` form is equivalent. The
-Hugging Face checkpoint lives in `roccoangelella/small-llm-100m-qualification`.
-The earlier atomic pilot, 10-epoch repeat probe, and textual pilot run namespaces
-were deleted from Hugging Face after this run completed; only their historical
-experiment definitions remain in Git. The S0 parent remains preserved.
+The explicit `--run-id 100m-2b-rsft-r0-12306-001` form is equivalent. `train` now defaults to `100m-2b-rsft-r0-16716-001`, while `eval` still resolves the accepted `100m-2b-rsft-r0-12306-001` model during this transition.

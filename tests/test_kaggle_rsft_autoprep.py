@@ -41,7 +41,8 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
             rsft_runtime.default_pilot_run_id("textual"),
             "100m-2b-rsft-r0-textual-pilot-001",
         )
-        self.assertEqual(rsft_runtime.PRODUCTION_RUN_ID, "100m-2b-rsft-r0-12306-001")
+        self.assertEqual(rsft_runtime.PRODUCTION_RUN_ID, "100m-2b-rsft-r0-16716-001")
+        self.assertEqual(rsft_runtime.ACCEPTED_RUN_ID, "100m-2b-rsft-r0-12306-001")
 
     def test_auto_preparation_plan_is_pilot_only_and_uses_small_blocks(self) -> None:
         plan = rsft_prepare.preparation_plan(worktree=REPO)
@@ -64,15 +65,17 @@ class KaggleRSFTAutoPreparationTests(unittest.TestCase):
         reasoning = (REPO / rsft_prepare.PRODUCTION_REASONING_RELATIVE_PATH).resolve()
         loaded = rsft_prepare._require_production_reasoning_manifest(reasoning)
         self.assertEqual(loaded["output_sha256"], rsft_prepare.PRODUCTION_REASONING_SHA256)
-        self.assertEqual(loaded["combined_rows"], 12_306)
-        self.assertEqual(loaded["duplicate_rewrite_exclusions"], 28)
+        self.assertEqual(loaded["combined_rows"], 16_716)
+        self.assertEqual(loaded["adapted_superior_rows"], 8_403)
+        self.assertEqual(loaded["accepted_keep_rewrites"], 8_473)
+        self.assertEqual(loaded["duplicate_rewrite_exclusions"], 70)
 
 
     def test_production_preparation_plan_uses_committed_superior_instruction_corpus(self) -> None:
         plan = rsft_prepare.production_preparation_plan(worktree=REPO)
         self.assertEqual(
             Path(str(plan["reasoning_jsonl"])),
-            (REPO / "artifacts" / "rsft-superior-instruction-r0-checkpoint-12306" / "reasoning.jsonl").resolve(),
+            (REPO / "artifacts" / "rsft-superior-instruction-r0-expanded" / "reasoning.jsonl").resolve(),
         )
         self.assertEqual(plan["optimizer_target_tokens"], 32_768)
         self.assertEqual(plan["heldout_fraction_per_split"], 0.01)

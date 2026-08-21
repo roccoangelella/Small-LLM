@@ -14,9 +14,10 @@ import sft_runtime as base
 import sft_scaled_runtime as scaled
 
 # Pinned repeated-epoch-capable implementation used by the detached Kaggle worktree.
-IMPLEMENTATION_COMMIT = "b6bf8df5aa3c835278214a4ba4adb91225b6b672"
+IMPLEMENTATION_COMMIT = "2ae60bfa135017353f39da2ef34a6124cda465dc"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
-PRODUCTION_RUN_ID = "100m-2b-rsft-r0-12306-001"
+PRODUCTION_RUN_ID = "100m-2b-rsft-r0-16716-001"
+ACCEPTED_RUN_ID = "100m-2b-rsft-r0-12306-001"
 PILOT_RUN_IDS = {
     "atomic": "100m-2b-rsft-r0-atomic-pilot-001",
     "textual": "100m-2b-rsft-r0-textual-pilot-001",
@@ -433,6 +434,7 @@ def train(
 
 
 __all__ = [
+    "ACCEPTED_RUN_ID",
     "CANONICAL_SPECIAL_TOKENS",
     "DEFAULT_CADENCE_STEPS",
     "DEFAULT_LEARNING_RATE",

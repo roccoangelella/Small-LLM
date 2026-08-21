@@ -12,7 +12,7 @@ The completed S0 bundle is resolved automatically in this order:
 2. one matching attached Kaggle input;
 3. private Kaggle dataset `roccoangelella/small-llm-100m-2b-sft-s0-001` through `kagglehub`.
 
-The production R-SFT bundle does not need a separate attachment. Unless `--dataset-dir` is supplied, the launcher deterministically rebuilds and verifies it from the committed 12,306-row production reasoning corpus plus the resolved S0 retention source.
+The production R-SFT bundle does not need a separate attachment. The accepted model being evaluated is still `100m-2b-rsft-r0-12306-001`, while the default rebuilt held-out R-SFT corpus is the current 16,716-row production corpus; use `--dataset-dir` if a historical bundle is specifically required. Unless `--dataset-dir` is supplied, the launcher deterministically rebuilds and verifies it from the committed 16,716-row production reasoning corpus plus the resolved S0 retention source.
 
 Hugging Face checkpoint access requires `HF_TOKEN`. Repository selection resolves through:
 

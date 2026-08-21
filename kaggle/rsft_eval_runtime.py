@@ -99,7 +99,7 @@ def evaluation_plan(
         "rsft_bundle": (
             str(Path(dataset_dir).expanduser().resolve())
             if dataset_dir
-            else "auto:rebuild-verified-from-committed-12306-corpus"
+            else "auto:rebuild-verified-from-committed-16716-corpus"
         ),
         "eval_core_v1": eval_dir or "auto:attached-kaggle-eval_core_v1",
         "s0_repo_id": parent_repo,
