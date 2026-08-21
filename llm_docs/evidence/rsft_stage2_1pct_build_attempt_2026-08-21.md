@@ -46,7 +46,7 @@ The retention lane remains 10% of the realized total and is selected later from 
 Three execution routes were attempted from the available tooling:
 
 1. **Hugging Face Jobs CPU** — the remote execution request was rejected before allocation with HTTP `402 Payment Required`. No Stage-2 scan ran there.
-2. **GitHub Actions** — `.github/workflows/rsft-stage2-1pct.yml` was added and temporary PR #8 changed only a trigger marker. No PR workflow run became visible, including the repository's ordinary PR test workflow, so no runner executed the Stage-2 scan. This is not evidence of a pipeline/test failure.
+2. **GitHub Actions** — `.github/workflows/rsft-stage2-1pct.yml` was added and temporary PR #8 changed only a trigger marker. No PR workflow run became visible, including the repository's ordinary PR test workflow, so no runner executed the Stage-2 scan. This is not evidence of a pipeline/test failure. The temporary validation PR was not intended for merge.
 3. **Direct Stage-2 object download into the local tool container** — the available large-file/Xet download path did not deliver the Stage-2 payload into the local runtime, so a local full-source scan could not be completed.
 
 No Kaggle execution connector is available in the current session.
