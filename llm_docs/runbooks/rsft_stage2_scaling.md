@@ -105,3 +105,7 @@ Do not regenerate or reorder the earlier source prefix. The expected invariant i
 ```
 
 Repeated epochs are not part of this scaling experiment.
+
+## Current execution status
+
+The producer and focused tests are committed on `main`. The first real 1% source-scan attempt is recorded in `../evidence/rsft_stage2_1pct_build_attempt_2026-08-21.md`; no completed 1% artifact is currently claimed because none of the available execution routes in that session successfully ingested the canonical Stage-2 source payload.
