@@ -16,6 +16,7 @@ import sft_scaled_runtime as scaled
 # Pinned repeated-epoch-capable implementation used by the detached Kaggle worktree.
 IMPLEMENTATION_COMMIT = "2ae60bfa135017353f39da2ef34a6124cda465dc"
 PARENT_RUN_ID = "100m-2b-sft-s0-001"
+DEFAULT_100M_HF_REPO_ID = "roccoangelella/small-llm-100m-qualification"
 PRODUCTION_RUN_ID = "100m-2b-rsft-r0-16716-001"
 ACCEPTED_RUN_ID = "100m-2b-rsft-r0-12306-001"
 PILOT_RUN_IDS = {
@@ -43,6 +44,32 @@ class RSFTProfile(base.SFTProfileSpec):
     def default_bundle(self) -> Path:
         return base.WORK / f"{self.sft_run_id}-bundle"
 
+
+
+
+def resolve_repository_ids(
+    parent_repo_id: str | None,
+    checkpoint_repo_id: str | None,
+) -> tuple[str, str]:
+    """Resolve repositories for the fixed 100M/2B R-SFT profile.
+
+    Generic ``SMALL_LLM_HF_REPO_ID`` and legacy SFT repo variables are
+    intentionally ignored: Kaggle accounts can retain a 20M repository in
+    those cross-profile secrets, and a 100M run must never inherit it.
+    """
+
+    parent_repo = (
+        parent_repo_id
+        or os.environ.get("SMALL_LLM_100M_HF_REPO_ID")
+        or DEFAULT_100M_HF_REPO_ID
+    )
+    checkpoint_repo = (
+        checkpoint_repo_id
+        or os.environ.get("SMALL_LLM_RSFT_HF_REPO_ID")
+        or os.environ.get("SMALL_LLM_100M_HF_REPO_ID")
+        or DEFAULT_100M_HF_REPO_ID
+    )
+    return parent_repo, checkpoint_repo
 
 def default_pilot_run_id(delimiter_format: str) -> str:
     try:
@@ -318,28 +345,7 @@ def train(
             "canonical production R-SFT remains one-pass; use the ablation lane for explicit repeat experiments"
         )
 
-    parent_repo = (
-        parent_repo_id
-        or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_HF_REPO_ID")
-    )
-    checkpoint_repo = (
-        checkpoint_repo_id
-        or os.environ.get("SMALL_LLM_RSFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_HF_REPO_ID")
-    )
-    if dry_run:
-        parent_repo = parent_repo or "<SMALL_LLM_SFT_HF_REPO_ID>"
-        checkpoint_repo = checkpoint_repo or "<SMALL_LLM_RSFT_HF_REPO_ID>"
-    if not parent_repo:
-        raise base.RuntimeFailure(
-            "pass --parent-repo-id or set SMALL_LLM_SFT_HF_REPO_ID/SMALL_LLM_HF_REPO_ID"
-        )
-    if not checkpoint_repo:
-        raise base.RuntimeFailure(
-            "pass --checkpoint-repo-id or set SMALL_LLM_RSFT_HF_REPO_ID/SMALL_LLM_SFT_HF_REPO_ID"
-        )
+    parent_repo, checkpoint_repo = resolve_repository_ids(parent_repo_id, checkpoint_repo_id)
     entity = wandb_entity or os.environ.get("WANDB_ENTITY")
 
     worktree = base.REPO if dry_run else base._prepare_worktree(profile)
@@ -436,6 +442,7 @@ def train(
 __all__ = [
     "ACCEPTED_RUN_ID",
     "CANONICAL_SPECIAL_TOKENS",
+    "DEFAULT_100M_HF_REPO_ID",
     "DEFAULT_CADENCE_STEPS",
     "DEFAULT_LEARNING_RATE",
     "DEFAULT_MICROBATCH_SIZE",
@@ -449,5 +456,6 @@ __all__ = [
     "default_experiment_run_id",
     "default_pilot_run_id",
     "resolve_profile",
+    "resolve_repository_ids",
     "train",
 ]

@@ -213,6 +213,57 @@ def test_production_dry_run_is_atomic_only_and_uses_canonical_run_id(
     assert "--rsft-num-epochs" in output
 
 
+def test_production_defaults_ignore_stale_generic_20m_repo(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(
+        "SMALL_LLM_HF_REPO_ID",
+        "roccoangelella/small-llm-20m-qualification",
+    )
+    monkeypatch.setenv(
+        "SMALL_LLM_SFT_HF_REPO_ID",
+        "roccoangelella/small-llm-20m-qualification",
+    )
+    monkeypatch.delenv("SMALL_LLM_100M_HF_REPO_ID", raising=False)
+    monkeypatch.delenv("SMALL_LLM_RSFT_HF_REPO_ID", raising=False)
+
+    result = rsft_cli.main(
+        [
+            "train",
+            "--model",
+            "100M",
+            "--tokens",
+            "2B",
+            "--dry-run",
+        ]
+    )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "roccoangelella/small-llm-100m-qualification" in output
+    assert "roccoangelella/small-llm-20m-qualification" not in output
+    assert "--parent-run-id" in output
+    assert "100m-2b-sft-s0-001" in output
+
+
+def test_repository_overrides_are_profile_specific(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SMALL_LLM_100M_HF_REPO_ID", "owner/100m")
+    monkeypatch.setenv("SMALL_LLM_RSFT_HF_REPO_ID", "owner/rsft")
+    monkeypatch.setenv("SMALL_LLM_HF_REPO_ID", "owner/wrong-generic")
+    monkeypatch.setenv("SMALL_LLM_SFT_HF_REPO_ID", "owner/wrong-sft")
+
+    assert rsft_runtime.resolve_repository_ids(None, None) == (
+        "owner/100m",
+        "owner/rsft",
+    )
+    assert rsft_runtime.resolve_repository_ids(
+        "owner/explicit-parent",
+        "owner/explicit-rsft",
+    ) == ("owner/explicit-parent", "owner/explicit-rsft")
+
+
 def test_production_dry_run_auto_prepares_committed_superior_corpus(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

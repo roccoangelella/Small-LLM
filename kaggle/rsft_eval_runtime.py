@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import rsft_prepare
@@ -35,27 +34,9 @@ def _repo_ids(
     parent_checkpoint_dir: str | None,
     rsft_checkpoint_dir: str | None,
 ) -> tuple[str | None, str | None]:
-    parent_repo = (
-        parent_repo_id
-        or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_HF_REPO_ID")
+    parent_repo, rsft_repo = rsft_runtime.resolve_repository_ids(
+        parent_repo_id, checkpoint_repo_id
     )
-    rsft_repo = (
-        checkpoint_repo_id
-        or os.environ.get("SMALL_LLM_RSFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID")
-        or os.environ.get("SMALL_LLM_HF_REPO_ID")
-    )
-    if not parent_checkpoint_dir and not parent_repo:
-        raise base.RuntimeFailure(
-            "R-SFT evaluation requires the S0 checkpoint repository; pass --parent-repo-id or set "
-            "SMALL_LLM_SFT_HF_REPO_ID/SMALL_LLM_HF_REPO_ID"
-        )
-    if not rsft_checkpoint_dir and not rsft_repo:
-        raise base.RuntimeFailure(
-            "R-SFT evaluation requires the R-SFT checkpoint repository; pass --checkpoint-repo-id or set "
-            "SMALL_LLM_RSFT_HF_REPO_ID/SMALL_LLM_SFT_HF_REPO_ID/SMALL_LLM_HF_REPO_ID"
-        )
     return parent_repo, rsft_repo
 
 

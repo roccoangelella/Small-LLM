@@ -39,6 +39,8 @@ With no `--dataset-dir`, the launcher pins a detached worktree to `2ae60bfa13501
 
 For committed/non-interactive Kaggle sessions, the S0 resolver must not ask KaggleHub to attach a new datasource at runtime. If the private S0 bundle is not already under `/kaggle/input`, the launcher sets `DISABLE_KAGGLE_CACHE=true` for the KaggleHub subprocess so it uses the authenticated HTTP resolver instead of the notebook attachment resolver. This keeps the minimal canonical command self-contained in non-interactive runs.
 
+The fixed 100M/2B R-SFT profile also ignores generic `SMALL_LLM_HF_REPO_ID` and legacy `SMALL_LLM_SFT_HF_REPO_ID` for model artifacts. Parent lookup defaults to `roccoangelella/small-llm-100m-qualification` (override with `--parent-repo-id` or `SMALL_LLM_100M_HF_REPO_ID`); R-SFT writes default to the same repository (override with `--checkpoint-repo-id` or `SMALL_LLM_RSFT_HF_REPO_ID`). This prevents stale 20M Kaggle secrets from redirecting the 100M parent lookup.
+
 Never point the expanded corpus at `100m-2b-rsft-r0-12306-001`; that ID belongs to the completed historical trajectory.
 
 Useful dry run:
