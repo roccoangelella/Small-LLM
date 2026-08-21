@@ -1,0 +1,11 @@
+{
+  "batch_index": 305,
+  "candidate_id": "ad53292c-7d5b-4fde-ae83-ba956724228d",
+  "date": "2026-08-21",
+  "final_record_sha256": "da011ed95d2a1815d451fd5d1434183a04f4760654e4bcd758da1b03eb239a6f",
+  "provider_policy": "Gemini-only; NVIDIA disabled; no alternate provider used",
+  "reason": "Gemini repeatedly returned empty completions because the source prompt appended an unsafe image-generation request involving minors. The recovered training row preserves the benign meeting-reminder constraints and the source answer refusal semantics without reproducing the unsafe requested imagery.",
+  "recovery_kind": "audited-safe-refusal-compression",
+  "schema": "small-llm-rsft-manual-safety-recovery-v1",
+  "serialized_token_count": 218
+}

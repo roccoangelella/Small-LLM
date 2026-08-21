@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-19
+last_reviewed: 2026-08-21
 ---
 
 # Current project status
@@ -193,9 +193,13 @@ The root chat registry now selects this run for the 100M/2B `--r-sft` profile. C
 
 The superseded Hugging Face R-SFT trial namespaces `100m-2b-rsft-r0-atomic-pilot-001`, `100m-2b-rsft-r0-atomic-repeat-e10-001`, and `100m-2b-rsft-r0-textual-pilot-001` were deleted after the new run completed. The current R-SFT run and completed S0 parent were preserved. Historical experiment definitions remain in Git but those three run IDs are no longer remotely loadable checkpoints.
 
-The over-context expansion lane is active and resumable under ADR 0106. The historical v1 curation and 1,122 accepted Variant-D batches remain immutable for the completed 12,306-row model. Expansion-only curation v2 (`manual-curation.expanded-v2.jsonl`, SHA-256 `fb4da2929b47ececbde839da199437144677e4c7e1ea52ef2e8f6d4525ae1cde`) covers the same 9,624 candidates with 8,473 keep, 829 code exclusions, 212 math exclusions, and 110 safety exclusions. The keeper-only resume lane harvests 4,009 still-valid historical keep rewrites and freezes 4,464 missing keepers for new Variant-D compression. Live progress is mutable; use `resume_superior_keep_adaptation.py status` rather than treating a transient accepted-batch count as a corpus identity. GemRouter is hard-gated to `GEMROUTER_BACKEND_ORDER=gemini-api` plus `GEMROUTER_NVIDIA_ENABLED=false`, and teacher traffic is forbidden unless health reports exactly Gemini-only backend order with fallback disabled. Final corpus size remains open until all v2 keepers are adapted and normalized-prompt collisions are removed.
+The expanded over-context corpus is complete under ADR 0106. Historical v1 curation and the 1,122 accepted Variant-D batches remain immutable evidence for the completed 12,306-row model. Expansion curation v2 (`manual-curation.expanded-v2.jsonl`, SHA-256 `fb4da2929b47ececbde839da199437144677e4c7e1ea52ef2e8f6d4525ae1cde`) retained 8,473 keepers. All 4,464 previously missing keepers now have accepted compressed supervision, so the keeper-resume status is `resume_pending_records=0` and 1,116/1,116 resume batches are complete. One stubborn candidate in batch 305 was recovered as an audited safe-refusal compression after Gemini repeatedly returned empty completions for an appended unsafe image-generation request involving minors; no alternate provider was used.
 
-Canonical evidence: [`../evidence/rsft_r0_12306_training_completion_2026-08-19.md`](../evidence/rsft_r0_12306_training_completion_2026-08-19.md) and [`../evidence/rsft_expansion_resume_2026-08-20.md`](../evidence/rsft_expansion_resume_2026-08-20.md). Active procedure: [`../runbooks/rsft_r0_atomic_production.md`](../runbooks/rsft_r0_atomic_production.md).
+The frozen expanded corpus is `artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl`, SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`. It contains 16,716 unique normalized prompts: 7,683 unchanged Superior instruction rows, 8,403 accepted unique simplified Superior rows, and 630 Gemini logic anchors. The finalizer excluded 70 otherwise accepted rewrites because their normalized prompts collided with the baseline or another accepted rewrite. Every row fits the exact atomic 2,048-token serialization; the observed serialized-token range is 61–2,048.
+
+The verified expanded native bundle is `/home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716`. Its train split has 417 optimizer blocks / 20,313 packed records and 13,420,823 loss-bearing targets: 12,077,733 reasoning targets plus 1,343,090 completed-S0 retention targets. Validation and test each contain four blocks. The bundle keeps the frozen 32,768-target optimizer block and atomic marker IDs 50257/50258/50259. This corpus/bundle does not replace the currently accepted trained model; any future training must use a new run identity rather than resume `100m-2b-rsft-r0-12306-001`.
+
+Canonical evidence: [`../evidence/rsft_r0_12306_training_completion_2026-08-19.md`](../evidence/rsft_r0_12306_training_completion_2026-08-19.md), [`../evidence/rsft_expansion_resume_2026-08-20.md`](../evidence/rsft_expansion_resume_2026-08-20.md), and [`../evidence/rsft_expanded_corpus_completion_2026-08-21.md`](../evidence/rsft_expanded_corpus_completion_2026-08-21.md). Active procedure: [`../runbooks/rsft_r0_atomic_production.md`](../runbooks/rsft_r0_atomic_production.md).
 
 ## Source of truth
 

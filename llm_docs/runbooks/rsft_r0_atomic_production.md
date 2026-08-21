@@ -144,4 +144,24 @@ Prepare/status commands:
   --work-dir artifacts/rsft-superior-instruction-r0-adaptation
 ```
 
-Provider batches and attempts under `keep-resume/` are generated local state and remain ignored by Git. Completion is quota-limited and resumable. Once pending reaches zero, finalize the curated corpus, audit exact 2,048-token fit and normalized-prompt uniqueness, and only then promote the new corpus/launcher identity.
+Provider batches and attempts under `keep-resume/` are generated local state and remain ignored by Git. The keeper lane completed on 2026-08-21 with `resume_pending_records=0`. Finalize deterministically with:
+
+```bash
+.venv/bin/python post_training/R-SFT/dataset/resume_superior_keep_adaptation.py finalize \
+  --work-dir artifacts/rsft-superior-instruction-r0-adaptation \
+  --baseline-jsonl artifacts/rsft-superior-instruction-r0/reasoning.jsonl \
+  --baseline-manifest artifacts/rsft-superior-instruction-r0/reasoning.jsonl.manifest.json \
+  --manual-curation-jsonl artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl \
+  --output-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl
+```
+
+The frozen result is 16,716 rows at SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`, after 70 normalized-prompt collision exclusions. Build the verified native bundle with:
+
+```bash
+.venv/bin/python post_training/R-SFT/build_atomic.py \
+  --reasoning-jsonl artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl \
+  --s0-bundle /home/ubuntu/Projects/small-llm-work/small-llm-100m-2b-sft-bundle \
+  --output-dir /home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716
+```
+
+The completed bundle has 417 train blocks and 13,420,823 train targets (12,077,733 reasoning + 1,343,090 S0 retention). Any training from this bundle requires a new run identity; do not resume the completed 12,306-row trajectory.

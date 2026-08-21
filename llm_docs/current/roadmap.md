@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-19
+last_reviewed: 2026-08-21
 ---
 
 # Current roadmap
@@ -80,14 +80,13 @@ The 100M/2B R-SFT R0 12,306-row trajectory is complete at `step-00000361` under 
 
 The immediate post-training work is evaluation/behavioral inspection of this completed checkpoint, not another same-corpus retrain. Use the registered `chat.py --model_params 100M --num_tokens 2B --r-sft` path or an explicit matching `--run-id`. Any qualification result should be recorded as new evidence without mutating the completed trajectory.
 
-The larger R-SFT corpus is now an active quota-limited lane under ADR 0106. Preserve the 1,122 historical accepted batches and the v1 curation for the completed model, but use expansion curation v2 (8,473 keepers) for all new work. The keeper-only resume starts from 4,009 still-valid old keep rewrites and adapts only the 4,464 missing keepers with the selected Gemini Variant-D compressor. GemRouter must remain hard Gemini-only (`GEMROUTER_NVIDIA_ENABLED=false`, backend order exactly `gemini-api`, fallback disabled). Continue resumably across daily quota windows; after every v2 keeper has an accepted rewrite, deduplicate normalized prompts against the 7,683-row baseline and one another, freeze the exact expanded corpus, build/verify the 90/10 atomic bundle, and assign a new run identity rather than resuming `100m-2b-rsft-r0-12306-001`.
+The larger R-SFT corpus is now complete under ADR 0106. Expansion curation v2 produced 8,473 accepted keeper rewrites; after normalized-prompt deduplication the frozen corpus contains 16,716 rows at SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405` (7,683 unchanged Superior rows, 8,403 unique simplified Superior rows, 630 Gemini anchors). Seventy accepted rewrites were excluded for collisions. The verified 90/10 atomic bundle is `/home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716`, with 417 train blocks and 13,420,823 train targets. Do not resume the completed 12,306-row run with this corpus; the next training decision is whether to launch a new expanded-corpus R-SFT run under a new identity after qualification planning.
 
 The first 20M/500M S0 behavioral failure remains historical evidence and does not override the now-completed 100M/2B S0→R-SFT trajectory.
 
 ## Open decisions
 
 - How does the completed 12,306-row R-SFT R0 checkpoint behave under direct chat and the next frozen reasoning qualification suite, especially on atomic `<think>`/`<answer>` protocol use and generalization beyond the training templates?
-- What exact final row count remains after all 8,473 curation-v2 keepers are adapted and normalized-prompt collisions are removed?
 - Does the deep-decay 10B continuation keep validation loss falling after step 17,789, or does the much steeper long-phase power law under-train later fresh data?
 - How does the completed step-15,500 400M cooldown probe compare with the completed 100M/2B endpoint under frozen `eval_core_v1`?
 - Which pre-terminal-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?
