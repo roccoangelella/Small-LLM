@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-21
 supersedes: null
+superseded_by: 0117
 ---
 
 # ADR 0116 — Promote expanded 3-epoch R-SFT as the current default R0
