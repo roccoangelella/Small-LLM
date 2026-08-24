@@ -11,7 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
-- [`0116-promote-expanded-e3-rsft-as-current-default-r0.md`](0116-promote-expanded-e3-rsft-as-current-default-r0.md)
+- [`0117-reject-expanded-e3-rsft-as-qualified-default.md`](0117-reject-expanded-e3-rsft-as-qualified-default.md)
 - [`0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md`](0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md)
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0113-use-superior-reasoning-stage2-for-rsft-scaling.md`](0113-use-superior-reasoning-stage2-for-rsft-scaling.md)
@@ -76,7 +76,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0069-own-beam-launch-namespace-in-synced-checkout.md`](0069-own-beam-launch-namespace-in-synced-checkout.md)
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0071-run-full-100m-10b-with-concurrent-5b-evaluation.md`](0071-run-full-100m-10b-with-concurrent-5b-evaluation.md)
-- [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-for-live-gateway.md)
+- [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-pin-beam-client-0207-for-live-gateway.md)
 - [`0073-persist-sft-cadence-checkpoints-before-evaluation.md`](0073-persist-sft-cadence-checkpoints-before-evaluation.md)
 - [`0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md`](0074-stream-ddp-sft-checkpoints-with-bounded-host-memory.md)
 - [`0075-bound-dual-t4-sft-inline-qualification.md`](0075-bound-dual-t4-sft-inline-qualification.md)
@@ -91,6 +91,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Superseded ADRs
 
+- [`0116-promote-expanded-e3-rsft-as-current-default-r0.md`](0116-promote-expanded-e3-rsft-as-current-default-r0.md) — superseded by ADR 0117 after the completed full R-SFT qualification showed protocol acquisition but regressions on eval-core quality, instruction behavior, S0 retention, and novel reasoning.
 - [`0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md`](0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md) — superseded by ADR 0114, which retains the ADR-0095 schedule and namespace but moves execution to one exact Modal H100 with microbatch-16 slicing inside the same global block 64.
 - [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md) — superseded by ADR 0071 after the user authorized the full 10B run with a concurrent, non-blocking approximately-5B Kaggle evaluation.
 - [`0068-make-plain-uv-sync-install-complete-runtime.md`](0068-make-plain-uv-sync-install-complete-runtime.md) — its complete-runtime rule is retained, but ADR 0072 replaces the gateway-rejected Beam 0.2.201 pin with 0.2.207.
