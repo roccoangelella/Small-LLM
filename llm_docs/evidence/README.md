@@ -4,6 +4,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## R-SFT evidence
 
+- [`rsft_e3_full_qualification_2026-08-24.md`](rsft_e3_full_qualification_2026-08-24.md) — full frozen S0 comparison for the expanded three-epoch checkpoint: protocol acquisition is real, but eval-core retention, instruction behavior, S0 retention, and novel reasoning all regress; classifies step-1251 as an experimental landmark rather than a qualified model improvement.
 - [`rsft_step417_upload_sigkill_2026-08-21.md`](rsft_step417_upload_sigkill_2026-08-21.md) — records the completed step-417 computation, failed final Xet upload, safe step-250 live pointer, and classic HTTP/LFS recovery policy.
 - [`rsft_kaggle_wrong_parent_repo_fix_2026-08-21.md`](rsft_kaggle_wrong_parent_repo_fix_2026-08-21.md) — fixes the expanded R-SFT Kaggle launch after a stale generic secret redirected the 100M S0 parent lookup to the 20M Hugging Face repository.
 - [`rsft_kaggle_noninteractive_s0_download_fix_2026-08-21.md`](rsft_kaggle_noninteractive_s0_download_fix_2026-08-21.md) — fixes private S0 resolution in committed/non-interactive Kaggle runs by bypassing KaggleHub runtime datasource attachment.
