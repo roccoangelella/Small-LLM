@@ -90,6 +90,10 @@ At the ~6.1B checkpoint, the matched sampled continuation instead starts with th
 
 This is a meaningful qualitative improvement that the strict factual-QA score does not measure. The 100M/~6.1B checkpoint appears substantially better at producing locally coherent prose even though elementary fact retrieval and structured instruction-like behavior remain weak.
 
+### User-confirmed midway observation
+
+After reviewing the preserved 100M/2B output side by side with the ~6.1B output, the user explicitly agreed that the midway run shows a **significant improvement in text quality apart from strict-answer accuracy**. The rain-opening example is the canonical concrete observation for this midway checkpoint: the 2B sampled model begins with the semantically odd `iced coffee` and quickly degrades into broken parent/children discourse, whereas the ~6.1B model begins with the natural `iced water` and maintains a recognizable school/playground scene across multiple sentences. Treat this as a qualitative observation about prose coherence and semantic continuity, not as a claim of improved factual QA.
+
 ## Interpretation
 
 Measured conclusion:
