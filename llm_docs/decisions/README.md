@@ -10,6 +10,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - `rejected`: considered and explicitly not chosen.
 
 ## Accepted ADRs
+- [`0119-publish-frozen-rsft-1pct-corpus-on-main.md`](0119-publish-frozen-rsft-1pct-corpus-on-main.md)
 
 - [`0117-reject-expanded-e3-rsft-as-qualified-default.md`](0117-reject-expanded-e3-rsft-as-qualified-default.md)
 - [`0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md`](0115-refactor-rsft-dataset-production-into-source-adapters-generic-context-repair-and-main-builder.md)
