@@ -10,6 +10,8 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - `rejected`: considered and explicitly not chosen.
 
 ## Accepted ADRs
+
+- [`0120-ignore-obsolete-rsft-datasets-from-git.md`](0120-ignore-obsolete-rsft-datasets-from-git.md)
 - [`0119-publish-frozen-rsft-1pct-corpus-on-main.md`](0119-publish-frozen-rsft-1pct-corpus-on-main.md)
 
 - [`0117-reject-expanded-e3-rsft-as-qualified-default.md`](0117-reject-expanded-e3-rsft-as-qualified-default.md)
