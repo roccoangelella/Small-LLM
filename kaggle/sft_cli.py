@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from fractions import Fraction
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,63 @@ def positive_int(value: str) -> int:
     return result
 
 
+def parse_sft_fraction(value: str) -> Fraction:
+    raw = value.strip()
+    if not raw:
+        raise argparse.ArgumentTypeError("SFT fraction cannot be empty")
+    try:
+        fraction = Fraction(raw[:-1]) / 100 if raw.endswith("%") else Fraction(raw)
+    except (ValueError, ZeroDivisionError) as error:
+        raise argparse.ArgumentTypeError(
+            "SFT fraction must be a ratio such as 1/5, a decimal such as 0.20, or a percentage such as 20%"
+        ) from error
+    if fraction <= 0 or fraction >= 1:
+        raise argparse.ArgumentTypeError("SFT fraction must be strictly between 0 and 1")
+    return fraction
+
+
+def _fraction_label(fraction: Fraction) -> str:
+    percent = fraction * 100
+    if percent.denominator == 1:
+        return f"{percent.numerator}pct"
+    return f"{fraction.numerator}of{fraction.denominator}"
+
+
+def _fraction_display(fraction: Fraction) -> str:
+    percent = float(fraction * 100)
+    return f"{percent:g}%"
+
+
+def _variant_id(value: str, label: str) -> str:
+    if value.endswith("-001"):
+        return f"{value[:-4]}-{label}-001"
+    return f"{value}-{label}"
+
+
+def with_sft_fraction(
+    profile: sft_runtime.SFTProfileSpec,
+    fraction: Fraction | None,
+) -> sft_runtime.SFTProfileSpec:
+    if fraction is None:
+        return profile
+    current = Fraction(profile.sft_fraction_numerator, profile.sft_fraction_denominator)
+    if fraction == current:
+        return profile
+    label = _fraction_label(fraction)
+    return replace(
+        profile,
+        sft_run_id=_variant_id(profile.sft_run_id, label),
+        wandb_run_id=_variant_id(profile.wandb_run_id, label),
+        wandb_run_name=(
+            f"{profile.model_label} / {profile.token_label} parent / SFT S0 / "
+            f"{_fraction_display(fraction)}"
+        ),
+        dataset_slug=_variant_id(profile.dataset_slug, label),
+        sft_fraction_numerator=fraction.numerator,
+        sft_fraction_denominator=fraction.denominator,
+    )
+
+
 def _profile_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", required=True, type=parse_quantity, metavar="SIZE")
     parser.add_argument(
@@ -58,6 +116,14 @@ def _profile_args(parser: argparse.ArgumentParser) -> None:
         required=True,
         type=parse_quantity,
         metavar="SIZE",
+    )
+    parser.add_argument(
+        "--sft-fraction",
+        type=parse_sft_fraction,
+        help=(
+            "override the profile SFT target budget as a parent-token fraction; "
+            "accepts values such as 20%%, 0.20, or 1/5"
+        ),
     )
     parser.add_argument("--dry-run", action="store_true")
 
@@ -137,7 +203,7 @@ def resolve_profile(model: int, tokens: int) -> sft_runtime.SFTProfileSpec:
 
 
 def runtime_for(profile: sft_runtime.SFTProfileSpec):
-    if profile is PROFILE_100M_2B:
+    if isinstance(profile, type(PROFILE_100M_2B)) and profile.model_parameters == 100_000_000 and profile.parent_training_tokens == 2_000_000_000:
         return sft_scaled_runtime
     return sft_runtime
 
@@ -148,7 +214,7 @@ def dry_run_payload(
     forwarded = {
         key: value
         for key, value in vars(args).items()
-        if key not in {"action", "model", "tokens", "dry_run"} and value is not None
+        if key not in {"action", "model", "tokens", "dry_run", "sft_fraction"} and value is not None
     }
     return {
         "action": args.action,
@@ -156,13 +222,14 @@ def dry_run_payload(
         "parent_pretraining_tokens": profile.token_label,
         "parent_run_id": profile.parent_run_id,
         "sft_run_id": profile.sft_run_id,
+        "dataset_slug": profile.dataset_slug,
         "sft_fraction": profile.sft_fraction_numerator / profile.sft_fraction_denominator,
         "known_exact_parent_consumed_tokens": profile.known_parent_consumed_tokens,
         "requested_sft_targets": profile.requested_sft_targets,
         "microbatch_size": profile.microbatch_size,
         "cadence_steps": profile.cadence_steps,
         "learning_rate": profile.learning_rate,
-        "kaggle_training_topology": "2xT4-DDP" if profile is PROFILE_100M_2B else "single-cuda",
+        "kaggle_training_topology": "2xT4-DDP" if runtime_for(profile) is sft_scaled_runtime else "single-cuda",
         "launch_commit": profile.launch_commit,
         "resume": "automatic_verified",
         "arguments": forwarded,
@@ -218,7 +285,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.action == "profiles":
         return _profiles()
     try:
-        profile = resolve_profile(args.model, args.tokens)
+        profile = with_sft_fraction(
+            resolve_profile(args.model, args.tokens),
+            args.sft_fraction,
+        )
     except sft_runtime.RuntimeFailure as error:
         parser.error(str(error))
     if args.dry_run:
@@ -227,7 +297,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(
         f"[launch] action={args.action} model={profile.model_label} "
-        f"tokens={profile.token_label} resume=automatic_verified",
+        f"tokens={profile.token_label} sft_fraction="
+        f"{profile.sft_fraction_numerator}/{profile.sft_fraction_denominator} "
+        "resume=automatic_verified",
         flush=True,
     )
     runtime = runtime_for(profile)
@@ -289,6 +361,8 @@ __all__ = [
     "dry_run_payload",
     "main",
     "parse_quantity",
+    "parse_sft_fraction",
     "resolve_profile",
     "runtime_for",
+    "with_sft_fraction",
 ]
