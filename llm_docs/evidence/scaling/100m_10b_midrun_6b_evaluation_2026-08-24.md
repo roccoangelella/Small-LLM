@@ -56,7 +56,7 @@ Thus the extra exposure produces a real and statistically clear intrinsic gain. 
 
 For another reference point, the earlier 20M/500M->20M/2B fourfold data increase reduced loss by only 2.81%. The 100M model therefore still benefits from more data, but the returns are not close to the effect obtained by increasing capacity from 20M to 100M.
 
-## Matched prompt behavior
+## Matched factual-QA behavior
 
 Strict direct-answer reading of the 12 QA prompts under greedy-32:
 
@@ -65,7 +65,7 @@ Strict direct-answer reading of the 12 QA prompts under greedy-32:
 100M / ~6.1B:   3 / 12  (Paris, heart, photosynthesis)
 ```
 
-The approximately-6.1B checkpoint still misses Jupiter, Mars, Shakespeare, 0 C, Pacific Ocean under this greedy sample, yen, Portuguese, 366, and 56. Ten of twelve QA generations stop before the 32-token cap, exactly matching the 100M/2B count of 10/12. Long/structured generations continue to show repetition and schema drift, including repeated dialogue and malformed country-capital continuation.
+The approximately-6.1B checkpoint still misses Jupiter, Mars, Shakespeare, 0 C, Pacific Ocean under this greedy sample, yen, Portuguese, 366, and 56. Ten of twelve QA generations stop before the 32-token cap, exactly matching the 100M/2B count of 10/12.
 
 Strict direct-answer reading under the matched T=1/top-k20/top-p0.9 sampled protocol:
 
@@ -74,22 +74,37 @@ Strict direct-answer reading under the matched T=1/top-k20/top-p0.9 sampled prot
 100M / ~6.1B:   4 / 12  (Paris, Pacific Ocean, Portuguese, photosynthesis)
 ```
 
-The correct-fact set changes, but the count does not improve. The ~6.1B sample regresses on Jupiter and freezing temperature while gaining Paris and Portuguese. With only one stochastic sample per prompt, this is not a robust task-accuracy estimate, but it provides no evidence of a qualitative behavioral jump over 2B.
+The correct-fact set changes, but the count does not improve. With only one stochastic sample per prompt, this is not a robust task-accuracy estimate.
+
+## Free-form continuation quality
+
+The flat strict-QA counts should not be interpreted as flat generation quality. Historical project journal evidence preserves the same `story_opening` prompt at the completed 100M/2B endpoint under the matched T=1/top-k20/top-p0.9 sampling policy:
+
+```text
+The rain had stopped before dawn, leaving the streets covered in ...
+```
+
+At 100M/2B, the sampled continuation starts with `iced coffee` and then drifts rapidly into grammatically broken, weakly connected parent/children discourse. The accompanying deterministic output starts awkwardly with `ices` and falls into repeated `The rain was still wet, and the sun was shining` loops.
+
+At the ~6.1B checkpoint, the matched sampled continuation instead starts with the locally plausible `iced water` and develops a recognizable children/teachers/school-playground scene. It is still repetitive and not fully coherent at paragraph scale, but sentence formation, local semantic plausibility, entity continuity, and discourse stability are visibly stronger than in the preserved 100M/2B sample. The current greedy-32 continuation also opens with `iced water`, although it then repeats the prompt; because the older deterministic record was not the same 32-token-capped protocol, the sampled comparison is the stronger apples-to-apples evidence.
+
+This is a meaningful qualitative improvement that the strict factual-QA score does not measure. The 100M/~6.1B checkpoint appears substantially better at producing locally coherent prose even though elementary fact retrieval and structured instruction-like behavior remain weak.
 
 ## Interpretation
 
 Measured conclusion:
 
-> By approximately 6.1B training tokens, the 100M trajectory is clearly better than its 2B-token parent as a language model, but not dramatically better as a zero-shot base-model QA/instruction-like generator. The intrinsic improvement is about 5% in cross-entropy loss and 16% in perplexity, while matched tiny-probe behavioral accuracy is essentially flat (greedy +1/12; sampled unchanged).
+> By approximately 6.1B training tokens, the 100M trajectory is clearly better than its 2B-token parent as a language model. Intrinsic loss improves by about 5% and perplexity by about 16%. Strict factual-QA accuracy is nearly flat on the tiny frozen probes, but preserved matched free-form samples show a substantial improvement in local coherence, semantic plausibility, and discourse continuity.
 
-This supports a distinction between **intrinsic distribution-modeling progress** and **emergent prompt behavior**. The run is still learning from additional data, but the current mid-run evidence does not show that simply moving from 2B to ~6B tokens transforms the 100M model's elementary factual QA, structured completion, or long-generation behavior.
+The right distinction is therefore not simply `intrinsic progress versus no behavioral progress`. It is more specific: **free-form language generation quality has improved materially, while factual QA and structured prompt-following have improved much less**. The remaining weaknesses include repetition, schema drift, and elementary factual reliability.
 
-Because this is an intermediate checkpoint before the completed 10B endpoint, it should not be used to pre-judge the final result. The final endpoint should repeat the same frozen full eval, greedy-32, and matched sampled protocols so the effect of the remaining training/decay can be measured directly.
+Because this is an intermediate checkpoint before the completed 10B endpoint, it should not be used to pre-judge the final result. The final endpoint should repeat the same frozen full eval, greedy-32, and matched sampled protocols. Future qualitative comparisons should explicitly score continuation coherence separately from strict QA so this dimension is not hidden by answer accuracy.
 
 ## Sources
 
 - User-supplied `100m-10b-latest-eval-core-full.json` (`step-00046250`).
 - User-supplied `100m-10b-latest-greedy32.json` (`step-00046500`).
 - User-supplied `100m-10b-latest-sampled.json` (`step-00046500`).
+- Historical `journals/journal10.md`, preserving 100M/2B deterministic and T=1/top-k20/top-p0.9 `story_opening` continuations.
 - `100m_2b_behavioral_qualification_2026-08-13.md`.
 - `20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`.
