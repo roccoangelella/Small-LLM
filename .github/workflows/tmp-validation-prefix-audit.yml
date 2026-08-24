@@ -1,0 +1,153 @@
+name: tmp-validation-prefix-audit
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-validation-prefix-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  reconstruct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install audit dependency
+        run: python -m pip install --disable-pip-version-check -q tiktoken requests
+      - name: Reconstruct first 4097 validation tokens
+        shell: bash
+        run: |
+          python - <<'PY'
+          import inspect
+          import json
+          from pathlib import Path
+
+          import tiktoken
+
+          from dataset import config
+          from dataset.src.bytesource import list_source_files, make_http_reader
+          from dataset.src.workplan import build_work_plan
+          from dataset.src import streaming
+
+          iterator_candidates = []
+          for name, value in vars(streaming).items():
+              if inspect.isfunction(value):
+                  doc = inspect.getdoc(value) or ''
+                  if 'Yield one document at a time' in doc and 'batch cycle' in doc:
+                      iterator_candidates.append((name, value))
+          if len(iterator_candidates) != 1:
+              raise RuntimeError(f'could not uniquely resolve document iterator: {[n for n, _ in iterator_candidates]}')
+          iterator_name, iter_documents = iterator_candidates[0]
+          print(json.dumps({'iterator': iterator_name}, sort_keys=True), flush=True)
+
+          source_files = list_source_files(config.DATASET_REPOSITORY, config.DATASET_REVISION)
+          plan = build_work_plan(
+              source_files,
+              region_bytes=config.REGION_BYTES,
+              seed=config.SELECTION_SEED,
+              repository=config.DATASET_REPOSITORY,
+              revision=config.DATASET_REVISION,
+          )
+          files_by_item = {item.index: item.filename for item in plan.work_items}
+          reader_factory = lambda source: make_http_reader(
+              source, config.DATASET_REPOSITORY, config.DATASET_REVISION
+          )
+
+          enc = tiktoken.get_encoding('gpt2')
+          stream_tokens = []
+          docs = []
+          scanned_documents = 0
+          scanned_source_tokens = 0
+          for is_validation_doc, document in iter_documents(
+              plan,
+              reader_factory=reader_factory,
+              workers=4,
+              max_in_flight=16,
+              validation_probability=config.VALIDATION_PROBABILITY,
+              maximum_source_tokens_per_batch=1_000_000,
+              maximum_documents_per_batch=1_000,
+              maximum_bytes_per_batch=16 * 1024 * 1024,
+          ):
+              scanned_documents += 1
+              scanned_source_tokens += document.source_token_count
+              if not is_validation_doc:
+                  continue
+              start = len(stream_tokens)
+              tokens = list(document.tokens)
+              stream_tokens.extend(tokens)
+              inserted_eod = not tokens or tokens[-1] != config.EOD_TOKEN_ID
+              if inserted_eod:
+                  stream_tokens.append(config.EOD_TOKEN_ID)
+              end = len(stream_tokens)
+              docs.append({
+                  'ordinal': len(docs),
+                  'source_id': document.source_id,
+                  'filename': files_by_item[document.work_item_index],
+                  'work_item_index': document.work_item_index,
+                  'record_start': document.record_start,
+                  'cluster_id': document.cluster_id,
+                  'source_token_count': document.source_token_count,
+                  'stream_start': start,
+                  'stream_end_exclusive': end,
+                  'inserted_eod': inserted_eod,
+                  'text': enc.decode(tokens),
+              })
+              print(json.dumps({
+                  'validation_doc': len(docs)-1,
+                  'cluster': document.cluster_id,
+                  'tokens': document.source_token_count,
+                  'stream_end': end,
+                  'work_item': document.work_item_index,
+              }, sort_keys=True), flush=True)
+              if len(stream_tokens) >= 4097:
+                  break
+
+          if len(stream_tokens) < 4097:
+              raise RuntimeError(f'only reconstructed {len(stream_tokens)} validation tokens')
+
+          def token_text(index):
+              return enc.decode_single_token_bytes(stream_tokens[index]).decode('utf-8', errors='replace')
+
+          checks = {
+              'token_1718': token_text(1718),
+              'token_2025': token_text(2025),
+              'context_1718': enc.decode(stream_tokens[max(0, 1680):1760]),
+              'context_2025': enc.decode(stream_tokens[max(0, 1985):2065]),
+          }
+          checks['matches_known_teacher_forced_examples'] = (
+              checks['token_1718'] == ' coat'
+              and checks['token_2025'] == ' ball'
+              and 'parg' in checks['context_1718']
+              and 'ballast' in checks['context_2025']
+          )
+          result = {
+              'revision': config.DATASET_REVISION,
+              'selection_seed': config.SELECTION_SEED,
+              'validation_probability': config.VALIDATION_PROBABILITY,
+              'reader_workers': 4,
+              'max_in_flight': 16,
+              'scanned_documents': scanned_documents,
+              'scanned_source_tokens': scanned_source_tokens,
+              'validation_stream_tokens_reconstructed': len(stream_tokens),
+              'checks': checks,
+              'documents': docs,
+              'first_4097_token_ids': stream_tokens[:4097],
+          }
+          Path('validation_prefix_docs.json').write_text(
+              json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8'
+          )
+          print(json.dumps({'checks': checks, 'document_count': len(docs)}, ensure_ascii=False, sort_keys=True))
+          if not checks['matches_known_teacher_forced_examples']:
+              raise RuntimeError('reconstructed prefix does not match known teacher-forced positions')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-prefix-docs
+          path: validation_prefix_docs.json
+          if-no-files-found: warn
