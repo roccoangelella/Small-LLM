@@ -29,6 +29,34 @@ TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
 # temporarily materializes a worktree at this implementation commit.
 TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
 
+# Verified private Kaggle publication accepted for the 100M/2B 10% S0 run.
+# The publication round-trip reported this exact tree identity. Training binds
+# the split identities below because Kaggle extraction does not retain the
+# publisher's tree-hash envelope as an input file.
+TEN_PERCENT_PUBLISHED_TREE_SHA256 = (
+    "c7550a377978231bfcc4d158ab11f8e2604e45921c5acb4e37e9557f12590b4d"
+)
+TEN_PERCENT_PUBLISHED_FILE_COUNT = 22
+TEN_PERCENT_PUBLISHED_TOTAL_BYTES = 773_987_135
+TEN_PERCENT_PUBLISHED_SPLITS = {
+    "train": {
+        "loss_bearing_target_tokens": 200_099_738,
+        "manifest_sha256": "feefc3244bd8a2f369eec85e4a95410c2daf479016c04cf02c8042ca5a4010d3",
+        "build_report_sha256": "8a131988c43349fb360f56dd41f7f552e9c1533c2550701db67b37ece6e820d7",
+    },
+    "validation": {
+        "loss_bearing_target_tokens": 2_105_945,
+        "manifest_sha256": "26cb522729b4525498559d1ce131a181c30fd8fff573f3464e09030be803d09e",
+        "build_report_sha256": "37e3c4d98d1e7ed1ec077e0e92b7d79327c4ee2b473f0c4e86f0ec5e4d6c324d",
+    },
+    "test": {
+        # Test is the frozen completed-4% held-out split. The publication
+        # snippet did not include its report hash/count, so bind its immutable
+        # split-manifest identity, which is already part of ADR-0122.
+        "manifest_sha256": "48e99ee51c201da398e227742ca7e023064a408c486cce16e20427d1ec7634d2",
+    },
+}
+
 # Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
 # arena growth and omit qualification-only optimizer tensor cloning in this
 # execution path; neither setting changes optimizer state or model updates.
@@ -52,7 +80,7 @@ def _is_capacity_aware_10pct(
     )
 
 
-def _verify_capacity_aware_bundle(output: Path) -> None:
+def _read_capacity_aware_manifest(output: Path) -> dict[str, object]:
     manifest_path = output / "bundle-manifest.json"
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -60,6 +88,11 @@ def _verify_capacity_aware_bundle(output: Path) -> None:
         raise base.RuntimeFailure("existing 10% S0 bundle manifest is invalid") from error
     if not isinstance(payload, dict):
         raise base.RuntimeFailure("existing 10% S0 bundle manifest is not an object")
+    return payload
+
+
+def _verify_capacity_aware_bundle(output: Path) -> None:
+    payload = _read_capacity_aware_manifest(output)
     recipe = payload.get("s0_scaling_recipe")
     if not isinstance(recipe, dict) or recipe.get("name") != TEN_PERCENT_RECIPE:
         raise base.RuntimeFailure(
@@ -80,6 +113,36 @@ def _verify_capacity_aware_bundle(output: Path) -> None:
             raise base.RuntimeFailure(
                 f"existing ADR-0122 bundle does not match frozen {split} identity"
             )
+
+
+def _verify_published_10pct_training_bundle(output: Path) -> None:
+    """Bind training to the exact private Kaggle artifact accepted after publication."""
+
+    _verify_capacity_aware_bundle(output)
+    payload = _read_capacity_aware_manifest(output)
+    splits = payload.get("splits")
+    if not isinstance(splits, dict):
+        raise base.RuntimeFailure("published 10% S0 bundle has no split metadata")
+
+    for split, expected_fields in TEN_PERCENT_PUBLISHED_SPLITS.items():
+        observed = splits.get(split)
+        if not isinstance(observed, dict):
+            raise base.RuntimeFailure(f"published 10% S0 bundle is missing {split} metadata")
+        for field, expected in expected_fields.items():
+            actual = observed.get(field)
+            if actual != expected:
+                raise base.RuntimeFailure(
+                    "10% S0 training dataset identity mismatch: "
+                    f"split={split} field={field} expected={expected} actual={actual}"
+                )
+
+    print(
+        "[sft-dataset-preflight] "
+        f"recipe={TEN_PERCENT_RECIPE} train_manifest="
+        f"{TEN_PERCENT_PUBLISHED_SPLITS['train']['manifest_sha256']} "
+        f"publication_tree={TEN_PERCENT_PUBLISHED_TREE_SHA256} status=verified",
+        flush=True,
+    )
 
 
 def _require_stable_parent_artifact(
@@ -224,7 +287,14 @@ def train(
     wandb_entity: str | None,
 ) -> int:
     worktree = base._prepare_worktree(profile)
-    bundle = base._find_bundle(dataset_dir)
+    bundle = base._find_bundle(dataset_dir, profile)
+    exact_parent_tokens = base._exact_parent_tokens(profile, None)
+    if _is_capacity_aware_10pct(
+        profile,
+        parent_consumed_tokens=exact_parent_tokens,
+    ):
+        _verify_published_10pct_training_bundle(bundle)
+
     parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_HF_REPO_ID")
     checkpoint_repo = checkpoint_repo_id or os.environ.get("SMALL_LLM_SFT_HF_REPO_ID", parent_repo)
     if not parent_repo:
@@ -287,6 +357,10 @@ __all__ = [
     "KAGGLE_SFT_PROCESS_ENV",
     "TEN_PERCENT_BUILD_COMMIT",
     "TEN_PERCENT_PARENT_TARGETS",
+    "TEN_PERCENT_PUBLISHED_FILE_COUNT",
+    "TEN_PERCENT_PUBLISHED_SPLITS",
+    "TEN_PERCENT_PUBLISHED_TOTAL_BYTES",
+    "TEN_PERCENT_PUBLISHED_TREE_SHA256",
     "TEN_PERCENT_RECIPE",
     "TEN_PERCENT_TRAIN_TARGETS",
     "evaluate",
