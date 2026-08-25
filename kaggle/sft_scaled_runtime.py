@@ -28,6 +28,10 @@ TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
 # The historical 4% profile keeps its older launch pin; only 10% bundle creation
 # temporarily materializes a worktree at this implementation commit.
 TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
+# ADR-0126 training is a new scientific trajectory. Keep the completed 4% SFT
+# worktree pinned to its historical implementation while the 10% run executes
+# the fresh-from-zero aggressive WSqD scheduler from this exact commit.
+TEN_PERCENT_TRAIN_COMMIT = "9e0d231f9cf4c16dea94e300ca62377444559355"
 
 # Verified private Kaggle publication accepted for the 100M/2B 10% S0 run.
 # The publication round-trip reported this exact tree identity. Training binds
@@ -57,7 +61,7 @@ TEN_PERCENT_PUBLISHED_SPLITS = {
     },
 }
 
-# Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
+# Kaggle's two Python/DDP workers share one host-memory budget. Bound glibc
 # arena growth and omit qualification-only optimizer tensor cloning in this
 # execution path; neither setting changes optimizer state or model updates.
 KAGGLE_SFT_PROCESS_ENV = (
@@ -286,13 +290,21 @@ def train(
     max_steps_this_session: int | None,
     wandb_entity: str | None,
 ) -> int:
-    worktree = base._prepare_worktree(profile)
-    bundle = base._find_bundle(dataset_dir, profile)
     exact_parent_tokens = base._exact_parent_tokens(profile, None)
-    if _is_capacity_aware_10pct(
+    capacity_aware = _is_capacity_aware_10pct(
         profile,
         parent_consumed_tokens=exact_parent_tokens,
-    ):
+    )
+    train_profile = (
+        replace(profile, launch_commit=TEN_PERCENT_TRAIN_COMMIT)
+        if capacity_aware
+        else profile
+    )
+    worktree = base._prepare_worktree(train_profile)
+    bundle = base._find_bundle(dataset_dir, profile)
+    if capacity_aware:
+        if float(profile.learning_rate) != 3e-5:
+            raise base.RuntimeFailure("100M/2B 10% SFT peak LR is frozen at 3e-5")
         _verify_published_10pct_training_bundle(bundle)
 
     parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_HF_REPO_ID")
@@ -336,9 +348,10 @@ def train(
     if max_steps_this_session is not None:
         trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
 
+    runner = "dual_t4_sft_10pct.py" if capacity_aware else "dual_t4_sft.py"
     command = ["env", *KAGGLE_SFT_PROCESS_ENV] + base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
         "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
-        str(worktree / "kaggle" / "dual_t4_sft.py"),
+        str(worktree / "kaggle" / runner),
         "--worktree", str(worktree),
         "--sft-fraction-numerator", str(profile.sft_fraction_numerator),
         "--sft-fraction-denominator", str(profile.sft_fraction_denominator),
@@ -362,6 +375,7 @@ __all__ = [
     "TEN_PERCENT_PUBLISHED_TOTAL_BYTES",
     "TEN_PERCENT_PUBLISHED_TREE_SHA256",
     "TEN_PERCENT_RECIPE",
+    "TEN_PERCENT_TRAIN_COMMIT",
     "TEN_PERCENT_TRAIN_TARGETS",
     "evaluate",
     "prepare",
