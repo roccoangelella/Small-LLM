@@ -2,6 +2,7 @@
 """Scaled SFT runtime extensions."""
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,10 @@ INLINE_BEHAVIOR_CASES = 2
 TEN_PERCENT_PARENT_TARGETS = 2_001_000_448
 TEN_PERCENT_TRAIN_TARGETS = 200_100_044
 TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
+# This commit contains the dedicated builder plus its routing regression tests.
+# The historical 4% profile keeps its older launch pin; only 10% bundle creation
+# temporarily materializes a worktree at this implementation commit.
+TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
 
 # Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
 # arena growth and omit qualification-only optimizer tensor cloning in this
@@ -126,7 +131,17 @@ def prepare(
     revision: str | None,
 ) -> int:
     replay = base._resolve_replay_root(replay_root)
-    worktree = base._prepare_worktree(profile)
+    exact_parent_tokens = base._exact_parent_tokens(profile, parent_consumed_tokens)
+    capacity_aware = _is_capacity_aware_10pct(
+        profile,
+        parent_consumed_tokens=exact_parent_tokens,
+    )
+    worktree_profile = (
+        replace(profile, launch_commit=TEN_PERCENT_BUILD_COMMIT)
+        if capacity_aware
+        else profile
+    )
+    worktree = base._prepare_worktree(worktree_profile)
     prepared = Path(prepared_dir).expanduser().resolve() if prepared_dir else profile.default_prepared
     output = Path(output_dir).expanduser().resolve() if output_dir else profile.default_bundle
     prepared_manifest_path = prepared / "prepared-manifest.json"
@@ -146,12 +161,7 @@ def prepare(
             cwd=worktree,
         )
 
-    exact_parent_tokens = base._exact_parent_tokens(profile, parent_consumed_tokens)
     expected_targets = base._expected_sft_targets(profile, exact_parent_tokens)
-    capacity_aware = _is_capacity_aware_10pct(
-        profile,
-        parent_consumed_tokens=exact_parent_tokens,
-    )
     if base._verify_existing_bundle_budget(output, expected_targets=expected_targets):
         if capacity_aware:
             _verify_capacity_aware_bundle(output)
@@ -275,6 +285,7 @@ __all__ = [
     "INLINE_BEHAVIOR_CASES",
     "INLINE_VALIDATION_BLOCKS",
     "KAGGLE_SFT_PROCESS_ENV",
+    "TEN_PERCENT_BUILD_COMMIT",
     "TEN_PERCENT_PARENT_TARGETS",
     "TEN_PERCENT_RECIPE",
     "TEN_PERCENT_TRAIN_TARGETS",
