@@ -18,6 +18,12 @@ import sft_runtime as base
 INLINE_VALIDATION_BLOCKS = 1
 INLINE_BEHAVIOR_CASES = 2
 
+# ADR-0122 is deliberately narrow: only the completed 100M/2B parent at exactly
+# 10% uses the capacity-aware one-pass instruction recipe and frozen held-outs.
+TEN_PERCENT_PARENT_TARGETS = 2_001_000_448
+TEN_PERCENT_TRAIN_TARGETS = 200_100_044
+TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
+
 # Kaggle's two Python/DDP workers share one host-memory budget.  Bound glibc
 # arena growth and omit qualification-only optimizer tensor cloning in this
 # execution path; neither setting changes optimizer state or model updates.
@@ -26,6 +32,49 @@ KAGGLE_SFT_PROCESS_ENV = (
     "MALLOC_TRIM_THRESHOLD_=131072",
     "SMALL_LLM_DISABLE_OPTIMIZER_TELEMETRY=1",
 )
+
+
+def _is_capacity_aware_10pct(
+    profile: base.SFTProfileSpec,
+    *,
+    parent_consumed_tokens: int,
+) -> bool:
+    return (
+        profile.model_parameters == 100_000_000
+        and profile.parent_training_tokens == 2_000_000_000
+        and parent_consumed_tokens == TEN_PERCENT_PARENT_TARGETS
+        and profile.sft_fraction_numerator * 10 == profile.sft_fraction_denominator
+    )
+
+
+def _verify_capacity_aware_bundle(output: Path) -> None:
+    manifest_path = output / "bundle-manifest.json"
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise base.RuntimeFailure("existing 10% S0 bundle manifest is invalid") from error
+    if not isinstance(payload, dict):
+        raise base.RuntimeFailure("existing 10% S0 bundle manifest is not an object")
+    recipe = payload.get("s0_scaling_recipe")
+    if not isinstance(recipe, dict) or recipe.get("name") != TEN_PERCENT_RECIPE:
+        raise base.RuntimeFailure(
+            "existing 10% S0 bundle does not carry the ADR-0122 capacity-aware recipe"
+        )
+    if payload.get("train_target_tokens_requested") != TEN_PERCENT_TRAIN_TARGETS:
+        raise base.RuntimeFailure("existing ADR-0122 bundle has the wrong train target horizon")
+    splits = payload.get("splits")
+    expected = recipe.get("expected_heldout_manifest_sha256")
+    if not isinstance(splits, dict) or not isinstance(expected, dict):
+        raise base.RuntimeFailure("existing ADR-0122 bundle has incomplete frozen held-out metadata")
+    for split in ("validation", "test"):
+        split_payload = splits.get(split)
+        if (
+            not isinstance(split_payload, dict)
+            or split_payload.get("manifest_sha256") != expected.get(split)
+        ):
+            raise base.RuntimeFailure(
+                f"existing ADR-0122 bundle does not match frozen {split} identity"
+            )
 
 
 def _require_stable_parent_artifact(
@@ -99,14 +148,31 @@ def prepare(
 
     exact_parent_tokens = base._exact_parent_tokens(profile, parent_consumed_tokens)
     expected_targets = base._expected_sft_targets(profile, exact_parent_tokens)
-    if not base._verify_existing_bundle_budget(output, expected_targets=expected_targets):
+    capacity_aware = _is_capacity_aware_10pct(
+        profile,
+        parent_consumed_tokens=exact_parent_tokens,
+    )
+    if base._verify_existing_bundle_budget(output, expected_targets=expected_targets):
+        if capacity_aware:
+            _verify_capacity_aware_bundle(output)
+    else:
         if output.exists():
             raise base.RuntimeFailure(
                 f"refusing to replace incomplete/non-bundle SFT output directory: {output}"
             )
-        base._run(
-            base._uv_prefix()
-            + [
+        if capacity_aware:
+            command = base._uv_prefix() + [
+                "python", "-m", "post_training.sft.s0_10pct_bundle",
+                "--prepared-dir", str(prepared),
+                "--replay-root", str(replay),
+                "--output-dir", str(output),
+                "--parent-consumed-tokens", str(exact_parent_tokens),
+                "--optimizer-target-tokens", "32768",
+                "--context-length", "2048",
+                "--seed", "17",
+            ]
+        else:
+            command = base._uv_prefix() + [
                 "python", "-m", "post_training.sft.scaled_bundle",
                 "--prepared-dir", str(prepared),
                 "--replay-root", str(replay),
@@ -118,9 +184,8 @@ def prepare(
                 "--instruction-share", "0.85",
                 "--replay-share", "0.15",
                 "--seed", "17",
-            ],
-            cwd=worktree,
-        )
+            ]
+        base._run(command, cwd=worktree)
     return base._run(
         base._uv_prefix() + ["python", "-m", "post_training.sft.bundle", "verify", "--dataset-dir", str(output)],
         cwd=worktree,
@@ -210,6 +275,9 @@ __all__ = [
     "INLINE_BEHAVIOR_CASES",
     "INLINE_VALIDATION_BLOCKS",
     "KAGGLE_SFT_PROCESS_ENV",
+    "TEN_PERCENT_PARENT_TARGETS",
+    "TEN_PERCENT_RECIPE",
+    "TEN_PERCENT_TRAIN_TARGETS",
     "evaluate",
     "prepare",
     "publish",
