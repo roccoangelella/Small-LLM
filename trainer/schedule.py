@@ -41,14 +41,18 @@ class TokenLRScheduler:
             lr = minimum + (peak - minimum) * cosine
             return minimum if tokens >= decay_end else lr
 
-        # Continuation-oriented WSqD variant. The exact fork point is an LR
-        # anchor rather than a new warmup. An optional short cosine settling
-        # phase can reduce LR quickly before the long power-law base. The
-        # default power is 0.5 (inverse square root); explicit continuations may
-        # choose a steeper positive exponent. Terminal cooldown is linear.
+        # WSqD supports both historical continuations and fresh-from-zero runs.
+        # A continuation has warmup=0 and treats schedule_anchor_tokens as an
+        # already-consumed LR anchor. A fresh run warms up from token zero and
+        # requires the anchor to equal the warmup endpoint. Both then share the
+        # same optional cosine settle, calibrated power-law base, and terminal
+        # linear cooldown.
+        warmup = self.config.warmup_tokens
         anchor = self.config.schedule_anchor_tokens
         cooldown_start = self.config.cooldown_start_tokens
         decay_end = cooldown_start + self.config.decay_tokens
+        if warmup and tokens < warmup:
+            return peak * max(tokens, 1) / warmup
         if tokens <= anchor:
             return peak
 
