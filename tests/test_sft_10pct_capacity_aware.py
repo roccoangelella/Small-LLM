@@ -161,6 +161,58 @@ class SFT10PctCapacityAwareTests(unittest.TestCase):
             ):
                 sft_scaled_runtime._verify_capacity_aware_bundle(root)
 
+    def test_train_uses_aggressive_10pct_worktree_and_wrapper(self) -> None:
+        profile = self._profile()
+        worktree = Path("/tmp/small-llm-sft-10pct-worktree")
+        bundle = Path("/tmp/small-llm-sft-10pct-bundle")
+        prepared_profiles = []
+        captured: dict[str, object] = {}
+
+        def prepare_worktree(selected_profile):
+            prepared_profiles.append(selected_profile)
+            return worktree
+
+        def capture_run(command: list[str], *, cwd: Path) -> int:
+            captured["command"] = list(command)
+            captured["cwd"] = cwd
+            return 0
+
+        with (
+            mock.patch.object(sft_scaled_runtime.base, "_prepare_worktree", side_effect=prepare_worktree),
+            mock.patch.object(sft_scaled_runtime.base, "_find_bundle", return_value=bundle),
+            mock.patch.object(sft_scaled_runtime, "_verify_published_10pct_training_bundle"),
+            mock.patch.object(sft_scaled_runtime, "_require_stable_parent_artifact"),
+            mock.patch.object(sft_scaled_runtime.base, "_wandb_preflight"),
+            mock.patch.object(sft_scaled_runtime.base, "_run", side_effect=capture_run),
+            mock.patch.dict("os.environ", {"HF_TOKEN": "test-token"}, clear=False),
+        ):
+            self.assertEqual(
+                sft_scaled_runtime.train(
+                    profile,
+                    dataset_dir=str(bundle),
+                    parent_repo_id="owner/parent",
+                    checkpoint_repo_id="owner/sft",
+                    max_steps_this_session=2,
+                    wandb_entity=None,
+                ),
+                0,
+            )
+
+        self.assertEqual(len(prepared_profiles), 1)
+        self.assertEqual(
+            prepared_profiles[0].launch_commit,
+            sft_scaled_runtime.TEN_PERCENT_TRAIN_COMMIT,
+        )
+        command = captured["command"]
+        assert isinstance(command, list)
+        self.assertTrue(
+            any(str(item).endswith("kaggle/dual_t4_sft_10pct.py") for item in command)
+        )
+        self.assertIn("--learning-rate", command)
+        lr_index = command.index("--learning-rate")
+        self.assertEqual(float(command[lr_index + 1]), 3e-5)
+        self.assertEqual(captured["cwd"], worktree)
+
 
 if __name__ == "__main__":
     unittest.main()
