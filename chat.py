@@ -2,6 +2,7 @@
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
 #   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --sft --run-id RUN_ID     # explicit SFT experiment
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft --run-id RUN_ID  # explicit R-SFT experiment
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
@@ -134,7 +135,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-id",
-        help="R-SFT only: explicitly select a completed R-SFT run instead of the registered default",
+        help=(
+            "SFT/R-SFT: explicitly select a completed post-training run instead of the "
+            "registered default"
+        ),
     )
     stage = parser.add_mutually_exclusive_group(required=True)
     stage.add_argument(
@@ -192,15 +196,16 @@ def _resolve_chat_run(
 
     if run_id is None:
         return registered
-    if stage != _STAGE_R_SFT:
-        raise RuntimeError("--run-id override is supported only with --r-sft")
+    if stage not in {_STAGE_SFT, _STAGE_R_SFT}:
+        raise RuntimeError("--run-id override is supported only with --sft or --r-sft")
     if (
         not run_id
         or run_id.strip() != run_id
         or not all(character.isalnum() or character in "._-" for character in run_id)
     ):
         raise RuntimeError("--run-id must be a non-empty stable identifier using letters, digits, '.', '_' or '-'")
-    return run_id, _SOURCE_R_SFT
+    source = _SOURCE_SFT if stage == _STAGE_SFT else _SOURCE_R_SFT
+    return run_id, source
 
 
 def _repo_id(*, source: str) -> str:

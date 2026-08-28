@@ -57,11 +57,19 @@ python chat.py --model_params 20M --num_tokens 500M --sft
 python chat.py --model_params 20M --num_tokens 2B --sft
 ```
 
-Completed 100M / 2B SFT:
+Completed 100M / 2B SFT default:
 
 ```bash
 python chat.py --model_params 100M --num_tokens 2B --sft
 ```
+
+A different completed SFT run in the same profile can be selected explicitly without changing the registered default. For example, the 10% S0 experiment is:
+
+```bash
+python chat.py --model_params 100M --num_tokens 2B --sft --run-id 100m-2b-sft-s0-10pct-001
+```
+
+The explicit SFT path uses the same normal GPT-2 tokenizer and completed-checkpoint verification as the registered SFT default. It fails closed if the selected Hugging Face checkpoint has not consumed its full frozen schedule.
 
 Completed 100M / 2B pretrained base model:
 
