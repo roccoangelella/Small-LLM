@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -197,6 +198,21 @@ class SFT100M2BKaggleTests(unittest.TestCase):
 
         dual_t4_sft._control_barrier(distributed, group)
         distributed.barrier.assert_called_once_with(group=group)
+
+    def test_secondary_rank_disables_upload_and_rolling_cleanup(self) -> None:
+        original_publish = mock.Mock()
+        original_cleanup = mock.Mock()
+        module = SimpleNamespace(
+            CheckpointCoordinator=SimpleNamespace(publish=original_publish),
+            cleanup_remote_publication=original_cleanup,
+        )
+
+        dual_t4_sft._disable_secondary_remote_side_effects(module)
+
+        self.assertIsNone(module.CheckpointCoordinator.publish(object()))
+        self.assertIsNone(module.cleanup_remote_publication(object(), checkpoint_id="step-00000250"))
+        original_publish.assert_not_called()
+        original_cleanup.assert_not_called()
 
 
 if __name__ == "__main__":
