@@ -249,6 +249,31 @@ def _read_json(path: Path, *, label: str) -> dict[str, object]:
     return dict(payload)
 
 
+def _completed_schedule_targets(trainer_config: Mapping[str, object]) -> int:
+    """Return the exact completed target horizon for a validated post-training schedule."""
+
+    from trainer.config import TrainerConfig
+
+    try:
+        config = TrainerConfig(**dict(trainer_config))  # type: ignore[arg-type]
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("checkpoint has an invalid trainer configuration") from error
+
+    if config.schedule == "wsd":
+        expected = config.warmup_tokens + config.stable_tokens + config.decay_tokens
+    elif config.schedule == "wsqd":
+        # In WSqD, decay_tokens is only the terminal cooldown span. The full
+        # schedule horizon ends at cooldown_start_tokens + decay_tokens.
+        expected = config.cooldown_start_tokens + config.decay_tokens
+    else:
+        raise RuntimeError(
+            f"checkpoint uses unsupported completion schedule {config.schedule!r}"
+        )
+    if expected <= 0:
+        raise RuntimeError("checkpoint trainer configuration has no positive completion horizon")
+    return expected
+
+
 def _load_completed_checkpoint(
     checkpoint_root: Path,
     *,
@@ -306,19 +331,13 @@ def _load_completed_checkpoint(
         raise RuntimeError("trainer_state.pkl has an unsupported structure or version")
 
     trainer_config = state.get("config")
-    if not isinstance(trainer_config, Mapping) or trainer_config.get("schedule") != "wsd":
-        raise RuntimeError("checkpoint has no valid WSD trainer configuration")
-    schedule_parts: list[int] = []
-    for name in ("warmup_tokens", "stable_tokens", "decay_tokens"):
-        value = trainer_config.get(name)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise RuntimeError(f"checkpoint has invalid {name}")
-        schedule_parts.append(value)
-    expected_consumed = sum(schedule_parts)
+    if not isinstance(trainer_config, Mapping):
+        raise RuntimeError("checkpoint has no valid trainer configuration")
+    expected_consumed = _completed_schedule_targets(trainer_config)
     consumed = state.get("consumed_tokens")
     if isinstance(consumed, bool) or not isinstance(consumed, int) or consumed < 0:
         raise RuntimeError("checkpoint has an invalid consumed_tokens counter")
-    if expected_consumed <= 0 or consumed != expected_consumed:
+    if consumed != expected_consumed:
         raise RuntimeError(
             "checkpoint exists on Hugging Face but is not complete: "
             f"consumed_loss_targets={consumed:,}, full_schedule_targets={expected_consumed:,}"
