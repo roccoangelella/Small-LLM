@@ -92,16 +92,25 @@ def with_sft_fraction(
     current = Fraction(profile.sft_fraction_numerator, profile.sft_fraction_denominator)
     if fraction == current:
         return profile
-    label = _fraction_label(fraction)
+    dataset_label = _fraction_label(fraction)
+    long_peak_10pct = (
+        profile.model_parameters == 100_000_000
+        and profile.parent_training_tokens == 2_000_000_000
+        and fraction == Fraction(1, 10)
+    )
+    run_label = f"{dataset_label}-longpeak" if long_peak_10pct else dataset_label
+    run_name_suffix = " / long-peak" if long_peak_10pct else ""
     return replace(
         profile,
-        sft_run_id=_variant_id(profile.sft_run_id, label),
-        wandb_run_id=_variant_id(profile.wandb_run_id, label),
+        sft_run_id=_variant_id(profile.sft_run_id, run_label),
+        wandb_run_id=_variant_id(profile.wandb_run_id, run_label),
         wandb_run_name=(
             f"{profile.model_label} / {profile.token_label} parent / SFT S0 / "
-            f"{_fraction_display(fraction)}"
+            f"{_fraction_display(fraction)}{run_name_suffix}"
         ),
-        dataset_slug=_variant_id(profile.dataset_slug, label),
+        # Reuse the already-published immutable 10% corpus. The scientific
+        # trajectory gets a new run identity, not a new dataset identity.
+        dataset_slug=_variant_id(profile.dataset_slug, dataset_label),
         sft_fraction_numerator=fraction.numerator,
         sft_fraction_denominator=fraction.denominator,
     )
