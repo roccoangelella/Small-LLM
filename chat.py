@@ -7,10 +7,10 @@
 # --num_tokens: parent pretraining token profile (for example 500M or 2B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
-TEMPERATURE = 0.8
-TOP_K = 5
+TEMPERATURE = 1.0
+TOP_K = 20
 TOP_P = 0.9
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 64
 SEED = 17
 
 import argparse
