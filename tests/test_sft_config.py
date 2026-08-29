@@ -8,6 +8,7 @@ import torch
 from post_training.sft.config import (
     S0_AGGRESSIVE_COOLDOWN_START_LR,
     S0_AGGRESSIVE_FINAL_LR,
+    S0_AGGRESSIVE_PEAK_HOLD_FRACTION,
     S0_AGGRESSIVE_PEAK_LR,
     S0_AGGRESSIVE_SETTLE_LR,
     SFTDataConfig,
@@ -49,12 +50,31 @@ class ConfigAndInterpolationTests(unittest.TestCase):
         self.assertEqual(config.optimizer, "hybrid_muon_adamw")
         self.assertEqual(config.learning_rate, S0_AGGRESSIVE_PEAK_LR)
         self.assertEqual(config.schedule, "wsqd")
-        self.assertEqual(config.stable_tokens, 0)
-        self.assertEqual(config.schedule_anchor_tokens, config.warmup_tokens)
+        self.assertEqual(S0_AGGRESSIVE_PEAK_HOLD_FRACTION, 0.15)
+        self.assertEqual(config.warmup_tokens, 10_004_986)
+        self.assertEqual(config.stable_tokens, 30_014_960)
+        self.assertEqual(
+            config.schedule_anchor_tokens,
+            config.warmup_tokens + config.stable_tokens,
+        )
         self.assertEqual(config.cooldown_start_tokens + config.decay_tokens, total)
 
         parameter = torch.nn.Parameter(torch.ones(()))
         scheduler = TokenLRScheduler(torch.optim.SGD([parameter], lr=config.learning_rate), config)
+        self.assertTrue(
+            math.isclose(
+                scheduler.prepare_step(config.warmup_tokens),
+                S0_AGGRESSIVE_PEAK_LR,
+                rel_tol=1e-12,
+            )
+        )
+        self.assertTrue(
+            math.isclose(
+                scheduler.prepare_step(config.schedule_anchor_tokens),
+                S0_AGGRESSIVE_PEAK_LR,
+                rel_tol=1e-12,
+            )
+        )
         settle_end = config.schedule_anchor_tokens + config.settle_tokens
         self.assertTrue(
             math.isclose(
