@@ -28,10 +28,10 @@ TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
 # The historical 4% profile keeps its older launch pin; only 10% bundle creation
 # temporarily materializes a worktree at this implementation commit.
 TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
-# ADR-0126 training is a new scientific trajectory. Keep the completed 4% SFT
-# worktree pinned to its historical implementation while the 10% run executes
-# the fresh-from-zero aggressive WSqD scheduler from this exact commit.
-TEN_PERCENT_TRAIN_COMMIT = "9e0d231f9cf4c16dea94e300ca62377444559355"
+# The long-peak 10% trajectory keeps the completed 4% and first 10% experiments
+# immutable. This pin contains the 15% peak hold plus the unchanged aggressive
+# settle/power-law/cooldown schedule used by the dedicated 10% training wrapper.
+TEN_PERCENT_TRAIN_COMMIT = "fd784ed1bb056dc8a2d29a3847e606b8762cecc1"
 
 # Verified private Kaggle publication accepted for the 100M/2B 10% S0 run.
 # The publication round-trip reported this exact tree identity. Training binds
