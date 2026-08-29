@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0131-use-rolling-latest-only-retention-for-kaggle-sft.md`](0131-use-rolling-latest-only-retention-for-kaggle-sft.md)
 - [`0120-ignore-obsolete-rsft-datasets-from-git.md`](0120-ignore-obsolete-rsft-datasets-from-git.md)
 - [`0119-publish-frozen-rsft-1pct-corpus-on-main.md`](0119-publish-frozen-rsft-1pct-corpus-on-main.md)
 

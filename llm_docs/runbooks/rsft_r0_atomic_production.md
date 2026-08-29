@@ -35,7 +35,7 @@ The intermediate 12,306-row checkpoint corpus used to train the currently accept
 python kaggle/launch_r_sft.py train --model 100M --tokens 2B
 ```
 
-With no `--dataset-dir`, the launcher pins a detached worktree to `2ae60bfa135017353f39da2ef34a6124cda465dc`, SHA-validates the 16,716-row corpus, resolves completed S0 parent `100m-2b-sft-s0-001`, builds/verifies the native `atomic-production-v1` bundle, and launches 2xT4 DDP under fresh default run ID `100m-2b-rsft-r0-16716-001`.
+With no `--dataset-dir`, the launcher pins a detached worktree to `184adccc1c12437046594ac674bc8d61eb710125`, SHA-validates the 16,716-row corpus, resolves completed S0 parent `100m-2b-sft-s0-001`, builds/verifies the native `atomic-production-v1` bundle, and launches 2xT4 DDP under fresh default run ID `100m-2b-rsft-r0-16716-001`. This pin retains the frozen scientific implementation and adds rolling latest-only Hugging Face checkpoint retention.
 
 Production epoch count is configurable directly:
 

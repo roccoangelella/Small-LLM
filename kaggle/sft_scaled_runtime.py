@@ -30,8 +30,9 @@ TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
 TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
 # ADR-0130 supersedes the earlier 15%-hold proposal. The training worktree is
 # pinned to the commit that contains the exact step-64 warmup, peak-through-3000
-# schedule, its dedicated dual-T4 wrapper, and regression tests.
-TEN_PERCENT_TRAIN_COMMIT = "caa7fa54fe16510d30ef92eca19d95f86585e20e"
+# schedule, its dedicated dual-T4 wrapper, regression tests, and the
+# transport-only rolling checkpoint retention fix from ADR-0131.
+TEN_PERCENT_TRAIN_COMMIT = "184adccc1c12437046594ac674bc8d61eb710125"
 TEN_PERCENT_TRAJECTORY_RUN_ID = "100m-2b-sft-s0-10pct-peak3000-001"
 TEN_PERCENT_TRAJECTORY_WANDB_NAME = "100M / 2B parent / SFT S0 / 10% / peak-through-3000"
 

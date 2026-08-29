@@ -93,6 +93,8 @@ Canonical Kaggle SFT and R-SFT commands use rolling latest-only remote
 retention. Each verified publication prunes superseded checkpoints only within
 its own run namespace and super-squashes the Git-backed model repository, while
 preserving other runs and stable `models/...` artifacts in the current tree.
+Detached SFT, scaled-SFT training, and R-SFT worktrees are pinned to transport
+implementation commit `184adccc1c12437046594ac674bc8d61eb710125`.
 
 ## 100M / 10B execution
 
