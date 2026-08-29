@@ -31,6 +31,7 @@ from dataset.src.joint_checkpoint import (
 from dataset.src.remote import HuggingFaceCheckpointStore
 from model.config import ModelConfig
 from model.model import SmallLLM
+from trainer.state import load_trainer_state_file
 from trainer.teacher_forced_diagnostic import (
     print_teacher_forced_report,
     run_teacher_forced_validation,
@@ -225,10 +226,12 @@ def _load_model(
     device: torch.device,
     model_config_json: Path | None,
 ) -> tuple[SmallLLM, ModelConfig, Mapping[str, object]]:
-    """Load verified native weights; pickle is accepted only after hash checks."""
+    """Load verified native weights from historical pickle or streamed torch checkpoints."""
 
-    with (checkpoint_root / "trainer_state.pkl").open("rb") as handle:
-        state = pickle.load(handle)
+    state = load_trainer_state_file(
+        checkpoint_root / "trainer_state.pkl",
+        map_location="cpu",
+    )
     if not isinstance(state, Mapping) or state.get("version") != 1:
         raise RuntimeError("trainer_state.pkl has an unsupported structure or version")
     model_state = state.get("model")

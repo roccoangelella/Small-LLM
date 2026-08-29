@@ -122,15 +122,17 @@ def test_source_fork_changes_only_execution_slicing_plus_authorized_schedule() -
     assert 'base_power=BASE_POWER' in source
 
 
-def test_provider_migration_rewrites_only_authorized_execution_slicing() -> None:
+def test_provider_migration_accepts_all_authorized_execution_slices() -> None:
     source = (KAGGLE / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
-    assert "saved_microbatch == MICROBATCH_SIZE" in source
-    assert "saved_microbatch != SOURCE_MICROBATCH_SIZE" in source
-    assert 'patched_config["microbatch_size"] = MICROBATCH_SIZE' in source
-    assert 'patched_scheduler_config["microbatch_size"] = MICROBATCH_SIZE' in source
+    assert "_restore_newest_verified_continuation" in source
+    assert "execution_rewrite_needed" in source
+    assert "rewrite_execution_state" in source
+    assert "validate_target_execution_state" in source
+    assert "target_microbatch=MICROBATCH_SIZE" in source
     assert '"dataset_configuration_hash": _dataset_configuration_hash(dataset)' in source
     assert "checkpoint data cursor drifted" in source
     assert "scientific config drifted" in source
+    assert "cuda_rng_states" in source
     assert "_impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)" in source
 
 

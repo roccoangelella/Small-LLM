@@ -154,13 +154,23 @@ class TrainerConfig:
                 or self.settle_lr_ratio != 1.0
                 or self.base_power != 0.5
             ):
-                raise ValueError("wsd schedule cannot define WSqD continuation parameters")
+                raise ValueError("wsd schedule cannot define WSqD parameters")
             return
 
-        if self.warmup_tokens or self.stable_tokens:
-            raise ValueError("wsqd continuation schedule does not use warmup/stable tokens")
-        if self.schedule_anchor_tokens <= 0:
-            raise ValueError("wsqd schedule requires positive schedule_anchor_tokens")
+        # WSqD supports two identity-preserving modes:
+        # - continuation: warmup=0 and schedule_anchor_tokens is the fork point;
+        # - fresh run: warmup>0 and the LR anchor is exactly the warmup endpoint.
+        # Historical continuation checkpoints therefore keep identical serialized
+        # fields and scheduler behavior while new runs can start their clock at 0.
+        if self.stable_tokens:
+            raise ValueError("wsqd schedule does not use stable_tokens")
+        if self.warmup_tokens:
+            if self.schedule_anchor_tokens != self.warmup_tokens:
+                raise ValueError(
+                    "fresh wsqd requires schedule_anchor_tokens == warmup_tokens"
+                )
+        elif self.schedule_anchor_tokens <= 0:
+            raise ValueError("wsqd continuation requires positive schedule_anchor_tokens")
         if self.cooldown_start_tokens <= self.schedule_anchor_tokens:
             raise ValueError("wsqd cooldown_start_tokens must exceed its anchor")
         if self.decay_tokens <= 0:

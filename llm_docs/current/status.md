@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-21
+last_reviewed: 2026-08-24
 ---
 
 # Current project status
@@ -185,7 +185,7 @@ The 20M/500M S0 experiment remains a failed behavioral qualification despite low
 
 For the 100M/2B line, the completed S0 parent is `100m-2b-sft-s0-001`. Its frozen S0 bundle remains privately published at `roccoangelella/small-llm-100m-2b-sft-s0-001` and is the retention/parent source used by the current R-SFT trajectory.
 
-Under ADR 0116, the current provisional/default R-SFT R0 model is the completed expanded three-epoch run:
+ADR 0117 supersedes ADR 0116's provisional promotion after the completed full qualification. The expanded three-epoch checkpoint remains preserved as an experimental landmark, but it is **not a qualified model improvement or qualified default on model quality**:
 
 ```text
 run ID:       100m-2b-rsft-r0-16716-e3-001
@@ -193,7 +193,11 @@ HF repo:      roccoangelella/small-llm-100m-qualification
 latest step:  step-00001251
 ```
 
-W&B records this run as finished after 1,251 logical optimizer steps (417 train blocks × 3 exact passes), with 40,262,469 consumed loss-bearing targets and final validation loss `1.4549868323180837`. The root chat registry now selects this run for the 100M/2B `--r-sft` profile. Canonical local chat is:
+W&B records this run as finished after 1,251 logical optimizer steps (417 train blocks × 3 exact passes), with 40,262,469 consumed loss-bearing targets and final in-distribution validation loss `1.4549868323180837`. The frozen qualification nevertheless regresses against S0 on every headline comparison axis: eval-core loss `+0.163692`, perplexity `+5.334050`, top-1 `-0.015369`, top-5 `-0.017188`, top-10 `-0.016909`, instruction-behavior pass rate `0.066667 → 0.0`, novel-reasoning greedy accuracy `0.457143 → 0.257143`, novel-reasoning sampled pass@1 `0.392857 → 0.282143`, and frozen S0 validation loss `+0.088378`.
+
+The run did learn part of the intended R-SFT generation protocol. In the dedicated wrapper test, the trained chat wrapper starts reasoning in `14/14` cases and is fully well formed in `9/14`; both reasoning-start and well-formed rates fall to zero under plain and `Question: … Answer:` wrappers. The project interpretation is therefore: **protocol acquisition is real, but improved reasoning is not**. Reasoning-shaped text and reasoning correctness must remain separate evaluation axes.
+
+The root chat registry currently selects this run for the 100M/2B `--r-sft` profile. That operational pointer is not a qualification endorsement after ADR 0117; changing the runtime registry is a separate implementation action. Canonical local chat is:
 
 ```bash
 .venv/bin/python chat.py --model_params 100M --num_tokens 2B --r-sft
@@ -201,15 +205,15 @@ W&B records this run as finished after 1,251 logical optimizer steps (417 train 
 
 The previous accepted run `100m-2b-rsft-r0-12306-001` remains preserved as a historical completed R0 and is still loadable explicitly with `--run-id`. Its historical training corpus had SHA-256 `e7d83f9809a65bcb50a6dea3087813d92fea1950a716b3c1eb13e87bfe263a5e` and contained 12,306 unique normalized prompts: 7,683 unchanged Superior instruction rows, 3,993 accepted unique Variant-D rewrites, and 630 Gemini logic anchors. The intermediate corpus file was removed from the current tree after the 16,716-row expansion became canonical; it remains recoverable from Git history at `2ae60bfa135017353f39da2ef34a6124cda465dc`. Its verified native bundle used one exact pass, 32,768 loss-bearing target tokens per optimizer block, and 361 train blocks for 11,609,452 total targets; its completed Hugging Face `latest.json` pointer resolves `step-00000361`.
 
-The superseded Hugging Face R-SFT trial namespaces `100m-2b-rsft-r0-atomic-pilot-001`, `100m-2b-rsft-r0-atomic-repeat-e10-001`, and `100m-2b-rsft-r0-textual-pilot-001` were deleted after the earlier accepted run completed. The current e3 run, the historical 12,306-row run, and completed S0 parent remain preserved.
+The superseded Hugging Face R-SFT trial namespaces `100m-2b-rsft-r0-atomic-pilot-001`, `100m-2b-rsft-r0-atomic-repeat-e10-001`, and `100m-2b-rsft-r0-textual-pilot-001` were deleted after the earlier accepted run completed. The e3 experimental run, the historical 12,306-row run, and completed S0 parent remain preserved.
 
 The expanded over-context corpus is complete under ADR 0106. Historical v1 curation and the 1,122 accepted Variant-D batches remain immutable evidence for the completed 12,306-row model. Expansion curation v2 (`manual-curation.expanded-v2.jsonl`, SHA-256 `fb4da2929b47ececbde839da199437144677e4c7e1ea52ef2e8f6d4525ae1cde`) retained 8,473 keepers. All 4,464 previously missing keepers now have accepted compressed supervision, so the keeper-resume status is `resume_pending_records=0` and 1,116/1,116 resume batches are complete. One stubborn candidate in batch 305 was recovered as an audited safe-refusal compression after Gemini repeatedly returned empty completions for an appended unsafe image-generation request involving minors; no alternate provider was used.
 
 The frozen expanded corpus is `artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl`, SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`. It contains 16,716 unique normalized prompts: 7,683 unchanged Superior instruction rows, 8,403 accepted unique simplified Superior rows, and 630 Gemini logic anchors. The finalizer excluded 70 otherwise accepted rewrites because their normalized prompts collided with the baseline or another accepted rewrite. Every row fits the exact atomic 2,048-token serialization; the observed serialized-token range is 61–2,048.
 
-The verified expanded native bundle is `/home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716`. Its train split has 417 optimizer blocks / 20,313 packed records and 13,420,823 loss-bearing targets: 12,077,733 reasoning targets plus 1,343,090 completed-S0 retention targets. Validation and test each contain four blocks. ADR 0108 promotes this corpus to the standard Kaggle `train` input. The one-epoch command defaults to run ID `100m-2b-rsft-r0-16716-001`; ADR 0111 also permits exact production replay through `--num-epochs N`, with automatic epoch-specific IDs (`--num-epochs 2` → `100m-2b-rsft-r0-16716-e2-001`) and 834 steps for two passes. ADR 0116 provisionally promotes `100m-2b-rsft-r0-16716-e3-001` as the current default R0 while preserving the earlier 12,306-row run for explicit comparison.
+The verified expanded native bundle is `/home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716`. Its train split has 417 optimizer blocks / 20,313 packed records and 13,420,823 loss-bearing targets: 12,077,733 reasoning targets plus 1,343,090 completed-S0 retention targets. Validation and test each contain four blocks. ADR 0108 promotes this corpus to the standard Kaggle `train` input. The one-epoch command defaults to run ID `100m-2b-rsft-r0-16716-001`; ADR 0111 also permits exact production replay through `--num-epochs N`, with automatic epoch-specific IDs (`--num-epochs 2` → `100m-2b-rsft-r0-16716-e2-001`) and 834 steps for two passes. ADR 0116's provisional e3 promotion is superseded by ADR 0117 after full qualification; no new R-SFT training recipe is selected by that decision.
 
-Canonical evidence: [`../evidence/rsft_r0_12306_training_completion_2026-08-19.md`](../evidence/rsft_r0_12306_training_completion_2026-08-19.md), [`../evidence/rsft_expansion_resume_2026-08-20.md`](../evidence/rsft_expansion_resume_2026-08-20.md), and [`../evidence/rsft_expanded_corpus_completion_2026-08-21.md`](../evidence/rsft_expanded_corpus_completion_2026-08-21.md). Active procedure: [`../runbooks/rsft_r0_atomic_production.md`](../runbooks/rsft_r0_atomic_production.md).
+Canonical evidence: [`../evidence/rsft_e3_full_qualification_2026-08-24.md`](../evidence/rsft_e3_full_qualification_2026-08-24.md), [`../evidence/rsft_r0_12306_training_completion_2026-08-19.md`](../evidence/rsft_r0_12306_training_completion_2026-08-19.md), [`../evidence/rsft_expansion_resume_2026-08-20.md`](../evidence/rsft_expansion_resume_2026-08-20.md), and [`../evidence/rsft_expanded_corpus_completion_2026-08-21.md`](../evidence/rsft_expanded_corpus_completion_2026-08-21.md). Active procedure: [`../runbooks/rsft_r0_atomic_production.md`](../runbooks/rsft_r0_atomic_production.md).
 
 ## Source of truth
 

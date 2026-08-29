@@ -1,6 +1,6 @@
 # Production R-SFT R0 qualification on Kaggle
 
-Use this runbook to compare completed S0 `100m-2b-sft-s0-001` with accepted production R-SFT `100m-2b-rsft-r0-12306-001`.
+Use this runbook to compare completed S0 `100m-2b-sft-s0-001` with the current provisional/default production R-SFT model `100m-2b-rsft-r0-16716-e3-001`.
 
 ## Required inputs
 
@@ -12,17 +12,16 @@ The completed S0 bundle is resolved automatically in this order:
 2. one matching attached Kaggle input;
 3. private Kaggle dataset `roccoangelella/small-llm-100m-2b-sft-s0-001` through `kagglehub`.
 
-The production R-SFT bundle does not need a separate attachment. The accepted model being evaluated is still `100m-2b-rsft-r0-12306-001`, while the default rebuilt held-out R-SFT corpus is the current 16,716-row production corpus; use `--dataset-dir` if a historical bundle is specifically required. Unless `--dataset-dir` is supplied, the launcher deterministically rebuilds and verifies it from the committed 16,716-row production reasoning corpus plus the resolved S0 retention source.
+The production R-SFT bundle does not need a separate attachment. The model evaluated by the canonical command is `100m-2b-rsft-r0-16716-e3-001`, and the default rebuilt held-out R-SFT corpus is the current 16,716-row production corpus. Use `--dataset-dir` only when a specific prebuilt bundle is required. Unless `--dataset-dir` is supplied, the launcher deterministically rebuilds and verifies the bundle from the committed 16,716-row production reasoning corpus plus the resolved S0 retention source.
 
-Hugging Face checkpoint access requires `HF_TOKEN`. Repository selection resolves through:
+Hugging Face checkpoint access requires `HF_TOKEN`. Repository selection is profile-specific and resolves through:
 
 ```text
-SMALL_LLM_HF_REPO_ID
-SMALL_LLM_SFT_HF_REPO_ID
+SMALL_LLM_100M_HF_REPO_ID
 SMALL_LLM_RSFT_HF_REPO_ID
 ```
 
-The shared qualification repository may be used for all three when appropriate.
+If unset, the 100M qualification repository `roccoangelella/small-llm-100m-qualification` is used. Generic or legacy 20M/SFT repository variables are intentionally ignored for this 100M R-SFT path.
 
 ## Canonical full qualification
 

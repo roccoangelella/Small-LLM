@@ -1,0 +1,22 @@
+{
+  "additional_rows": 4979,
+  "base_projected_reasoning_train_targets": 12077733,
+  "base_rows": 16716,
+  "combined_rows": 21695,
+  "include_adapted": false,
+  "output_byte_size": 91356196,
+  "output_jsonl": "artifacts/rsft-superior-1pct/reasoning.jsonl",
+  "output_sha256": "acb6a029d641bcf661beb24ddb2a4e7c1deadca47da3e5bd3acb1c7090e58042",
+  "parent_train_targets": 2001000448,
+  "percent_of_parent_requested": 1.0,
+  "prepared_pool_rows": 15710,
+  "projected_percent_of_parent": 1.0000158680624145,
+  "projected_reasoning_train_targets": 18009290,
+  "projected_retention_train_targets": 2001032,
+  "projected_total_train_targets": 20010322,
+  "prompt_collisions_excluded": 0,
+  "requested_reasoning_train_targets": 18009004,
+  "requested_total_train_targets": 20010004,
+  "schema": "small-llm-rsft-reasoning-corpus-v1",
+  "seed": 17
+}

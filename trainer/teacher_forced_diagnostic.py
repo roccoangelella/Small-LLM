@@ -28,6 +28,171 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _checkpoint_dataset_identity(
+    checkpoint_manifest: Path,
+) -> tuple[str, str, dict[str, object]]:
+    """Return the checkpoint's dataset identity mode, expected SHA-256, and metadata."""
+
+    try:
+        payload = json.loads(checkpoint_manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeError(
+            f"checkpoint drive_manifest.json is not valid JSON: {checkpoint_manifest}"
+        ) from error
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("checkpoint drive_manifest.json must contain a JSON object")
+    metadata = dict(payload)
+
+    dataset_manifest_sha256 = metadata.get("dataset_manifest_sha256")
+    if dataset_manifest_sha256 is not None:
+        if (
+            not isinstance(dataset_manifest_sha256, str)
+            or len(dataset_manifest_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in dataset_manifest_sha256
+            )
+        ):
+            raise RuntimeError(
+                "checkpoint drive_manifest.json has an invalid dataset_manifest_sha256"
+            )
+        return "dataset_manifest", dataset_manifest_sha256, metadata
+
+    return "drive_manifest", _sha256(checkpoint_manifest), metadata
+
+
+def _auto_dataset_candidates() -> list[Path]:
+    configured = os.environ.get("SMALL_LLM_DATASET_DIR")
+    if configured:
+        return [Path(configured).expanduser().resolve()]
+
+    roots = [
+        Path("/kaggle/input"),
+        Path(
+            os.environ.get(
+                "SMALL_LLM_KAGGLE_WORK_ROOT",
+                "/kaggle/working/small-llm",
+            )
+        ).expanduser()
+        / "datasets",
+    ]
+    candidates: set[Path] = set()
+    for search_root in roots:
+        if not search_root.is_dir():
+            continue
+        for filename in ("drive_manifest.json", "manifest.json"):
+            candidates.update(
+                path.parent.resolve()
+                for path in search_root.rglob(filename)
+                if path.is_file()
+            )
+    return sorted(candidates, key=str)
+
+
+def _stage_incremental_validation_dataset(
+    *,
+    checkpoint_metadata: Mapping[str, object],
+    expected_manifest_sha256: str,
+) -> Path | None:
+    """Materialize only the frozen validation shards for a modern incremental checkpoint."""
+
+    dataset_run_id = checkpoint_metadata.get("dataset_run_id")
+    if not isinstance(dataset_run_id, str) or not dataset_run_id:
+        return None
+
+    bucket_id = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
+    if not bucket_id:
+        model_repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID", "").strip()
+        if not model_repo_id:
+            return None
+        bucket_id = f"{model_repo_id}-datasets"
+
+    from dataset.incremental_frontier import read_frontier, read_run_contract
+    from dataset.incremental_stage import _stable_consumer_manifest
+    from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
+    from dataset.src.storage import write_json_atomic
+
+    token = os.environ.get("HF_TOKEN")
+    store = HuggingFaceBucketShardStore(
+        bucket_id,
+        token=token,
+        private=True,
+        create_bucket=False,
+    )
+    contract = read_run_contract(store, run_id=dataset_run_id)
+    frontier = read_frontier(store, run_id=dataset_run_id, contract=contract)
+    validation_rows = frontier.get("frozen_validation_shards")
+    if not isinstance(validation_rows, list) or not validation_rows:
+        raise RuntimeError(
+            f"incremental dataset {dataset_run_id} has no frozen validation shards"
+        )
+
+    work_root = Path(
+        os.environ.get(
+            "SMALL_LLM_KAGGLE_WORK_ROOT",
+            "/kaggle/working/small-llm",
+        )
+    ).expanduser()
+    destination = (
+        work_root
+        / "eval-datasets"
+        / dataset_run_id
+        / expected_manifest_sha256[:16]
+    ).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+
+    manifest = _stable_consumer_manifest(contract, frontier)
+    manifest_path = destination / "manifest.json"
+    write_json_atomic(manifest_path, manifest)
+    observed_sha = _sha256(manifest_path)
+    if observed_sha != expected_manifest_sha256:
+        raise RuntimeError(
+            "incremental validation consumer manifest does not match checkpoint identity: "
+            f"expected {expected_manifest_sha256}, got {observed_sha}"
+        )
+
+    for index, raw in enumerate(validation_rows):
+        if not isinstance(raw, Mapping):
+            raise RuntimeError(
+                f"incremental validation frontier entry {index} is not an object"
+            )
+        filename = raw.get("filename")
+        byte_size = raw.get("byte_size")
+        checksum = raw.get("checksum")
+        if (
+            not isinstance(filename, str)
+            or not filename
+            or isinstance(byte_size, bool)
+            or not isinstance(byte_size, int)
+            or byte_size <= 0
+            or not isinstance(checksum, str)
+            or len(checksum) != 64
+        ):
+            raise RuntimeError(
+                f"incremental validation frontier entry {index} is malformed"
+            )
+        target = destination / filename
+        if (
+            target.is_file()
+            and not target.is_symlink()
+            and target.stat().st_size == byte_size
+            and _sha256(target) == checksum
+        ):
+            continue
+        if target.exists() or target.is_symlink():
+            target.unlink(missing_ok=True)
+        store.download_shard(
+            run_id=dataset_run_id,
+            logical_name=filename,
+            file_id=store.object_key(dataset_run_id, filename),
+            destination=target,
+            byte_size=byte_size,
+            sha256=checksum,
+        )
+
+    return destination
+
+
 def resolve_validation_dataset(
     request: str,
     *,
@@ -40,21 +205,14 @@ def resolve_validation_dataset(
         raise RuntimeError(
             "the checkpoint has no drive_manifest.json; cannot prove validation-dataset identity"
         )
-    expected_sha = _sha256(checkpoint_manifest)
+    identity_mode, expected_sha, checkpoint_metadata = _checkpoint_dataset_identity(
+        checkpoint_manifest
+    )
 
     if request != "auto":
         candidates = [Path(request).expanduser().resolve()]
     else:
-        configured = os.environ.get("SMALL_LLM_DATASET_DIR")
-        if configured:
-            candidates = [Path(configured).expanduser().resolve()]
-        else:
-            kaggle_input = Path("/kaggle/input")
-            candidates = (
-                sorted({path.parent for path in kaggle_input.rglob("drive_manifest.json")})
-                if kaggle_input.is_dir()
-                else []
-            )
+        candidates = _auto_dataset_candidates()
 
     matches: list[Path] = []
     inspected: list[dict[str, object]] = []
@@ -68,20 +226,42 @@ def resolve_validation_dataset(
             "drive_manifest": drive_manifest.is_file(),
             "validation": validation.is_dir(),
         }
+        if manifest.is_file():
+            row["dataset_manifest_sha256"] = _sha256(manifest)
         if drive_manifest.is_file():
             row["drive_manifest_sha256"] = _sha256(drive_manifest)
         inspected.append(row)
-        if (
-            manifest.is_file()
-            and validation.is_dir()
-            and row.get("drive_manifest_sha256") == expected_sha
-        ):
+
+        identity_matches = (
+            row.get("dataset_manifest_sha256") == expected_sha
+            if identity_mode == "dataset_manifest"
+            else row.get("drive_manifest_sha256") == expected_sha
+        )
+        if manifest.is_file() and validation.is_dir() and identity_matches:
             matches.append(root)
+
+    if (
+        request == "auto"
+        and identity_mode == "dataset_manifest"
+        and not matches
+    ):
+        staged = _stage_incremental_validation_dataset(
+            checkpoint_metadata=checkpoint_metadata,
+            expected_manifest_sha256=expected_sha,
+        )
+        if staged is not None:
+            matches = [staged]
+
+    if identity_mode == "dataset_manifest" and request == "auto" and matches:
+        # Multiple rolling-cache roots with the same manifest hash are scientifically
+        # equivalent for this diagnostic because the validation inventory is frozen.
+        return sorted(matches, key=str)[-1]
 
     if len(matches) != 1:
         raise RuntimeError(
             "teacher-forced validation requires exactly one local dataset matching the "
-            f"checkpoint drive manifest; found {len(matches)}. Inspected: {inspected}"
+            f"checkpoint dataset identity ({identity_mode}); found {len(matches)}. "
+            f"Inspected: {inspected}"
         )
     return matches[0]
 
@@ -411,10 +591,14 @@ def run_teacher_forced_validation(
         {key: value for key, value in row.items() if key != "display_text"}
         for row in records
     ]
+    dataset_drive_manifest = dataset_root / "drive_manifest.json"
     return {
         "mode": "teacher_forced_validation",
         "dataset_root": str(dataset_root),
-        "drive_manifest_sha256": _sha256(dataset_root / "drive_manifest.json"),
+        "dataset_manifest_sha256": _sha256(dataset_root / "manifest.json"),
+        "drive_manifest_sha256": (
+            _sha256(dataset_drive_manifest) if dataset_drive_manifest.is_file() else None
+        ),
         "maximum_tokens": maximum_tokens,
         "top_n": top_n,
         "summary": summary,

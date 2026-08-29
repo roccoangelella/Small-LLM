@@ -10,12 +10,20 @@ IMPLEMENTATION_COMMIT = "ca16b22905ebedc5925ab0abb9c40125254f1e1c"
 
 class Profile(sft_runtime.SFTProfileSpec):
     @property
+    def _canonical_four_percent(self) -> bool:
+        return self.sft_fraction_numerator * 100 == 4 * self.sft_fraction_denominator
+
+    @property
     def run_root(self) -> Path:
-        return sft_runtime.WORK / "small-llm-100m-2b-sft"
+        if self._canonical_four_percent:
+            return sft_runtime.WORK / "small-llm-100m-2b-sft"
+        return sft_runtime.WORK / self.sft_run_id
 
     @property
     def default_bundle(self) -> Path:
-        return sft_runtime.WORK / "small-llm-100m-2b-sft-bundle"
+        if self._canonical_four_percent:
+            return sft_runtime.WORK / "small-llm-100m-2b-sft-bundle"
+        return sft_runtime.WORK / f"{self.dataset_slug}-bundle"
 
 
 PROFILE = Profile(

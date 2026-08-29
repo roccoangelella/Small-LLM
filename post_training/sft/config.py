@@ -7,6 +7,7 @@ import math
 from typing import Mapping
 
 from trainer.config import TrainerConfig
+from trainer.fresh_decay import fresh_aggressive_decay_plan
 
 DEFAULT_INSTRUCTION_SOURCE_SHARES = {
     "smol-magpie-ultra-short": 0.75,
@@ -14,6 +15,11 @@ DEFAULT_INSTRUCTION_SOURCE_SHARES = {
     "smollm-rewrite-30k": 0.075,
     "smol-summarize-20k": 0.075,
 }
+
+S0_AGGRESSIVE_PEAK_LR = 3e-5
+S0_AGGRESSIVE_SETTLE_LR = 1e-5
+S0_AGGRESSIVE_COOLDOWN_START_LR = 1e-6
+S0_AGGRESSIVE_FINAL_LR = 5e-7
 
 
 def _validate_share(name: str, value: float) -> None:
@@ -122,9 +128,9 @@ class SFTSchedulePlan:
         if not block_target_counts or any(value <= 0 for value in block_target_counts):
             raise ValueError("block_target_counts must be positive and non-empty")
         steps = len(block_target_counts)
-        # WSD requires a non-empty decay phase. Tiny deterministic smoke runs
-        # may have fewer than the normal 16 warmup updates, so reserve the
-        # final update for decay rather than allowing warmup and decay to overlap.
+        # Historical S0 WSD requires a non-empty decay phase. Tiny deterministic
+        # smoke runs may have fewer than the normal 16 warmup updates, so reserve
+        # the final update for decay rather than allowing warmup and decay to overlap.
         warmup_steps = min(
             max(steps - 1, 0),
             max(minimum_warmup_updates, math.ceil(steps * warmup_fraction)),
@@ -151,18 +157,16 @@ class SFTSchedulePlan:
         )
 
 
-def build_s0_trainer_config(
-    schedule: SFTSchedulePlan,
+def _s0_optimizer_config(
     *,
-    microbatch_size: int = 1,
-    precision: str = "fp16",
-    seed: int = 17,
-    learning_rate: float = 3e-5,
-    checkpoint_every_steps: int = 0,
-    evaluation_every_steps: int = 0,
+    microbatch_size: int,
+    precision: str,
+    seed: int,
+    learning_rate: float,
+    checkpoint_every_steps: int,
+    evaluation_every_steps: int,
+    schedule_kwargs: Mapping[str, object],
 ) -> TrainerConfig:
-    """Preserve the pretraining optimizer/scheduler mechanics with SFT values."""
-
     return TrainerConfig(
         optimizer="hybrid_muon_adamw",
         microbatch_size=microbatch_size,
@@ -177,20 +181,92 @@ def build_s0_trainer_config(
         muon_weight_decay=0.0,
         max_grad_norm=1.0,
         precision=precision,  # type: ignore[arg-type]
-        schedule="wsd",
-        warmup_tokens=schedule.warmup_tokens,
-        stable_tokens=schedule.stable_tokens,
-        decay_tokens=schedule.decay_tokens,
-        minimum_lr_ratio=0.1,
         checkpoint_every_steps=checkpoint_every_steps,
         evaluation_every_steps=evaluation_every_steps,
         seed=seed,
+        **dict(schedule_kwargs),
+    )
+
+
+def build_s0_trainer_config(
+    schedule: SFTSchedulePlan,
+    *,
+    microbatch_size: int = 1,
+    precision: str = "fp16",
+    seed: int = 17,
+    learning_rate: float = 3e-5,
+    checkpoint_every_steps: int = 0,
+    evaluation_every_steps: int = 0,
+) -> TrainerConfig:
+    """Historical S0 WSD configuration retained for completed/frozen runs."""
+
+    return _s0_optimizer_config(
+        microbatch_size=microbatch_size,
+        precision=precision,
+        seed=seed,
+        learning_rate=learning_rate,
+        checkpoint_every_steps=checkpoint_every_steps,
+        evaluation_every_steps=evaluation_every_steps,
+        schedule_kwargs={
+            "schedule": "wsd",
+            "warmup_tokens": schedule.warmup_tokens,
+            "stable_tokens": schedule.stable_tokens,
+            "decay_tokens": schedule.decay_tokens,
+            "minimum_lr_ratio": 0.1,
+        },
+    )
+
+
+def build_s0_aggressive_trainer_config(
+    schedule: SFTSchedulePlan,
+    *,
+    microbatch_size: int = 1,
+    precision: str = "fp16",
+    seed: int = 17,
+    learning_rate: float = S0_AGGRESSIVE_PEAK_LR,
+    checkpoint_every_steps: int = 0,
+    evaluation_every_steps: int = 0,
+) -> TrainerConfig:
+    """ADR-0124/0125 fresh aggressive decay for the 10% 100M/2B S0 run."""
+
+    if not math.isclose(
+        float(learning_rate), S0_AGGRESSIVE_PEAK_LR, rel_tol=0.0, abs_tol=1e-15
+    ):
+        raise ValueError(
+            "aggressive S0 peak LR is frozen at 3e-5 for the accepted 10% run"
+        )
+    total_tokens = sum(schedule.block_target_counts)
+    plan = fresh_aggressive_decay_plan(total_tokens)
+    landmarks = plan.lr_landmarks(learning_rate)
+    expected = {
+        "settle_lr": S0_AGGRESSIVE_SETTLE_LR,
+        "cooldown_start_lr": S0_AGGRESSIVE_COOLDOWN_START_LR,
+        "final_lr": S0_AGGRESSIVE_FINAL_LR,
+    }
+    for name, value in expected.items():
+        if not math.isclose(landmarks[name], value, rel_tol=0.0, abs_tol=1e-15):
+            raise RuntimeError(
+                f"aggressive S0 LR landmark drifted: {name}={landmarks[name]} expected={value}"
+            )
+    return _s0_optimizer_config(
+        microbatch_size=microbatch_size,
+        precision=precision,
+        seed=seed,
+        learning_rate=learning_rate,
+        checkpoint_every_steps=checkpoint_every_steps,
+        evaluation_every_steps=evaluation_every_steps,
+        schedule_kwargs=plan.trainer_kwargs(),
     )
 
 
 __all__ = [
     "DEFAULT_INSTRUCTION_SOURCE_SHARES",
+    "S0_AGGRESSIVE_COOLDOWN_START_LR",
+    "S0_AGGRESSIVE_FINAL_LR",
+    "S0_AGGRESSIVE_PEAK_LR",
+    "S0_AGGRESSIVE_SETTLE_LR",
     "SFTDataConfig",
     "SFTSchedulePlan",
+    "build_s0_aggressive_trainer_config",
     "build_s0_trainer_config",
 ]

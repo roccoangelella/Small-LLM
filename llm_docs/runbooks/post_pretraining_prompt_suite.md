@@ -1,6 +1,6 @@
 # Post-pretraining qualitative and confidence suite
 
-_Last reviewed: 2026-08-13_
+_Last reviewed: 2026-08-24_
 
 ## Canonical comparison protocol
 
@@ -94,7 +94,9 @@ python -m trainer.post_pretraining_prompt_suite \
   --output-json artifacts/teacher_forced_validation.json
 ```
 
-It records true-token probability/rank, top-1/top-5 predictions, entropy, top-k rates, representative low-probability targets, and high-confidence errors over the frozen validation sample. It complements `eval_core_v1`; it does not replace it.
+Dataset identity remains fail-closed. Historical static datasets are matched by exact `drive_manifest.json` SHA-256. Modern incremental checkpoints are matched by their recorded `dataset_manifest_sha256`. In `auto` mode the evaluator first reuses an identity-matched local Kaggle dataset/cache; if none is present for a modern incremental run, it reconstructs the stable consumer manifest from the HF run contract/frontier, verifies that manifest hash against the checkpoint, and downloads only the frozen validation shards into the Kaggle working cache. The automatic remote path uses `SMALL_LLM_HF_DATASET_BUCKET_ID` when set, otherwise `<SMALL_LLM_HF_REPO_ID>-datasets`, with `HF_TOKEN` for private access.
+
+It records true-token probability/rank, top-1/top-5 predictions, entropy, top-k rates, representative low-probability targets, and high-confidence errors over the frozen validation sample. Reports include `dataset_manifest_sha256` and retain `drive_manifest_sha256` when the selected legacy dataset has one. It complements `eval_core_v1`; it does not replace it.
 
 ## Interpretation rule
 

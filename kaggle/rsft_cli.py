@@ -12,6 +12,10 @@ import sft_cli
 
 parse_quantity = sft_cli.parse_quantity
 positive_int = sft_cli.positive_int
+CURRENT_EVAL_EPOCHS = 3
+CURRENT_EVAL_RUN_ID = rsft_runtime.default_production_run_id(
+    num_epochs=CURRENT_EVAL_EPOCHS
+)
 
 
 def positive_float(value: str) -> float:
@@ -148,8 +152,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             profile = rsft_runtime.resolve_profile(
                 args.model,
                 args.tokens,
-                run_id=rsft_runtime.ACCEPTED_RUN_ID,
+                run_id=CURRENT_EVAL_RUN_ID,
                 delimiter_format="atomic",
+                num_epochs=CURRENT_EVAL_EPOCHS,
             )
             eval_dir = sft_cli._discover_eval_dir(args.eval_dir)
             if args.dry_run:

@@ -5,6 +5,7 @@ import torch
 from torch import nn
 
 from trainer import TokenLRScheduler, TrainerConfig
+from trainer.fresh_decay import fresh_aggressive_decay_plan
 
 
 class ConfigAndScheduleTests(unittest.TestCase):
@@ -154,6 +155,56 @@ class ConfigAndScheduleTests(unittest.TestCase):
         halfway = cooldown_start + decay // 2
         self.assertTrue(math.isclose(schedule.prepare_step(halfway), 7.5e-6, rel_tol=1e-12))
         self.assertTrue(math.isclose(schedule.prepare_step(cooldown_start + decay), terminal_lr, rel_tol=1e-12))
+
+    def test_fresh_aggressive_wsqd_starts_at_zero_and_hits_all_landmarks(self):
+        total = 200_099_738
+        peak = 3e-5
+        plan = fresh_aggressive_decay_plan(total)
+        config = TrainerConfig(
+            precision="fp32",
+            learning_rate=peak,
+            **plan.trainer_kwargs(),
+        )
+        optimizer = torch.optim.SGD([nn.Parameter(torch.ones(()))], lr=peak)
+        schedule = TokenLRScheduler(optimizer, config)
+
+        self.assertEqual(plan.warmup_tokens, 10_004_986)
+        self.assertEqual(plan.settle_tokens, 6_002_992)
+        self.assertEqual(plan.cooldown_start_tokens, 192_095_749)
+        self.assertEqual(plan.decay_tokens, 8_003_989)
+        self.assertTrue(math.isclose(schedule.prepare_step(plan.warmup_tokens), peak, rel_tol=1e-12))
+        self.assertLess(schedule.prepare_step(plan.warmup_tokens // 2), peak)
+        self.assertTrue(
+            math.isclose(schedule.prepare_step(plan.settle_end_tokens), 1e-5, rel_tol=1e-12)
+        )
+        self.assertTrue(
+            math.isclose(schedule.prepare_step(plan.cooldown_start_tokens), 1e-6, rel_tol=1e-12)
+        )
+        self.assertTrue(
+            math.isclose(schedule.prepare_step(total), 5e-7, rel_tol=1e-12)
+        )
+
+    def test_fresh_pretraining_uses_same_geometry_at_pretraining_lr_scale(self):
+        total = 10_000_007_168
+        peak = 3e-4
+        plan = fresh_aggressive_decay_plan(total)
+        landmarks = plan.lr_landmarks(peak)
+        self.assertTrue(math.isclose(landmarks["peak_lr"], 3e-4, rel_tol=1e-12))
+        self.assertTrue(math.isclose(landmarks["settle_lr"], 1e-4, rel_tol=1e-12))
+        self.assertTrue(math.isclose(landmarks["cooldown_start_lr"], 1e-5, rel_tol=1e-12))
+        self.assertTrue(math.isclose(landmarks["final_lr"], 5e-6, rel_tol=1e-12))
+        self.assertEqual(plan.schedule_anchor_tokens, plan.warmup_tokens)
+        self.assertEqual(plan.cooldown_start_tokens + plan.decay_tokens, total)
+
+    def test_fresh_wsqd_rejects_anchor_that_is_not_warmup_endpoint(self):
+        with self.assertRaisesRegex(ValueError, "schedule_anchor_tokens == warmup_tokens"):
+            TrainerConfig(
+                schedule="wsqd",
+                warmup_tokens=100,
+                schedule_anchor_tokens=101,
+                cooldown_start_tokens=900,
+                decay_tokens=100,
+            )
 
     def test_wsqd_validation_rejects_rising_terminal_floor(self):
         with self.assertRaises(ValueError):
