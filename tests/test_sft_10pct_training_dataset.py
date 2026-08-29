@@ -96,6 +96,11 @@ class SFT10PctTrainingDatasetTests(unittest.TestCase):
         worktree = Path("/tmp/small-llm-sft-worktree")
         bundle = Path("/tmp/small-llm-100m-2b-sft-s0-10pct-001")
         captured: dict[str, object] = {}
+        prepared_profiles = []
+
+        def prepare_worktree(selected_profile):
+            prepared_profiles.append(selected_profile)
+            return worktree
 
         def capture_run(command: list[str], *, cwd: Path) -> int:
             captured["command"] = list(command)
@@ -103,7 +108,11 @@ class SFT10PctTrainingDatasetTests(unittest.TestCase):
             return 0
 
         with (
-            mock.patch.object(sft_scaled_runtime.base, "_prepare_worktree", return_value=worktree),
+            mock.patch.object(
+                sft_scaled_runtime.base,
+                "_prepare_worktree",
+                side_effect=prepare_worktree,
+            ),
             mock.patch.object(sft_scaled_runtime.base, "_find_bundle", return_value=bundle) as find_bundle,
             mock.patch.object(
                 sft_scaled_runtime,
@@ -128,13 +137,28 @@ class SFT10PctTrainingDatasetTests(unittest.TestCase):
 
         find_bundle.assert_called_once_with(None, profile)
         dataset_preflight.assert_called_once_with(bundle)
+        self.assertEqual(len(prepared_profiles), 1)
+        self.assertEqual(
+            prepared_profiles[0].launch_commit,
+            sft_scaled_runtime.TEN_PERCENT_TRAIN_COMMIT,
+        )
+        self.assertEqual(
+            prepared_profiles[0].sft_run_id,
+            sft_scaled_runtime.TEN_PERCENT_TRAJECTORY_RUN_ID,
+        )
+
         command = captured["command"]
         self.assertIsInstance(command, list)
         assert isinstance(command, list)
         run_id_index = command.index("--sft-run-id")
         self.assertEqual(
             command[run_id_index + 1],
-            "100m-2b-sft-s0-10pct-longpeak-001",
+            "100m-2b-sft-s0-10pct-peak3000-001",
+        )
+        wandb_id_index = command.index("--wandb-run-id")
+        self.assertEqual(
+            command[wandb_id_index + 1],
+            "100m-2b-sft-s0-10pct-peak3000-001",
         )
         fraction_numerator = command.index("--sft-fraction-numerator")
         fraction_denominator = command.index("--sft-fraction-denominator")
