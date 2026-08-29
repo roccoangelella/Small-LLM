@@ -22,9 +22,9 @@ def _new_control_group(distributed: Any) -> Any:
     """Create the CPU group used while rank zero owns long side effects.
 
     Rank one may reach a cadence boundary while rank zero is still validating,
-    generating behavior probes, saving, or publishing.  Waiting in NCCL there
+    generating behavior probes, saving, or publishing. Waiting in NCCL there
     starts the default ten-minute CUDA collective watchdog even though no GPU
-    collective is expected yet.  A bounded Gloo group keeps that wait entirely
+    collective is expected yet. A bounded Gloo group keeps that wait entirely
     on the control plane; both ranks return to NCCL together for the next DDP
     optimizer block.
     """
@@ -294,6 +294,13 @@ def _dummy_behavior() -> dict[str, object]:
     }
 
 
+def _disable_secondary_remote_side_effects(sft_train: Any) -> None:
+    """Make every remote cadence action a no-op on non-primary DDP ranks."""
+
+    sft_train.CheckpointCoordinator.publish = lambda *args, **kwargs: None
+    sft_train.cleanup_remote_publication = lambda *args, **kwargs: None
+
+
 def _rewrite_summary_fraction(checkpoint_dir: Path, fraction: float) -> None:
     path = checkpoint_dir / "sft-summary.json"
     if not path.is_file():
@@ -522,7 +529,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sft_train._validation = lambda *args, **kwargs: _dummy_validation()
         sft_train.evaluate_behavior = lambda *args, **kwargs: _dummy_behavior()
         trainer_session.TrainingSession.save_checkpoint = lambda *args, **kwargs: None
-        sft_train.CheckpointCoordinator.publish = lambda *args, **kwargs: None
+        _disable_secondary_remote_side_effects(sft_train)
         sft_train.print = lambda *args, **kwargs: None
 
     exit_code = 1
@@ -547,4 +554,9 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["_rank_row_indices", "main"]
+__all__ = [
+    "_control_barrier",
+    "_disable_secondary_remote_side_effects",
+    "_rank_row_indices",
+    "main",
+]
