@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the accepted 100M/2B 10% SFT with fresh aggressive LR decay.
+"""Run the accepted 100M/2B 10% SFT with step-anchored aggressive LR decay.
 
 This is deliberately a narrow wrapper around the already-qualified dual-T4 SFT
 execution path. It changes only the S0 trainer schedule constructor for the 10%
@@ -39,9 +39,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.path.insert(0, str(worktree))
 
     import post_training.sft.train_cli as sft_train
-    from post_training.sft.config import (
-        S0_AGGRESSIVE_PEAK_LR,
-        build_s0_aggressive_trainer_config,
+    from post_training.sft.config import S0_AGGRESSIVE_PEAK_LR
+    from post_training.sft.s0_peak3000_schedule import (
+        build_s0_peak3000_trainer_config,
     )
     import dual_t4_sft
 
@@ -51,9 +51,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         supplied_lr = float(kwargs.get("learning_rate", S0_AGGRESSIVE_PEAK_LR))
         if supplied_lr != S0_AGGRESSIVE_PEAK_LR:
             raise RuntimeError(
-                "100M/2B 10% SFT peak LR is frozen at 3e-5 under ADR-0126"
+                "100M/2B 10% SFT peak LR is frozen at 3e-5 under ADR-0130"
             )
-        return build_s0_aggressive_trainer_config(schedule, **kwargs)
+        return build_s0_peak3000_trainer_config(schedule, **kwargs)
 
     sft_train.build_s0_trainer_config = aggressive_builder
     try:
