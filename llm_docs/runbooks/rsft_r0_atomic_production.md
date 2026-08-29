@@ -49,6 +49,12 @@ For committed/non-interactive Kaggle sessions, the S0 resolver must not ask Kagg
 
 For R-SFT checkpoint publication, the Kaggle DDP command also sets `HF_HUB_DISABLE_XET=1` and `HF_HUB_DISABLE_PROGRESS_BARS=1`. This forces the approximately-914-MB trainer-state uploads through the classic streaming HTTP/LFS path and avoids notebook progress output after the first expanded-corpus run reached step 417 but rank zero was SIGKILLed during a stalled Xet upload. The two-phase live pointer remained safely on step 250, so rerunning the same run ID resumes from step 250.
 
+Every canonical R-SFT publication now also enables rolling latest-only
+retention. Cleanup runs only after the new two-phase pointer is durable, removes
+superseded checkpoint directories under the same R-SFT run ID, then
+super-squashes repository history. It does not remove other run IDs or stable
+model artifacts that remain in the repository head.
+
 The fixed 100M/2B R-SFT profile also ignores generic `SMALL_LLM_HF_REPO_ID` and legacy `SMALL_LLM_SFT_HF_REPO_ID` for model artifacts. Parent lookup defaults to `roccoangelella/small-llm-100m-qualification` (override with `--parent-repo-id` or `SMALL_LLM_100M_HF_REPO_ID`); R-SFT writes default to the same repository (override with `--checkpoint-repo-id` or `SMALL_LLM_RSFT_HF_REPO_ID`). This prevents stale 20M Kaggle secrets from redirecting the 100M parent lookup.
 
 Never point the expanded corpus at `100m-2b-rsft-r0-12306-001`; that ID belongs to the completed historical trajectory.

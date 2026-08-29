@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-29
 ---
 
 # Current project status
@@ -88,6 +88,11 @@ models/<run_id>/...    stable completed model artifacts
 ```
 
 Stable `models/...` artifacts are verified with their native `local_manifest.json`. `checkpoint_manifest.json` is publication metadata for the live two-phase `run/...` protocol and is **not required** for stable model artifacts.
+
+Canonical Kaggle SFT and R-SFT commands use rolling latest-only remote
+retention. Each verified publication prunes superseded checkpoints only within
+its own run namespace and super-squashes the Git-backed model repository, while
+preserving other runs and stable `models/...` artifacts in the current tree.
 
 ## 100M / 10B execution
 

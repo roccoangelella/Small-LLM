@@ -1,6 +1,6 @@
 # Training system
 
-_Last reviewed: 2026-08-13_
+_Last reviewed: 2026-08-29_
 
 ## Core optimizer-step contract
 
@@ -83,6 +83,12 @@ models/<run_id>/<checkpoint_id>/...
 ```
 
 `run/...` is the two-phase live exact-resume namespace. `models/...` is the stable completed-artifact namespace. Stable artifacts verify their native `local_manifest.json`; the live publication manifest belongs to the two-phase `run/...` protocol.
+
+Canonical Git-backed SFT and R-SFT publication uses rolling latest-only
+retention. After the new checkpoint tree and `latest.json` pointer are verified,
+the publisher deletes superseded checkpoints under that same run ID and
+super-squashes repository history. Other run namespaces and stable `models/...`
+artifacts remain in the current tree and are not deleted by this cleanup.
 
 ## W&B and validation
 

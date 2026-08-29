@@ -123,6 +123,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
         self.assertEqual(command[microbatch_index + 1], "2")
         validation_index = command.index("--validation-blocks")
         behavior_index = command.index("--behavior-cases")
+        self.assertIn("--remote-rolling-latest-only", command)
         self.assertEqual(
             command[validation_index + 1],
             str(sft_scaled_runtime.INLINE_VALIDATION_BLOCKS),

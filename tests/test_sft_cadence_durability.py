@@ -2,10 +2,24 @@ from __future__ import annotations
 
 import unittest
 
-from post_training.sft.train_cli import _cadence_actions
+from post_training.sft.train_cli import _cadence_actions, build_parser
 
 
 class SFTCadenceDurabilityTests(unittest.TestCase):
+    def test_trainer_accepts_explicit_rolling_remote_retention(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--dataset-dir",
+                "/tmp/data",
+                "--checkpoint-dir",
+                "/tmp/checkpoints",
+                "--sft-run-id",
+                "run",
+                "--remote-rolling-latest-only",
+            ]
+        )
+        self.assertTrue(args.remote_rolling_latest_only)
+
     def test_shared_boundary_persists_and_publishes_before_evaluation(self) -> None:
         self.assertEqual(
             _cadence_actions(

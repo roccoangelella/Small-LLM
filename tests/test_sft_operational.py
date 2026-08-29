@@ -6,6 +6,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 import torch
 
@@ -42,6 +43,44 @@ sft_runtime = _load_sft_runtime()
 
 
 class SFTOperationalTests(unittest.TestCase):
+    def test_canonical_train_enables_remote_rolling_retention(self) -> None:
+        profile = sft_runtime.resolve_profile(20_000_000, 500_000_000)
+        worktree = Path("/tmp/small-llm-sft-worktree")
+        captured: dict[str, object] = {}
+
+        def capture_run(command: list[str], *, cwd: Path) -> int:
+            captured["command"] = list(command)
+            captured["cwd"] = cwd
+            return 0
+
+        with (
+            mock.patch.object(sft_runtime, "_prepare_worktree", return_value=worktree),
+            mock.patch.object(
+                sft_runtime,
+                "_find_bundle",
+                return_value=Path("/tmp/small-llm-sft-bundle"),
+            ),
+            mock.patch.object(sft_runtime, "_wandb_preflight"),
+            mock.patch.object(sft_runtime, "_run", side_effect=capture_run),
+        ):
+            self.assertEqual(
+                sft_runtime.train(
+                    profile,
+                    dataset_dir=None,
+                    parent_repo_id="owner/parent",
+                    checkpoint_repo_id="owner/sft",
+                    max_steps_this_session=None,
+                    wandb_entity=None,
+                ),
+                0,
+            )
+
+        command = captured["command"]
+        self.assertIsInstance(command, list)
+        assert isinstance(command, list)
+        self.assertIn("--remote-rolling-latest-only", command)
+        self.assertEqual(captured["cwd"], worktree)
+
     def test_500m_budget_uses_exact_parent_counter(self) -> None:
         self.assertEqual(sft_budget_from_parent(500_156_416), 20_006_256)
 

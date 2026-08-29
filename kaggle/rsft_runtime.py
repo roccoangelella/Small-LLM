@@ -312,6 +312,7 @@ def build_train_command(
         "--checkpoint-every-steps", str(profile.cadence_steps),
         "--evaluation-every-steps", str(profile.cadence_steps),
         "--remote-publish-every-steps", str(profile.cadence_steps),
+        "--remote-rolling-latest-only",
         "--validation-blocks", str(scaled.INLINE_VALIDATION_BLOCKS),
         "--behavior-cases", str(scaled.INLINE_BEHAVIOR_CASES),
         "--wandb-mode", "online",

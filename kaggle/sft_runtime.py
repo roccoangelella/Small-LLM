@@ -456,6 +456,7 @@ def train(
         "--checkpoint-every-steps", str(profile.cadence_steps),
         "--evaluation-every-steps", str(profile.cadence_steps),
         "--remote-publish-every-steps", str(profile.cadence_steps),
+        "--remote-rolling-latest-only",
         "--wandb-mode", "online",
         "--wandb-project", "Small-LLM",
         "--wandb-run-id", profile.wandb_run_id,

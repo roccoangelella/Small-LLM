@@ -12,7 +12,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from trainer.cli import main
-from trainer.remote_publication import configure_remote_publication
+from trainer.remote_publication import (
+    RemotePublication,
+    cleanup_remote_publication,
+    configure_remote_publication,
+)
 
 
 class _Metrics:
@@ -71,6 +75,62 @@ _BASE = [
 
 
 class TrainerRemotePublicationTests(unittest.TestCase):
+    def test_repository_cleanup_prunes_only_superseded_checkpoints_then_squashes(self) -> None:
+        calls: list[tuple[str, object]] = []
+
+        class Api:
+            def list_repo_files(self, **kwargs):
+                calls.append(("list", kwargs))
+                return [
+                    "run/active/checkpoints/step-00000001/last/checkpoint.json",
+                    "run/active/checkpoints/step-00000002/last/checkpoint.json",
+                    "run/active/latest.json",
+                    "run/active/best.json",
+                    "run/other/checkpoints/step-00000001/last/checkpoint.json",
+                ]
+
+            def delete_folder(self, **kwargs):
+                calls.append(("delete_folder", kwargs))
+
+            def delete_file(self, **kwargs):
+                calls.append(("delete_file", kwargs))
+
+            def super_squash_history(self, **kwargs):
+                calls.append(("squash", kwargs))
+
+        store = SimpleNamespace(
+            api=Api(),
+            repo_id="owner/checkpoints",
+            repo_type="model",
+            revision=None,
+            token="token",
+            read_json=lambda path: {"checkpoint_id": "step-00000002"},
+        )
+        remote = RemotePublication(
+            publisher=SimpleNamespace(store=store),
+            drive_manifest={"version": 1, "run_id": "active", "shards": []},
+            every_steps=1,
+            rolling_latest_only=True,
+        )
+
+        result = cleanup_remote_publication(
+            remote,
+            checkpoint_id="step-00000002",
+        )
+
+        self.assertEqual(result["status"], "pruned_and_squashed")
+        self.assertEqual(result["removed_checkpoint_ids"], ["step-00000001"])
+        deleted_folders = [payload for kind, payload in calls if kind == "delete_folder"]
+        self.assertEqual(
+            [payload["path_in_repo"] for payload in deleted_folders],
+            ["run/active/checkpoints/step-00000001"],
+        )
+        deleted_files = [payload for kind, payload in calls if kind == "delete_file"]
+        self.assertEqual([payload["path_in_repo"] for payload in deleted_files], ["run/active/best.json"])
+        squashes = [payload for kind, payload in calls if kind == "squash"]
+        self.assertEqual(len(squashes), 1)
+        self.assertEqual(squashes[0]["branch"], "main")
+
     def _objects(self, *, fail: bool = False, rolling: bool = False):
         engine = _Engine()
         session = _Session(engine)

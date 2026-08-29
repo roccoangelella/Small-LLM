@@ -166,6 +166,7 @@ class SFT10PctTrainingDatasetTests(unittest.TestCase):
         self.assertEqual(command[fraction_denominator + 1], "10")
         dataset_index = command.index("--dataset-dir")
         self.assertEqual(command[dataset_index + 1], str(bundle))
+        self.assertIn("--remote-rolling-latest-only", command)
 
 
 if __name__ == "__main__":

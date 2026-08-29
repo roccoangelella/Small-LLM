@@ -269,6 +269,7 @@ microbatch: 4
 validation: every 250 updates
 local checkpoint: every 250 updates
 verified remote publication: every 250 updates
+remote retention: latest verified checkpoint only; prune the same run and super-squash after publication
 ```
 
 The controlled S0 mixture is:

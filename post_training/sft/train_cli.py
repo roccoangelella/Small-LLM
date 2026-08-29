@@ -17,6 +17,10 @@ import torch
 from dataset.src.joint_checkpoint import CheckpointCoordinator, verify_local_manifest
 from dataset.src.remote import HuggingFaceCheckpointStore, TwoPhaseCheckpointPublisher
 from trainer.engine import TrainerEngine, seed_everything
+from trainer.remote_publication import (
+    RemotePublication,
+    cleanup_remote_publication,
+)
 from trainer.session import TrainingSession
 
 from .behavior_eval import evaluate_behavior
@@ -98,6 +102,14 @@ def build_parser() -> argparse.ArgumentParser:
     remote.add_argument("--checkpoint-revision")
     remote.add_argument("--token-env", default="HF_TOKEN")
     remote.add_argument("--create-checkpoint-repo", action="store_true")
+    remote.add_argument(
+        "--remote-rolling-latest-only",
+        action="store_true",
+        help=(
+            "after each verified publication, delete superseded checkpoints for this "
+            "run and super-squash repository history"
+        ),
+    )
     remote.add_argument(
         "--no-automatic-resume",
         action="store_true",
@@ -469,6 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     publisher = None
     publication_manifest = None
+    remote_publication = None
     if args.checkpoint_repo_id:
         store = HuggingFaceCheckpointStore(
             args.checkpoint_repo_id,
@@ -479,6 +492,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         publisher = TwoPhaseCheckpointPublisher(store, run_id=args.sft_run_id)
         publication_manifest = publication_dataset_manifest(bundle_root, run_id=args.sft_run_id)
+        remote_publication = RemotePublication(
+            publisher=publisher,
+            drive_manifest=publication_manifest,
+            every_steps=args.remote_publish_every_steps,
+            rolling_latest_only=args.remote_rolling_latest_only,
+        )
 
     run = _wandb_run(
         args,
@@ -564,10 +583,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             metric=None,
             best_metric=None,
         )
+        cleanup = None
+        if remote_publication is not None:
+            cleanup = cleanup_remote_publication(
+                remote_publication,
+                checkpoint_id=checkpoint_id,
+            )
         published.add(checkpoint_id)
-        cadence_event("publication:done", checkpoint_id=checkpoint_id, final=final)
+        cadence_event(
+            "publication:done",
+            checkpoint_id=checkpoint_id,
+            final=final,
+            rolling_cleanup=cleanup,
+        )
         print(
-            json.dumps({"remote_publication": {"checkpoint_id": checkpoint_id, "final": final}}, sort_keys=True),
+            json.dumps(
+                {
+                    "remote_publication": {
+                        "checkpoint_id": checkpoint_id,
+                        "final": final,
+                        "rolling_cleanup": cleanup,
+                    }
+                },
+                sort_keys=True,
+            ),
             flush=True,
         )
 
