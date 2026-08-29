@@ -28,10 +28,12 @@ TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
 # The historical 4% profile keeps its older launch pin; only 10% bundle creation
 # temporarily materializes a worktree at this implementation commit.
 TEN_PERCENT_BUILD_COMMIT = "fdfab079bacbb8a1098bdcee7451347cf28bc1f6"
-# The long-peak 10% trajectory keeps the completed 4% and first 10% experiments
-# immutable. This pin contains the 15% peak hold plus the unchanged aggressive
-# settle/power-law/cooldown schedule used by the dedicated 10% training wrapper.
-TEN_PERCENT_TRAIN_COMMIT = "fd784ed1bb056dc8a2d29a3847e606b8762cecc1"
+# ADR-0130 supersedes the earlier 15%-hold proposal. The training worktree is
+# pinned to the commit that contains the exact step-64 warmup, peak-through-3000
+# schedule, its dedicated dual-T4 wrapper, and regression tests.
+TEN_PERCENT_TRAIN_COMMIT = "caa7fa54fe16510d30ef92eca19d95f86585e20e"
+TEN_PERCENT_TRAJECTORY_RUN_ID = "100m-2b-sft-s0-10pct-peak3000-001"
+TEN_PERCENT_TRAJECTORY_WANDB_NAME = "100M / 2B parent / SFT S0 / 10% / peak-through-3000"
 
 # Verified private Kaggle publication accepted for the 100M/2B 10% S0 run.
 # The publication round-trip reported this exact tree identity. Training binds
@@ -295,13 +297,17 @@ def train(
         profile,
         parent_consumed_tokens=exact_parent_tokens,
     )
-    train_profile = (
-        replace(profile, launch_commit=TEN_PERCENT_TRAIN_COMMIT)
-        if capacity_aware
-        else profile
-    )
-    worktree = base._prepare_worktree(train_profile)
-    bundle = base._find_bundle(dataset_dir, profile)
+    dataset_profile = profile
+    if capacity_aware:
+        profile = replace(
+            profile,
+            sft_run_id=TEN_PERCENT_TRAJECTORY_RUN_ID,
+            wandb_run_id=TEN_PERCENT_TRAJECTORY_RUN_ID,
+            wandb_run_name=TEN_PERCENT_TRAJECTORY_WANDB_NAME,
+            launch_commit=TEN_PERCENT_TRAIN_COMMIT,
+        )
+    worktree = base._prepare_worktree(profile)
+    bundle = base._find_bundle(dataset_dir, dataset_profile)
     if capacity_aware:
         if float(profile.learning_rate) != 3e-5:
             raise base.RuntimeFailure("100M/2B 10% SFT peak LR is frozen at 3e-5")
@@ -377,6 +383,8 @@ __all__ = [
     "TEN_PERCENT_RECIPE",
     "TEN_PERCENT_TRAIN_COMMIT",
     "TEN_PERCENT_TRAIN_TARGETS",
+    "TEN_PERCENT_TRAJECTORY_RUN_ID",
+    "TEN_PERCENT_TRAJECTORY_WANDB_NAME",
     "evaluate",
     "prepare",
     "publish",
