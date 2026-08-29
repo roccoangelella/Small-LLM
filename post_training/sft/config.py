@@ -17,6 +17,7 @@ DEFAULT_INSTRUCTION_SOURCE_SHARES = {
 }
 
 S0_AGGRESSIVE_PEAK_LR = 3e-5
+S0_AGGRESSIVE_PEAK_HOLD_FRACTION = 0.15
 S0_AGGRESSIVE_SETTLE_LR = 1e-5
 S0_AGGRESSIVE_COOLDOWN_START_LR = 1e-6
 S0_AGGRESSIVE_FINAL_LR = 5e-7
@@ -227,7 +228,7 @@ def build_s0_aggressive_trainer_config(
     checkpoint_every_steps: int = 0,
     evaluation_every_steps: int = 0,
 ) -> TrainerConfig:
-    """ADR-0124/0125 fresh aggressive decay for the 10% 100M/2B S0 run."""
+    """Long-peak aggressive decay for the 10% 100M/2B S0 run."""
 
     if not math.isclose(
         float(learning_rate), S0_AGGRESSIVE_PEAK_LR, rel_tol=0.0, abs_tol=1e-15
@@ -236,7 +237,10 @@ def build_s0_aggressive_trainer_config(
             "aggressive S0 peak LR is frozen at 3e-5 for the accepted 10% run"
         )
     total_tokens = sum(schedule.block_target_counts)
-    plan = fresh_aggressive_decay_plan(total_tokens)
+    plan = fresh_aggressive_decay_plan(
+        total_tokens,
+        peak_fraction=S0_AGGRESSIVE_PEAK_HOLD_FRACTION,
+    )
     landmarks = plan.lr_landmarks(learning_rate)
     expected = {
         "settle_lr": S0_AGGRESSIVE_SETTLE_LR,
@@ -263,6 +267,7 @@ __all__ = [
     "DEFAULT_INSTRUCTION_SOURCE_SHARES",
     "S0_AGGRESSIVE_COOLDOWN_START_LR",
     "S0_AGGRESSIVE_FINAL_LR",
+    "S0_AGGRESSIVE_PEAK_HOLD_FRACTION",
     "S0_AGGRESSIVE_PEAK_LR",
     "S0_AGGRESSIVE_SETTLE_LR",
     "SFTDataConfig",
