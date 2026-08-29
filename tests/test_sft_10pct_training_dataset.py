@@ -132,7 +132,10 @@ class SFT10PctTrainingDatasetTests(unittest.TestCase):
         self.assertIsInstance(command, list)
         assert isinstance(command, list)
         run_id_index = command.index("--sft-run-id")
-        self.assertEqual(command[run_id_index + 1], "100m-2b-sft-s0-10pct-001")
+        self.assertEqual(
+            command[run_id_index + 1],
+            "100m-2b-sft-s0-10pct-longpeak-001",
+        )
         fraction_numerator = command.index("--sft-fraction-numerator")
         fraction_denominator = command.index("--sft-fraction-denominator")
         self.assertEqual(command[fraction_numerator + 1], "1")
