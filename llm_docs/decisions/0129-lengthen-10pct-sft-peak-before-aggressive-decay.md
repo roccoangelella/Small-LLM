@@ -1,6 +1,7 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-29
+superseded_by: 0130
 ---
 
 # ADR 0129: Lengthen the 100M/2B 10% SFT peak before aggressive decay
