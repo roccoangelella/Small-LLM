@@ -11,7 +11,7 @@
 TEMPERATURE = 1.0
 TOP_K = 20
 TOP_P = 0.9
-MAX_NEW_TOKENS = 64
+MAX_NEW_TOKENS = 128
 SEED = 17
 
 import argparse
