@@ -479,6 +479,7 @@ def _restore_pointer(
     run_id: str,
     run_dir: Path,
     pointer: Mapping[str, object],
+    source: str,
 ) -> dict[str, object]:
     from dataset.src.joint_checkpoint import restore_on_empty_vps
     from dataset.src.remote import TwoPhaseCheckpointPublisher
@@ -488,7 +489,7 @@ def _restore_pointer(
     target = run_dir / "checkpoints" / checkpoint_id
     if target.is_dir():
         metadata = runtime._verified_checkpoint_metadata(target, checkpoint_id)
-        metadata["source"] = "local_and_hf_model_repo"
+        metadata["source"] = f"local_and_{source}"
         return metadata
     restored = restore_on_empty_vps(
         publisher=TwoPhaseCheckpointPublisher(store, run_id=run_id),
@@ -499,7 +500,7 @@ def _restore_pointer(
         prefetch_shards=0,
     )
     metadata = runtime._verified_checkpoint_metadata(restored, checkpoint_id)
-    metadata["source"] = "hf_model_repo"
+    metadata["source"] = source
     return metadata
 
 
@@ -520,6 +521,7 @@ def _exact_source_pointer(store: object) -> Mapping[str, object] | None:
 
 def prepare(
     *,
+    source_commit: str,
     repo_root: Path,
     run_root: Path,
     cache_root: Path,
@@ -541,28 +543,50 @@ def prepare(
     checkpoint_dir = run_dir / "checkpoints"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     local_id, local_step = runtime._latest_checkpoint(checkpoint_dir)
-    store = runtime._hf_model_repo_store()
-    continuation_pointer = store.read_json(f"run/{RUN_ID}/latest.json")
-    continuation_id = _pointer_checkpoint_id(continuation_pointer, label=RUN_ID)
-    continuation_step = checkpoint_step(continuation_id) if continuation_id else 0
-    if continuation_step and not SOURCE_STEP <= continuation_step <= FINAL_STEP:
-        raise RuntimeError("Hugging Face continuation pointer is outside the frozen horizon")
-    if continuation_step > local_step:
-        assert isinstance(continuation_pointer, Mapping)
+    bucket_store = runtime._hf_bucket_store()
+    bucket_pointer = bucket_store.read_json(f"run/{RUN_ID}/latest.json")
+    bucket_id = _pointer_checkpoint_id(bucket_pointer, label=f"{RUN_ID} bucket")
+    bucket_step = checkpoint_step(bucket_id) if bucket_id else 0
+    legacy_store = runtime._hf_model_repo_store()
+    legacy_pointer = legacy_store.read_json(f"run/{RUN_ID}/latest.json")
+    legacy_id = _pointer_checkpoint_id(legacy_pointer, label=f"{RUN_ID} legacy model repo")
+    legacy_step = checkpoint_step(legacy_id) if legacy_id else 0
+    for remote_step in (bucket_step, legacy_step):
+        if remote_step and not SOURCE_STEP <= remote_step <= FINAL_STEP:
+            raise RuntimeError("Hugging Face continuation pointer is outside the frozen horizon")
+
+    selected_remote_source: str | None = None
+    newest_remote_step = max(bucket_step, legacy_step)
+    if newest_remote_step > local_step and bucket_step >= legacy_step:
+        assert isinstance(bucket_pointer, Mapping)
         restored = _restore_pointer(
             runtime,
-            store=store,
+            store=bucket_store,
             run_id=RUN_ID,
             run_dir=run_dir,
-            pointer=continuation_pointer,
+            pointer=bucket_pointer,
+            source="hf_bucket",
         )
         local_id, local_step = str(restored["checkpoint_id"]), int(restored["step"])
+        selected_remote_source = "hf_bucket"
+    elif newest_remote_step > local_step:
+        assert isinstance(legacy_pointer, Mapping)
+        restored = _restore_pointer(
+            runtime,
+            store=legacy_store,
+            run_id=RUN_ID,
+            run_dir=run_dir,
+            pointer=legacy_pointer,
+            source="legacy_hf_model_repo",
+        )
+        local_id, local_step = str(restored["checkpoint_id"]), int(restored["step"])
+        selected_remote_source = "legacy_hf_model_repo"
 
     source_checkpoint = False
     if local_id is None:
-        if continuation_pointer is not None:
+        if bucket_pointer is not None or legacy_pointer is not None:
             raise RuntimeError("continuation pointer exists but no verified continuation was installed")
-        source_pointer = _exact_source_pointer(store)
+        source_pointer = _exact_source_pointer(legacy_store)
         if source_pointer is None:
             raise RuntimeError(
                 f"no verified continuation exists and exact source {SOURCE_RUN_ID}/{SOURCE_CHECKPOINT_ID} is unavailable"
@@ -570,10 +594,11 @@ def prepare(
         source_cache = run_root / ".deep-decay-source" / SOURCE_RUN_ID
         restored = _restore_pointer(
             runtime,
-            store=store,
+            store=legacy_store,
             run_id=SOURCE_RUN_ID,
             run_dir=source_cache,
             pointer=source_pointer,
+            source="legacy_hf_model_repo_source",
         )
         if restored.get("checkpoint_id") != SOURCE_CHECKPOINT_ID or restored.get("step") != SOURCE_STEP:
             raise RuntimeError("exact source restore did not produce step-00015500")
@@ -600,9 +625,9 @@ def prepare(
     profile = get_profile(DATASET_PROFILE)
     if profile.run_id != DATASET_RUN_ID or profile.sequences_per_block != SEQUENCES_PER_BLOCK:
         raise RuntimeError("rolling 10B dataset identity/geometry drifted")
-    bucket_id = hf_dataset_bucket_id()
+    dataset_bucket_id = hf_dataset_bucket_id()
     dataset_store = HuggingFaceBucketShardStore(
-        bucket_id,
+        dataset_bucket_id,
         token=runtime._hf_token(),
         private=True,
         create_bucket=False,
@@ -618,7 +643,7 @@ def prepare(
         raise RuntimeError(f"dataset stage did not become ready: {staged}")
     verification = verify_incremental_stage(
         destination=dataset,
-        bucket_id=bucket_id,
+        bucket_id=dataset_bucket_id,
         run_id=DATASET_RUN_ID,
         required_train_block=local_step,
     )
@@ -629,6 +654,45 @@ def prepare(
         source_checkpoint=source_checkpoint,
     )
     verify_checkpoint(root, checkpoint_id=local_id, source_checkpoint=False)
+
+    transport_path = run_dir / "hf_checkpoint_transport.json"
+    previous_source_commit: str | None = None
+    previous_transport = root / "drive_manifest.json"
+    if previous_transport.is_file():
+        previous_payload = json.loads(previous_transport.read_text(encoding="utf-8"))
+        observed_source = previous_payload.get("source_commit") if isinstance(previous_payload, Mapping) else None
+        if isinstance(observed_source, str) and observed_source and observed_source != source_commit:
+            previous_source_commit = observed_source
+    transport = runtime._write_hf_transport_manifest(
+        transport_path,
+        run_id=RUN_ID,
+        dataset=dataset,
+        dataset_profile=DATASET_PROFILE,
+        source_commit=source_commit,
+        microbatch_size=MICROBATCH_SIZE,
+        resume_parent_source_commit=previous_source_commit,
+        bucket_id=runtime._hf_checkpoint_bucket_id(),
+    )
+    if bucket_step < local_step:
+        from dataset.src.remote import TwoPhaseCheckpointPublisher
+
+        publisher = TwoPhaseCheckpointPublisher(bucket_store, run_id=RUN_ID)
+        publisher.publish(
+            root,
+            checkpoint_id=local_id,
+            drive_manifest=transport,
+            metric=None,
+            best_metric=None,
+        )
+        cleanup = bucket_store.prune_run_checkpoints(run_id=RUN_ID, checkpoint_id=local_id)
+    else:
+        cleanup = {"status": "already_current", "checkpoint_id": local_id}
+    durable_pointer = bucket_store.read_json(f"run/{RUN_ID}/latest.json")
+    durable_id = _pointer_checkpoint_id(durable_pointer, label=f"{RUN_ID} bucket after migration")
+    if durable_id != local_id:
+        raise RuntimeError(
+            f"Hugging Face checkpoint Bucket latest {durable_id!r} != verified local {local_id!r}"
+        )
     modal_contract = contract()
     contract_path = run_dir / "modal_deep_decay_contract.json"
     if contract_path.is_file():
@@ -648,9 +712,13 @@ def prepare(
         "final_step": FINAL_STEP,
         "required_block": local_step,
         "dataset_dir": str(dataset),
-        "dataset_bucket_id": bucket_id,
-        "checkpoint_source": "hf_continuation" if continuation_step else "exact_step15500_fallback",
-        "continuation_hf_checkpoint_id": continuation_id,
+        "dataset_bucket_id": dataset_bucket_id,
+        "checkpoint_bucket_id": runtime._hf_checkpoint_bucket_id(),
+        "checkpoint_source": selected_remote_source
+        or ("exact_step15500_fallback" if source_checkpoint else "local_modal_volume"),
+        "continuation_hf_checkpoint_id": durable_id,
+        "legacy_model_repo_checkpoint_id": legacy_id,
+        "bucket_migration_cleanup": cleanup,
         "migration": migration,
         "verification": verification,
         "expected_lr": expected_lr(local_step * TARGETS_PER_FULL_BLOCK),
@@ -735,7 +803,7 @@ def train(
     os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = DATASET_RUN_ID
     os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
 
-    repo_id = runtime._hf_model_repo_id()
+    checkpoint_bucket_id = runtime._hf_checkpoint_bucket_id()
     remote_manifest = run_dir / "hf_checkpoint_transport.json"
     runtime._write_hf_transport_manifest(
         remote_manifest,
@@ -745,7 +813,7 @@ def train(
         source_commit=source_commit,
         microbatch_size=MICROBATCH_SIZE,
         resume_parent_source_commit=None,
-        bucket_id=repo_id,
+        bucket_id=checkpoint_bucket_id,
     )
     plan: dict[str, Any] = {
         "trainer": {
@@ -773,7 +841,7 @@ def train(
         online=True,
         resume=resume_checkpoint_id,
         remote_manifest=remote_manifest,
-        remote_bucket_id=repo_id,
+        remote_bucket_id=checkpoint_bucket_id,
     )
     _replace_option(command, "--schedule", "wsqd")
     _replace_option(command, "--warmup-tokens", "0")

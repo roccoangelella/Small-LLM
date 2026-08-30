@@ -109,7 +109,7 @@ def remote_import_preflight() -> dict[str, object]:
         raise RuntimeError(f"Modal image is missing repository runtime: {runtime_path}")
     if not checkpoint_transport_path.is_file():
         raise RuntimeError(
-            f"Modal image is missing model-repository checkpoint adapter: {checkpoint_transport_path}"
+            f"Modal image is missing split checkpoint/model transport adapter: {checkpoint_transport_path}"
         )
     if not rolling_path.is_file():
         raise RuntimeError(f"Modal image is missing rolling-dataset runtime: {rolling_path}")
@@ -214,11 +214,11 @@ def stage_rolling_dataset_remote(model: str, tokens: str) -> dict[str, object]:
 def prepare_deep_decay_remote(source_commit: str) -> dict[str, object]:
     """CPU-only restore, verification, dataset staging, and slicing migration gate."""
 
-    del source_commit
     sys.path.insert(0, str(REMOTE_MODAL))
     from deep_decay_10b_from_15500 import prepare  # noqa: PLC0415
 
     return prepare(
+        source_commit=source_commit,
         repo_root=REMOTE_REPO,
         run_root=RUN_ROOT.resolve(strict=True),
         cache_root=CACHE_ROOT.resolve(strict=True),
@@ -248,7 +248,7 @@ def train_remote(
     microbatch_size: int = 0,
     precision: str = DEFAULT_PRECISION,
 ) -> dict[str, object]:
-    """Existing Modal-volume dataset path with unified HF model-repo checkpoints."""
+    """Existing Modal-volume dataset path with Bucket latest and dedicated model best."""
 
     resolved_run_root = RUN_ROOT.resolve(strict=True)
     _stage(
