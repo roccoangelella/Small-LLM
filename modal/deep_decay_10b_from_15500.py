@@ -519,6 +519,86 @@ def _exact_source_pointer(store: object) -> Mapping[str, object] | None:
     }
 
 
+def _local_best_checkpoint(checkpoint_dir: Path) -> tuple[str, float]:
+    """Select the manifest-bearing local checkpoint with minimum validation loss."""
+
+    candidates: list[tuple[float, int, str]] = []
+    for root in checkpoint_dir.glob("step-*"):
+        if not root.is_dir() or root.is_symlink():
+            continue
+        try:
+            step = checkpoint_step(root.name)
+        except ValueError:
+            continue
+        if not SOURCE_STEP <= step <= FINAL_STEP:
+            continue
+        payload_path = root / "checkpoint.json"
+        manifest_path = root / "local_manifest.json"
+        state_path = root / "trainer_state.pkl"
+        if not payload_path.is_file() or not manifest_path.is_file() or not state_path.is_file():
+            continue
+        payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        metrics = payload.get("validation_metrics") if isinstance(payload, Mapping) else None
+        loss = metrics.get("loss") if isinstance(metrics, Mapping) else None
+        if isinstance(loss, bool) or not isinstance(loss, (int, float)):
+            continue
+        value = float(loss)
+        if value < 0 or not math.isfinite(value):
+            raise RuntimeError(f"checkpoint {root.name} has invalid validation loss")
+        candidates.append((value, -step, root.name))
+    if not candidates:
+        raise RuntimeError("no local checkpoint has verified validation metrics for best selection")
+    loss, _, checkpoint_id = min(candidates)
+    return checkpoint_id, loss
+
+
+def _ensure_dedicated_model_best(
+    *,
+    runtime: Any,
+    checkpoint_dir: Path,
+    bucket_latest_id: str,
+) -> dict[str, object]:
+    """Initialize or strictly improve the dedicated model repo from proven local best."""
+
+    from model_repo_checkpoint import _dedicated_best_repo_id
+    from trainer.best_model import get_dedicated_best_metric, publish_dedicated_best_model
+
+    checkpoint_id, validation_loss = _local_best_checkpoint(checkpoint_dir)
+    metric = -validation_loss
+    root = checkpoint_dir / checkpoint_id
+    verify_checkpoint(root, checkpoint_id=checkpoint_id, source_checkpoint=False)
+    repo_id = _dedicated_best_repo_id(RUN_ID)
+    existing_metric = get_dedicated_best_metric(
+        repo_id=repo_id,
+        run_id=RUN_ID,
+        token=runtime._hf_token(),
+    )
+    if existing_metric is not None and metric <= existing_metric:
+        return {
+            "status": "already_current",
+            "repo_id": repo_id,
+            "checkpoint_id": checkpoint_id,
+            "validation_loss": validation_loss,
+            "existing_metric": existing_metric,
+        }
+    if existing_metric is not None and checkpoint_id != bucket_latest_id:
+        raise RuntimeError(
+            "refusing to replace an existing best model unless its improving checkpoint "
+            "is the verified Bucket latest recovery copy"
+        )
+    result = publish_dedicated_best_model(
+        repo_id=repo_id,
+        run_id=RUN_ID,
+        checkpoint_dir=root,
+        checkpoint_id=checkpoint_id,
+        metric=metric,
+        validation_loss=validation_loss,
+        token=runtime._hf_token(),
+        recreate=True,
+    )
+    return dict(result)
+
+
 def prepare(
     *,
     source_commit: str,
@@ -693,6 +773,11 @@ def prepare(
         raise RuntimeError(
             f"Hugging Face checkpoint Bucket latest {durable_id!r} != verified local {local_id!r}"
         )
+    best_model = _ensure_dedicated_model_best(
+        runtime=runtime,
+        checkpoint_dir=checkpoint_dir,
+        bucket_latest_id=durable_id,
+    )
     modal_contract = contract()
     contract_path = run_dir / "modal_deep_decay_contract.json"
     if contract_path.is_file():
@@ -719,6 +804,7 @@ def prepare(
         "continuation_hf_checkpoint_id": durable_id,
         "legacy_model_repo_checkpoint_id": legacy_id,
         "bucket_migration_cleanup": cleanup,
+        "best_model": best_model,
         "migration": migration,
         "verification": verification,
         "expected_lr": expected_lr(local_step * TARGETS_PER_FULL_BLOCK),
