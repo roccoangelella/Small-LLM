@@ -61,9 +61,9 @@ strong uniform intrinsic gains above. See
 ADR 0071 authorized the original fresh 100M/10B trajectory. ADR 0095 later
 froze the current deep-decay schedule from the exact uncooled step-15,500
 state, and ADR 0114 authorizes its current execution on one Modal H100. The
-detached live app `ap-86sjxvNMobYbQ9pTYhfsZw` resumed the newest verified HF
-continuation, `step-00059750`, from source commit
-`115769ada2324025a190653a486d47b8b19ea9ee`. It retains the unchanged
+detached live app `ap-9ctKLcPFhmbBBGwE2GXeiw` resumed the newest verified HF
+continuation, `step-00061500`, from source commit
+`9e6eaf84cfa49c5c2c4fedcb31c9009b48feb125`. It retains the unchanged
 `100m-10b-deep-decay-from-step15500` W&B/HF namespace and runs through the
 full 76,294-update plan without a 5B continuation gate.
 
@@ -170,19 +170,24 @@ historical `small-llm-billing-guard` tmux supervisor, recognized only this
 aggressive task, stopped it at the cap, and relaunched the same RTX4090 tmux
 command after a crash when control-plane state was readable.
 
-The current ADR-0114 Modal segment resumed verified HF `step-00059750` after a
-CPU-only checkpoint and data gate reported committed LR
-`1.3927322119926431e-05`. The gate verified the cross-provider checkpoint,
-projected the two-rank CUDA RNG state to byte-identical rank zero, changed only
-execution slicing from microbatch 2 to 16, and staged the exact block-59,750
-data window before H100 dispatch. The one-H100 worker is detached in app
-`ap-86sjxvNMobYbQ9pTYhfsZw` and completed finite updates through at least step
-59,770 with exact per-target LR, no overflow retries, and approximately 65k
+The first ADR-0114 Modal segment advanced to a locally valid
+`step-00061500`, then stopped because Hugging Face rejected its checkpoint
+upload at the private-repository storage limit. The trainer had finite state;
+the durable remote pointer still resolved `step-00061250`. A CPU-only repair
+super-squashed superseded model-repository history while preserving every
+current run pointer and stable model artifact, then verified and published the
+local step 61,500 payload and advanced the remote pointer to it. The current
+CPU checkpoint/data gate restored `step-00061500`, reported committed LR
+`1.3288285153726578e-05`, and staged the exact block-61,500 data window before
+H100 dispatch. The one-H100 worker is detached in app
+`ap-9ctKLcPFhmbBBGwE2GXeiw` and completed finite updates through at least step
+61,505 with exact per-target LR, no overflow retries, and approximately 64k
 target tokens/s after first-step compilation. The global block remains 64;
-microbatch 16 is an execution-only four-slice adaptation. `step-00059750`
-remains the newest observed durable HF resume point until the live worker
-publishes its next 250-step boundary. Canonical evidence is
-[`../evidence/scaling/100m_10b_modal_deep_decay_step59750_resume_2026-08-30.md`](../evidence/scaling/100m_10b_modal_deep_decay_step59750_resume_2026-08-30.md).
+microbatch 16 is the already-established execution-only four-slice adaptation.
+`step-00061500` is the newest verified durable HF resume point; the next
+normal remote boundary is step 61,750. Canonical incident and recovery evidence
+is
+[`../evidence/scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md`](../evidence/scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
 

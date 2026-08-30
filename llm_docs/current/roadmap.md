@@ -25,7 +25,7 @@ Preserve the step-15,500 model ancestry, optimizer, scaler, RNG, data cursor,
 exact 10B corpus order, frozen 16-block validation prefix, global 64-sequence
 optimizer block, FP16, GDN-2, and hybrid Muon+AdamW. Modal resumes the newest
 manifest-verified checkpoint in its own continuation namespace, currently
-`step-00059750`; only an empty continuation namespace may fall back to the
+`step-00061500`; only an empty continuation namespace may fall back to the
 exact original step 15,500. One H100 rewrites only execution slicing to
 microbatch 16, giving four ordered accumulations per unchanged optimizer
 update. For the prior two-T4 state, byte-identical rank-zero CUDA RNG bytes
@@ -68,12 +68,16 @@ It CPU-stages and verifies the checkpoint-aligned dataset window before H100
 allocation and keeps local/W&B/HF checkpoint namespaces separate from the
 original run and all superseded continuation branches. Modal publishes the live
 continuation to HF every 250 successful updates and at a segment boundary. The
-detached live app `ap-86sjxvNMobYbQ9pTYhfsZw` restored the verified
-cross-provider `step-00059750` pointer at committed LR
-`1.3927322119926431e-05`, migrated only the two-rank-to-one-rank CUDA RNG
-cardinality and microbatch 2-to-16 execution slicing, and is producing finite
-one-H100 updates near 65k target tokens/s. It has advanced through at least
-step 59,770; the next durable HF boundary is step 60,000.
+previous app stopped while publishing its locally valid step-61,500 checkpoint
+because the private Hugging Face repository had exhausted its storage quota;
+this was a durability-backend failure, not a training failure. Superseded Git
+and LFS history was super-squashed, the current tree and stable artifacts were
+verified intact, and a CPU-only repair published step 61,500 before any new
+H100 allocation. Detached live app `ap-9ctKLcPFhmbBBGwE2GXeiw` restored that
+verified pointer at committed LR `1.3288285153726578e-05` with no new
+scientific-state migration and is producing finite one-H100 updates near 64k
+target tokens/s. It has advanced through at least step 61,505; the next durable
+HF boundary is step 61,750.
 
 Canonical procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
