@@ -68,16 +68,16 @@ It CPU-stages and verifies the checkpoint-aligned dataset window before H100
 allocation and keeps local/W&B/HF checkpoint namespaces separate from the
 original run and all superseded continuation branches. Modal publishes the live
 continuation to HF every 250 successful updates and at a segment boundary. The
-previous app stopped while publishing its locally valid step-61,500 checkpoint
-because the private Hugging Face repository had exhausted its storage quota;
-this was a durability-backend failure, not a training failure. Superseded Git
-and LFS history was super-squashed, the current tree and stable artifacts were
-verified intact, and a CPU-only repair published step 61,500 before any new
-H100 allocation. Detached live app `ap-9ctKLcPFhmbBBGwE2GXeiw` restored that
-verified pointer at committed LR `1.3288285153726578e-05` with no new
-scientific-state migration and is producing finite one-H100 updates near 64k
-target tokens/s. It has advanced through at least step 61,505; the next durable
-HF boundary is step 61,750.
+previous app stopped after the step-61,500 quota incident; this was a
+durability-backend failure, not a training failure. ADR 0132 has now moved the
+verified step-61,500 exact-resume tree to the mutable checkpoint Storage Bucket,
+whose read-back `latest.json` resolves step 61,500. The historical best remains
+step 59,250 at validation loss `2.8437069645151496`; those checkpoint bytes are
+not currently retained, so the dedicated best-model repo remains absent rather
+than pointing at a worse checkpoint. The previous detached app is no longer live,
+and a new Modal invocation is blocked by the workspace spend limit. Once that
+account-level blocker is cleared, the same launcher resumes from Bucket step
+61,500 and future strict validation improvements populate the dedicated best repo.
 
 Canonical procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
