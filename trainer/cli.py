@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 import torch
 
 from .cli_args import parse_args
+from .best_model import (
+    checkpoint_validation_loss,
+    get_dedicated_best_metric,
+    publish_dedicated_best_model,
+)
 from .cli_setup import setup, validation_reader
 from .remote_publication import cleanup_remote_publication, configure_remote_publication
 from .wandb_logging import configure_wandb
@@ -75,6 +81,64 @@ def main(argv: list[str] | None = None) -> int:
     model_config, trainer_config, engine, session, coordinator = setup(args)
     remote = configure_remote_publication(args)
     best_remote_metric = _existing_remote_best_metric(remote)
+    best_model_repo = getattr(args, "best_model_repo", None)
+    best_model_metric: float | None = None
+    best_model_token: str | None = None
+    if best_model_repo:
+        token_env = str(getattr(args, "remote_token_env", "HF_TOKEN"))
+        best_model_token = os.environ.get(token_env)
+        run_id = getattr(args, "wandb_run_id", None)
+        if not isinstance(run_id, str) or not run_id:
+            raise RuntimeError("dedicated best-model publication requires a stable --wandb-run-id")
+        persisted_best_loss = getattr(engine, "best_validation_loss", None)
+        persisted_best_metric: float | None = None
+        if persisted_best_loss is not None:
+            if (
+                isinstance(persisted_best_loss, bool)
+                or not isinstance(persisted_best_loss, (int, float))
+                or not math.isfinite(float(persisted_best_loss))
+                or float(persisted_best_loss) < 0
+            ):
+                raise RuntimeError("trainer state has an invalid persisted best validation loss")
+            persisted_best_metric = -float(persisted_best_loss)
+        repository_best_metric = get_dedicated_best_metric(
+            repo_id=str(best_model_repo),
+            run_id=run_id,
+            token=best_model_token,
+        )
+        if (
+            repository_best_metric is None
+            and persisted_best_metric is not None
+            and getattr(args, "resume", None)
+        ):
+            resume_checkpoint_id = str(args.resume)
+            resume_checkpoint = Path(args.checkpoint_dir) / resume_checkpoint_id
+            resume_loss = checkpoint_validation_loss(resume_checkpoint)
+            if -resume_loss == persisted_best_metric:
+                repair = publish_dedicated_best_model(
+                    repo_id=str(best_model_repo),
+                    run_id=run_id,
+                    checkpoint_dir=resume_checkpoint,
+                    checkpoint_id=resume_checkpoint_id,
+                    metric=persisted_best_metric,
+                    validation_loss=resume_loss,
+                    token=best_model_token,
+                    recreate=bool(getattr(args, "best_model_recreate", False)),
+                )
+                repository_best_metric = persisted_best_metric
+                print(
+                    json.dumps(
+                        {"best_model_resume_repair": dict(repair)},
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+        thresholds = [
+            value
+            for value in (persisted_best_metric, repository_best_metric)
+            if value is not None
+        ]
+        best_model_metric = max(thresholds) if thresholds else None
     telemetry = configure_wandb(
         args,
         model_config=model_config,
@@ -83,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     validation: dict[str, object] | None = None
     saved: set[str] = set()
+    saved_paths: dict[str, Path] = {}
     remotely_published: set[str] = set()
     completed = 0
 
@@ -109,12 +174,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         return dict(result)
 
-    def ensure_local_checkpoint(checkpoint_id: str) -> None:
+    def ensure_local_checkpoint(checkpoint_id: str) -> Path:
         if checkpoint_id in saved:
-            return
+            path = saved_paths.get(checkpoint_id)
+            if path is not None:
+                return path
+            return Path(args.checkpoint_dir) / checkpoint_id
         if completed == 0 and args.resume == checkpoint_id:
+            path = Path(args.checkpoint_dir) / checkpoint_id
             saved.add(checkpoint_id)
-            return
+            saved_paths[checkpoint_id] = path
+            return path
         started = time.perf_counter()
         checkpoint = session.save_checkpoint(
             coordinator,
@@ -122,7 +192,9 @@ def main(argv: list[str] | None = None) -> int:
             validation_metrics=validation,
         )
         elapsed = time.perf_counter() - started
+        path = Path(checkpoint)
         saved.add(checkpoint_id)
+        saved_paths[checkpoint_id] = path
         event = {
             "checkpoint_id": checkpoint_id,
             "elapsed_seconds": elapsed,
@@ -136,6 +208,36 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed_seconds=elapsed,
                 byte_size=event["byte_size"],
             )
+        return path
+
+    def publish_best_model_if_improved(checkpoint_id: str) -> None:
+        nonlocal best_model_metric
+        if not best_model_repo:
+            return
+        metric = _validation_metric(validation)
+        if metric is None or (best_model_metric is not None and metric <= best_model_metric):
+            return
+        run_id = getattr(args, "wandb_run_id", None)
+        if not isinstance(run_id, str) or not run_id:
+            raise RuntimeError("dedicated best-model publication lost its stable run ID")
+        checkpoint_path = ensure_local_checkpoint(checkpoint_id)
+        started = time.perf_counter()
+        result = publish_dedicated_best_model(
+            repo_id=str(best_model_repo),
+            run_id=run_id,
+            checkpoint_dir=checkpoint_path,
+            checkpoint_id=checkpoint_id,
+            metric=metric,
+            validation_loss=-metric,
+            token=best_model_token,
+            recreate=bool(getattr(args, "best_model_recreate", False)),
+        )
+        best_model_metric = metric
+        event = {
+            **dict(result),
+            "elapsed_seconds": time.perf_counter() - started,
+        }
+        print(json.dumps({"best_model_publication": event}, sort_keys=True), flush=True)
 
     def publish_remote_checkpoint(checkpoint_id: str, *, final: bool) -> None:
         nonlocal best_remote_metric
@@ -223,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                 and engine.global_step % trainer_config.checkpoint_every_steps == 0
             ):
                 ensure_local_checkpoint(checkpoint_id)
+            publish_best_model_if_improved(checkpoint_id)
             if remote is not None and engine.global_step % remote.every_steps == 0:
                 publish_remote_checkpoint(checkpoint_id, final=False)
 
@@ -234,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             validation = run_validation()
         checkpoint_id = f"step-{engine.global_step:08d}"
         ensure_local_checkpoint(checkpoint_id)
+        publish_best_model_if_improved(checkpoint_id)
         publish_remote_checkpoint(checkpoint_id, final=True)
         print(json.dumps({"checkpoint_id": checkpoint_id}, sort_keys=True), flush=True)
         if torch.cuda.is_available():

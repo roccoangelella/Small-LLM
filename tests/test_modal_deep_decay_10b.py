@@ -244,27 +244,6 @@ class ModalDeepDecayTests(unittest.TestCase):
         )
         self.assertEqual(payload["max_steps_this_session"], 250)
 
-    def test_local_best_checkpoint_selects_minimum_validation_loss(self) -> None:
-        module = _load()
-        from tempfile import TemporaryDirectory
-        import json
-
-        with TemporaryDirectory() as temporary:
-            checkpoint_dir = Path(temporary)
-            for step_str, loss in [("step-00016000", 3.5), ("step-00016250", 3.2), ("step-00016500", 3.4)]:
-                step_dir = checkpoint_dir / step_str
-                step_dir.mkdir()
-                (step_dir / "checkpoint.json").write_text(
-                    json.dumps({"validation_metrics": {"loss": loss}}),
-                    encoding="utf-8",
-                )
-                (step_dir / "local_manifest.json").write_text("{}", encoding="utf-8")
-                (step_dir / "trainer_state.pkl").write_bytes(b"state")
-
-            cid, val_loss = module._local_best_checkpoint(checkpoint_dir)
-            self.assertEqual(cid, "step-00016250")
-            self.assertEqual(val_loss, 3.2)
-
 
 if __name__ == "__main__":
     unittest.main()

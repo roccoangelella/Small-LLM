@@ -80,14 +80,9 @@ historical/alternate execution evidence, not the live lane.
 
 For **new** dataset production, Hugging Face Storage Buckets are the only remote dataset durability backend under ADR 0054. Google Drive is historical only; legacy fields such as `drive_manifest.json` remain readable provider-neutral compatibility identifiers for already-built artifacts.
 
-Model durability is unified on `SMALL_LLM_HF_REPO_ID` under ADR 0055:
+Under ADR 0132, rolling exact-resume state and selected model state use different Hugging Face transports. `latest` checkpoints use a mutable private Storage Bucket, by default `<SMALL_LLM_HF_REPO_ID>-checkpoints`, with only the newest verified checkpoint retained per run. Strict validation-loss `best` uses a dedicated per-run model repository derived as `<owner>/<base>-best-<run_id>`; every strict improvement marker-verifies the existing dedicated repo, deletes it, recreates it, and publishes the new best in one fresh repository history. Stable completed `models/...` artifacts remain model artifacts and are not moved by this transport change.
 
-```text
-run/<run_id>/...       live two-phase exact-resume checkpoints
-models/<run_id>/...    stable completed model artifacts
-```
-
-Stable `models/...` artifacts are verified with their native `local_manifest.json`. `checkpoint_manifest.json` is publication metadata for the live two-phase `run/...` protocol and is **not required** for stable model artifacts.
+Legacy model-repository `run/...` namespaces remain restore/migration sources until their valuable state is safely classified or moved. Shared model repositories that also contain stable artifacts or other runs are not safe for wholesale deletion. Stable model artifacts are verified with their native `local_manifest.json`; `checkpoint_manifest.json` remains publication metadata for the live two-phase exact-resume protocol.
 
 Canonical Kaggle SFT and R-SFT commands use rolling latest-only remote
 retention. Each verified publication prunes superseded checkpoints only within

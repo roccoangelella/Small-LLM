@@ -15,8 +15,14 @@ Modal accumulation:      4 ordered slices/update
 
 Use a clean committed checkout with the authenticated Modal profile. The
 `small-llm-training` secret must contain `HF_TOKEN`, `WANDB_API_KEY`, and
-`SMALL_LLM_HF_REPO_ID`. The repository identity should resolve to
+`SMALL_LLM_HF_REPO_ID`. The base repository identity should resolve to
 `roccoangelella/small-llm-100m-qualification` for the current production run.
+Unless explicitly overridden, rolling `latest` checkpoints use the private Bucket
+`roccoangelella/small-llm-100m-qualification-checkpoints`, while strict validation-loss
+`best` uses the dedicated model repository
+`roccoangelella/small-llm-100m-qualification-best-100m-10b-deep-decay-from-step15500`.
+The best repository is replaced only after its ownership marker is verified, and each
+strict improvement deletes/recreates it before publishing the new best checkpoint.
 
 ## Inspect without allocating an H100
 
@@ -56,11 +62,13 @@ the exact H100 request, microbatch 16, and CPU-managed rolling cache path.
 
 ## Restore order and fail-closed gate
 
-The CPU function checks the local Modal run Volume and
-`run/100m-10b-deep-decay-from-step15500/latest.json` in Hugging Face. A newer
-remote pointer is downloaded and verified even when an older local checkpoint
-exists. Only when neither local nor remote continuation state exists may the
-adapter restore the exact original two-phase step-15,500 tree.
+The CPU function compares the local Modal run Volume, the checkpoint Storage Bucket
+`run/100m-10b-deep-decay-from-step15500/latest.json`, and the legacy shared model-repository
+pointer while migration is still needed. The newest verified continuation wins. If the
+verified local/legacy checkpoint is newer than the Bucket, CPU prepare republishes it to
+the Bucket, prunes superseded Bucket objects for this run, and independently reads back
+the resulting `latest.json` before any H100 allocation. Only when no continuation exists
+may the adapter restore the exact original two-phase step-15,500 source.
 
 Before H100 allocation it verifies the checkpoint manifest, global step,
 consumed targets, last-consumed block, full 100M GDN-2 model config, hybrid
@@ -86,7 +94,8 @@ Treat the lane as live only after logs show:
 - the expected WSqD LR for its committed-target count;
 - NVIDIA H100 hardware, microbatch 16, and block 64;
 - finite loss, gradient norm, and throughput on successful updates;
-- a segment-final or cadence checkpoint published under the unchanged run ID.
+- a segment-final or cadence `latest` checkpoint published to the checkpoint Bucket under the unchanged run ID;
+- when validation loss strictly improves, the dedicated best-model repository is recreated and points at that verified checkpoint.
 
 Modal functions have a 24-hour timeout. If a full remaining segment cannot
 finish inside that window, rerun the same command. The CPU gate realigns the

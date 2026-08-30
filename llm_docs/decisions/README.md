@@ -11,6 +11,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Accepted ADRs
 
+- [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
 - [`0131-use-rolling-latest-only-retention-for-kaggle-sft.md`](0131-use-rolling-latest-only-retention-for-kaggle-sft.md)
 - [`0120-ignore-obsolete-rsft-datasets-from-git.md`](0120-ignore-obsolete-rsft-datasets-from-git.md)
 - [`0119-publish-frozen-rsft-1pct-corpus-on-main.md`](0119-publish-frozen-rsft-1pct-corpus-on-main.md)
@@ -65,7 +66,6 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md`](0051-qualify-exact-batch-dual-t4-ddp-before-kaggle-adoption.md)
 - [`0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md`](0053-stream-10b-through-one-gib-hf-shards-and-cpu-stage-before-h100.md)
 - [`0054-retire-google-drive-for-new-dataset-durability.md`](0054-retire-google-drive-for-new-dataset-durability.md)
-- [`0055-unify-modal-checkpoints-on-hf-model-repository.md`](0055-unify-modal-checkpoints-on-hf-model-repository.md)
 - [`0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md`](0056-adopt-exact-batch-dual-t4-ddp-for-kaggle-only.md)
 - [`0057-use-standard-wsd-for-100m-10b.md`](0057-use-standard-wsd-for-100m-10b.md)
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
@@ -95,6 +95,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Superseded ADRs
 
+- [`0055-unify-modal-checkpoints-on-hf-model-repository.md`](0055-unify-modal-checkpoints-on-hf-model-repository.md) — superseded by ADR 0132 after the long-running Modal lane demonstrated that rolling checkpoint cadence belongs in mutable HF Bucket storage; strict validation best is now retained in a dedicated recreate-on-improvement model repository.
 - [`0116-promote-expanded-e3-rsft-as-current-default-r0.md`](0116-promote-expanded-e3-rsft-as-current-default-r0.md) — superseded by ADR 0117 after the completed full R-SFT qualification showed protocol acquisition but regressions on eval-core quality, instruction behavior, S0 retention, and novel reasoning.
 - [`0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md`](0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md) — superseded by ADR 0114, which retains the ADR-0095 schedule and namespace but moves execution to one exact Modal H100 with microbatch-16 slicing inside the same global block 64.
 - [`0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md`](0050-scale-100m-to-fresh-10b-with-5b-capability-gate.md) — superseded by ADR 0071 after the user authorized the full 10B run with a concurrent, non-blocking approximately-5B Kaggle evaluation.

@@ -98,7 +98,7 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - CPU staging establishes the checkpoint-aligned current+successor lead window before GPU work;
 - the active Modal worker consumes exact block order and fails closed rather than skipping or reordering;
 - Modal keeps the frozen 64-sequence global optimizer block on one exact H100, with execution microbatch 16 and four ordered slices;
-- model checkpoints remain in the HF model repository and dataset shards remain in the HF dataset Storage Bucket.
+- rolling exact-resume `latest` checkpoints remain in the HF checkpoint Storage Bucket, strict validation-loss `best` remains in a dedicated recreate-on-improvement HF model repository, and dataset shards remain in the HF dataset Storage Bucket.
 
 The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0099/0095.
 

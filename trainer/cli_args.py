@@ -175,6 +175,21 @@ def parser() -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
+        "--best-model-repo",
+        help=(
+            "Dedicated private Hugging Face model repository for the strict validation-loss best "
+            "checkpoint. This transport is separate from exact-resume checkpoints."
+        ),
+    )
+    p.add_argument(
+        "--best-model-recreate",
+        action="store_true",
+        help=(
+            "Delete and recreate the marker-verified dedicated best-model repository on every "
+            "strict improvement, preventing Git/LFS history accumulation."
+        ),
+    )
+    p.add_argument(
         "--wandb-mode",
         choices=("disabled", "online", "offline"),
         default="disabled",
@@ -244,6 +259,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         raise SystemExit(
             "--remote-rolling-latest-only requires --remote-publish-every-steps"
         )
+    if args.best_model_recreate and not args.best_model_repo:
+        raise SystemExit("--best-model-recreate requires --best-model-repo")
+    if args.best_model_repo and not args.best_model_recreate:
+        raise SystemExit(
+            "--best-model-repo requires --best-model-recreate so model history cannot accumulate"
+        )
+    if args.best_model_repo and args.validation_blocks == 0:
+        raise SystemExit("--best-model-repo requires held-out validation blocks")
     if args.wandb_mode == "disabled" and args.wandb_resume != "never":
         raise SystemExit("--wandb-resume requires W&B telemetry to be enabled")
     if args.wandb_mode != "disabled" and args.resume:
