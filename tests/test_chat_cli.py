@@ -46,7 +46,7 @@ def test_resolve_chat_run_is_stage_explicit_and_fail_closed() -> None:
         2_000_000_000,
         stage=chat._STAGE_SFT,
     ) == (
-        "100m-2b-sft-s0-001",
+        "100m-2b-sft-s0-10pct-peak3000-001",
         chat._SOURCE_SFT,
     )
     assert chat._resolve_chat_run(
