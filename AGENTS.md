@@ -10,7 +10,7 @@ Use this file as a map, not as the project encyclopedia.
 - Consult [`llm_docs/decisions/README.md`](llm_docs/decisions/README.md) ONLY when creating, evaluating, or superseding durable architectural choices.
 - Open specific reference, runbook, research, or evidence records from [`llm_docs/README.md`](llm_docs/README.md) only on demand.
 - Prefer targeted `grep_search` and `find_by_name` over bulk reading of large documentation files.
-- For heavy multi-file exploration or log analysis, delegate to a subagent to keep the main conversation context lean.
+- **Delegation Protocol**: For reading documentation (> 50 lines), log exploration, multi-file searches, or shallower mechanical tasks (schema checks, table extraction), delegate to a `GPT-5.6 Luna` worker agent with max thinking. The main agent acts as lead architect/implementer and ingests only the concise synthesized output (< 300 words).
 
 ## Sources of truth & memory hierarchy
 
