@@ -93,13 +93,13 @@ def with_sft_fraction(
     if fraction == current:
         return profile
     dataset_label = _fraction_label(fraction)
-    long_peak_10pct = (
+    canonical_peak3000_10pct = (
         profile.model_parameters == 100_000_000
         and profile.parent_training_tokens == 2_000_000_000
         and fraction == Fraction(1, 10)
     )
-    run_label = f"{dataset_label}-longpeak" if long_peak_10pct else dataset_label
-    run_name_suffix = " / long-peak" if long_peak_10pct else ""
+    run_label = f"{dataset_label}-peak3000" if canonical_peak3000_10pct else dataset_label
+    run_name_suffix = " / peak-through-3000" if canonical_peak3000_10pct else ""
     return replace(
         profile,
         sft_run_id=_variant_id(profile.sft_run_id, run_label),
