@@ -84,6 +84,14 @@ def test_block64_wrapper_reuses_shared_exact_batch_ddp() -> None:
     assert "32 sequences/rank" in source
 
 
+def test_secondary_ddp_rank_disables_dedicated_best_publication() -> None:
+    source = (KAGGLE / "dual_t4_train.py").read_text(encoding="utf-8")
+    setup_start = source.index("    def setup(args: Any) -> Any:")
+    setup_end = source.index("\n    trainer_engine.train_step", setup_start)
+    setup_source = source[setup_start:setup_end]
+    assert "if rank != 0:\n            args.best_model_repo = None" in setup_source
+
+
 def test_block64_startup_is_monitored_then_long_cadence_uses_gloo() -> None:
     module = _load("small_llm_kaggle_block64_control_test", KAGGLE / "dual_t4_train_block64.py")
     distributed = mock.Mock()
