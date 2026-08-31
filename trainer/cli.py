@@ -76,12 +76,27 @@ def _existing_remote_best_metric(remote: object | None) -> float | None:
     return value
 
 
+def _is_primary_process() -> bool:
+    """Return whether this process owns external side effects."""
+
+    distributed = getattr(torch, "distributed", None)
+    if distributed is None:
+        return True
+    try:
+        if not distributed.is_available() or not distributed.is_initialized():
+            return True
+        return int(distributed.get_rank()) == 0
+    except RuntimeError:
+        return True
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     model_config, trainer_config, engine, session, coordinator = setup(args)
-    remote = configure_remote_publication(args)
+    is_primary_process = _is_primary_process()
+    remote = configure_remote_publication(args) if is_primary_process else None
     best_remote_metric = _existing_remote_best_metric(remote)
-    best_model_repo = getattr(args, "best_model_repo", None)
+    best_model_repo = getattr(args, "best_model_repo", None) if is_primary_process else None
     best_model_metric: float | None = None
     best_model_token: str | None = None
     if best_model_repo:
@@ -144,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         model_config=model_config,
         trainer_config=trainer_config,
         engine=engine,
-    )
+    ) if is_primary_process else None
     validation: dict[str, object] | None = None
     saved: set[str] = set()
     saved_paths: dict[str, Path] = {}
@@ -221,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def publish_best_model_if_improved(checkpoint_id: str) -> None:
         nonlocal best_model_metric
-        if not best_model_repo:
+        if not is_primary_process or not best_model_repo:
             return
         metric = _validation_metric(validation)
         if metric is None or (best_model_metric is not None and metric <= best_model_metric):
