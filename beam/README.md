@@ -76,14 +76,23 @@ The producer is a `headless=True` Beam Function and may continue producing while
 
 ## Checkpoints and resume
 
-Beam Volumes are local acceleration/durability layers. Cross-provider exact resume still uses the unified Hugging Face model repository:
+Beam Volumes are local acceleration/durability layers. The default exact-resume
+transport is the private Hugging Face checkpoint Bucket, derived as
+`<SMALL_LLM_HF_REPO_ID>-checkpoints` unless
+`SMALL_LLM_HF_CHECKPOINT_BUCKET_ID` overrides it. A strict validation-loss best
+uses a dedicated per-run model repository; completed stable artifacts remain in
+the shared model repository.
 
 ```text
-run/<run-id>/latest.json          live exact-resume pointer
-models/<run-id>/<checkpoint-id>  stable completed model artifact
+Bucket: run/<run-id>/latest.json                  live exact-resume pointer
+Bucket: run/<run-id>/checkpoints/<checkpoint-id> exact-resume checkpoint
+Best repo: models/<run-id>/<checkpoint-id>        strict validation best
+Shared repo: models/<run-id>/<checkpoint-id>      stable completed artifact
 ```
 
-The historical transport schema name `modal-hf-checkpoint-v1` is retained deliberately as a compatibility identifier so Beam can read existing Modal checkpoints without a second namespace. W&B keeps the canonical run ID and adds a `beam` provider tag.
+The CPU gate reads Bucket latest first and accepts the old
+`modal-hf-checkpoint-v1` model-repository layout only as a verified migration
+source. W&B keeps the canonical run ID and adds a `beam` provider tag.
 
 ## Existing finite 2B corpus
 

@@ -11,6 +11,8 @@ Use a Kaggle notebook/session configured with **2x Tesla T4** and internet acces
 - `WANDB_API_KEY`
 - optional `WANDB_ENTITY`
 - optional `SMALL_LLM_HF_DATASET_BUCKET_ID` when the dataset bucket does not use the default `<SMALL_LLM_HF_REPO_ID>-datasets` name
+- optional `SMALL_LLM_HF_CHECKPOINT_BUCKET_ID` when the checkpoint Bucket does not use the default `<SMALL_LLM_HF_REPO_ID>-checkpoints` name
+- optional `SMALL_LLM_HF_BEST_MODEL_REPO_ID`, which must remain dedicated to the active run
 
 The launcher fails closed if both visible CUDA devices are not Tesla T4s.
 
@@ -93,7 +95,8 @@ Before treating the Kaggle lane as qualified, verify the logs show:
 - W&B side effects only on rank zero;
 - successful cadence rendezvous after validation;
 - a manifest-valid local checkpoint at the expected final step;
-- the same checkpoint published under `run/100m-10b-deep-decay-from-step15500/...` in the configured Hugging Face model repository.
+- the same checkpoint published under `run/100m-10b-deep-decay-from-step15500/...` in the configured Hugging Face checkpoint Bucket; and
+- strict validation improvements published to the dedicated best-model repository.
 
 For a fresh fork, the bounded segment must finish at `step-00015750`. If a newer valid Kaggle deep-decay checkpoint already exists, it must instead finish exactly 250 updates after that checkpoint.
 
@@ -105,7 +108,15 @@ After the live gate, launch without a session cap:
 python kaggle/launch.py deep-decay --model 100M --tokens 10B
 ```
 
-Kaggle may stop a notebook before the full remaining horizon. Resume by rerunning the **same command** in a new two-T4 session. The launcher restores the newest manifest-verified Kaggle deep-decay Hugging Face checkpoint and stages the rolling dataset from that exact next block.
+Kaggle may stop a notebook before the full remaining horizon. Resume by rerunning the **same command** in a new two-T4 session. The launcher restores the newest manifest-verified Kaggle deep-decay checkpoint from the HF Bucket and stages the rolling dataset from that exact next block. A newer legacy model-repository checkpoint is accepted only for CPU-side migration into the Bucket.
+
+At the 2026-08-31 provider failover, Bucket latest was step 70,250 while the
+legacy model-repository pointer was still step 61,500. If a launch restores step
+61,500 or prints blocks around 61,500, stop it: that checkout predates the
+Bucket-first repair and is duplicating old work. A repaired launch must print
+that it selected the newer HF continuation at step 70,250, then start with block
+70,250 / global step 70,251 after the execution-topology migration. See
+[`../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md).
 
 If desired, bound individual notebook segments explicitly:
 

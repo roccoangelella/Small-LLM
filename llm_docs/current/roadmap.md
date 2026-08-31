@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-30
+last_reviewed: 2026-08-31
 ---
 
 # Current roadmap
@@ -25,8 +25,8 @@ Preserve the step-15,500 model ancestry, optimizer, scaler, RNG, data cursor,
 exact 10B corpus order, frozen 16-block validation prefix, global 64-sequence
 optimizer block, FP16, GDN-2, and hybrid Muon+AdamW. Modal resumes the newest
 manifest-verified checkpoint in its own continuation namespace, currently
-`step-00061500`; only an empty continuation namespace may fall back to the
-exact original step 15,500. One H100 rewrites only execution slicing to
+Bucket `step-00070250`; only an empty continuation namespace may fall back to
+the exact original step 15,500. One H100 rewrites only execution slicing to
 microbatch 16, giving four ordered accumulations per unchanged optimizer
 update. For the prior two-T4 state, byte-identical rank-zero CUDA RNG bytes
 become the single live device state while the original two-rank tree remains
@@ -68,16 +68,21 @@ It CPU-stages and verifies the checkpoint-aligned dataset window before H100
 allocation and keeps local/W&B/HF checkpoint namespaces separate from the
 original run and all superseded continuation branches. Modal publishes the live
 continuation to HF every 250 successful updates and at a segment boundary. The
-previous app stopped after the step-61,500 quota incident; this was a
-durability-backend failure, not a training failure. ADR 0132 has now moved the
-verified step-61,500 exact-resume tree to the mutable checkpoint Storage Bucket,
-whose read-back `latest.json` resolves step 61,500. The historical best remains
-step 59,250 at validation loss `2.8437069645151496`; those checkpoint bytes are
-not currently retained, so the dedicated best-model repo remains absent rather
-than pointing at a worse checkpoint. The previous detached app is no longer live,
-and a new Modal invocation is blocked by the workspace spend limit. Once that
-account-level blocker is cleared, the same launcher resumes from Bucket step
-61,500 and future strict validation improvements populate the dedicated best repo.
+previous app stopped after creating a valid local step 61,750 because the old
+model-repository transport hit quota; this was a durability-backend failure, not
+a training failure. ADR 0132 moved rolling state to the mutable Bucket. The
+resumed Modal segment reached W&B step 70,291 and durably published
+`step-00070250`, so exact recovery starts at block 70,250 and intentionally
+replays the 41 later non-durable updates. The dedicated best-model repository
+currently selects step 68,250 at validation loss `2.824985434883274`.
+
+A Kaggle failover launched from stale committed restore code read only the
+legacy shared model-repository pointer at step 61,500 and replayed through at
+least step 61,574. Stop that duplicate process. The repaired Kaggle CPU gate
+compares Bucket and legacy pointers, must select and verify Bucket step 70,250,
+rewrites only the authorized execution topology, and reads back Bucket latest
+before allocating T4s. See
+[`../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md).
 
 Canonical procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
 
@@ -99,6 +104,7 @@ The deterministic corpus is complete and verified in HF and Beam. Preserve these
 - the active Modal worker consumes exact block order and fails closed rather than skipping or reordering;
 - Modal keeps the frozen 64-sequence global optimizer block on one exact H100, with execution microbatch 16 and four ordered slices;
 - rolling exact-resume `latest` checkpoints remain in the HF checkpoint Storage Bucket, strict validation-loss `best` remains in a dedicated recreate-on-improvement HF model repository, and dataset shards remain in the HF dataset Storage Bucket.
+- the same split is the default native-pretraining transport for Modal, Beam, and Kaggle deep-decay; those providers read Bucket latest first and use legacy model-repository state only for verified CPU-side migration.
 
 The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0099/0095.
 

@@ -429,7 +429,7 @@ def _train_impl(
     os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = DATASET_RUN_ID
     os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
 
-    checkpoint_repo_id = runtime_base._hf_checkpoint_bucket_id()
+    checkpoint_bucket_id = runtime_base._hf_checkpoint_bucket_id()
     remote_manifest = RUN_DIR / "hf_checkpoint_transport.json"
     runtime_base._write_hf_transport_manifest(
         remote_manifest,
@@ -439,7 +439,7 @@ def _train_impl(
         source_commit=source_commit,
         microbatch_size=MICROBATCH_SIZE,
         resume_parent_source_commit=None,
-        bucket_id=checkpoint_repo_id,
+        bucket_id=checkpoint_bucket_id,
     )
     plan: dict[str, Any] = {
         "trainer": {
@@ -465,7 +465,7 @@ def _train_impl(
         online=True,
         resume=resume_checkpoint_id,
         remote_manifest=remote_manifest,
-        remote_bucket_id=checkpoint_repo_id,
+        remote_bucket_id=checkpoint_bucket_id,
     )
     _replace_option(command, "--schedule", "wsqd")
     _replace_option(command, "--warmup-tokens", "0")

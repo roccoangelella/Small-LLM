@@ -366,7 +366,7 @@ def _train_probe_impl(
         raise RuntimeError("100M/10B profile drifted")
 
     # Keep current project checkpoint transport: separate probe namespace in the
-    # HF model repository, rolling latest-only. Dataset bytes remain in the HF
+    # HF checkpoint Bucket, rolling latest-only. Dataset bytes remain in the HF
     # dataset bucket and are consumed in the original block order.
     install_model_repo_checkpoint_transport()
     os.environ["SMALL_LLM_MODAL_ROLLING_DATASET"] = "1"
@@ -377,7 +377,7 @@ def _train_probe_impl(
     os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = DATASET_RUN_ID
     os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
 
-    checkpoint_repo_id = runtime_base._hf_checkpoint_bucket_id()
+    checkpoint_bucket_id = runtime_base._hf_checkpoint_bucket_id()
     remote_manifest = PROBE_RUN_DIR / "hf_checkpoint_transport.json"
     runtime_base._write_hf_transport_manifest(
         remote_manifest,
@@ -387,7 +387,7 @@ def _train_probe_impl(
         source_commit=source_commit,
         microbatch_size=MICROBATCH_SIZE,
         resume_parent_source_commit=None,
-        bucket_id=checkpoint_repo_id,
+        bucket_id=checkpoint_bucket_id,
     )
     probe_plan: dict[str, Any] = {
         "trainer": {
@@ -413,7 +413,7 @@ def _train_probe_impl(
         online=True,
         resume=resume_checkpoint_id,
         remote_manifest=remote_manifest,
-        remote_bucket_id=checkpoint_repo_id,
+        remote_bucket_id=checkpoint_bucket_id,
     )
     # This is a new W&B branch even though it resumes exact trainer state from a
     # local forked checkpoint. `must` would require a pre-existing W&B run.

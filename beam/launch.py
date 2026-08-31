@@ -603,7 +603,7 @@ def main() -> int:
             else args.dataset_dir or "auto-discover unique matching Beam dataset"
         ),
         "max_steps_this_session": args.max_steps_this_session or "remaining plan",
-        "resume": "automatic_verified_beam_volume_then_hf_model_repo",
+        "resume": "automatic_verified_beam_volume_then_hf_checkpoint_bucket_then_legacy_model_repo",
         "gpu_dispatch_gate": "CPU import + dataset stage + fresh-container visibility verification",
     }
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)

@@ -1,6 +1,6 @@
 # 100M / 10B Beam runbook
 
-_Last reviewed: 2026-08-17_
+_Last reviewed: 2026-08-30_
 
 This is the active operator procedure for the ADR-0071 full fresh trajectory.
 HF remains the authoritative dataset and checkpoint backend; the Beam cache
@@ -84,6 +84,13 @@ Rerun the same uncapped microbatch-4 command from active source commit
 the verified step-250 checkpoint. CPU staging realigns to the next unconsumed
 block before a new GPU allocation. Never change the microbatch, precision,
 dataset identity, or run ID on resume.
+
+New Beam segments keep rolling `latest` in the private HF checkpoint Bucket,
+derived as `<SMALL_LLM_HF_REPO_ID>-checkpoints` unless
+`SMALL_LLM_HF_CHECKPOINT_BUCKET_ID` overrides it. The provider adapter adds the
+dedicated recreate-on-improvement best-model repository automatically. It reads
+Bucket latest first; a newer legacy model-repository pointer is CPU-verified,
+published, and read back in the Bucket before any GPU allocation.
 
 Beam sets `SMALL_LLM_CHECKPOINT_FSYNC=0`. Checkpoint files and manifests still
 use staging plus atomic rename and are hash-verified on restore, but the runtime

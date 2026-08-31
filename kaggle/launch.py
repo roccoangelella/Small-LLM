@@ -37,6 +37,31 @@ DEEP_DECAY_TOKENS = 10_000_000_000
 DEEP_DECAY_HF_REPO_ID = "roccoangelella/small-llm-100m-qualification"
 
 
+def _local_source_commit() -> str:
+    """Bind a Kaggle deep-decay checkpoint to one clean controlling checkout."""
+
+    try:
+        root = Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=REPO,
+                text=True,
+            ).strip()
+        ).resolve()
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=REPO, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError("run the Kaggle launcher from a cloned Small-LLM repository") from error
+    if root != REPO.resolve():
+        raise RuntimeError(f"repository root mismatch: expected {REPO}, found {root}")
+    if dirty:
+        raise RuntimeError("the controlling Small-LLM checkout is dirty; commit changes before launch")
+    return head
+
+
 def parse_quantity(value: str) -> int:
     compact = value.strip().replace("_", "").replace(",", "").replace(" ", "")
     match = _QUANTITY.fullmatch(compact)
@@ -271,7 +296,17 @@ def _run_deep_decay(args: argparse.Namespace, parser: argparse.ArgumentParser) -
         env.get("SMALL_LLM_100M_HF_REPO_ID", "").strip()
         or DEEP_DECAY_HF_REPO_ID
     )
-    print(f"[launch] deep-decay hf_repo={env['SMALL_LLM_HF_REPO_ID']}", flush=True)
+    if not args.dry_run:
+        env["SMALL_LLM_SOURCE_COMMIT"] = _local_source_commit()
+    print(
+        f"[launch] deep-decay hf_repo={env['SMALL_LLM_HF_REPO_ID']}"
+        + (
+            f" source_commit={env['SMALL_LLM_SOURCE_COMMIT']}"
+            if "SMALL_LLM_SOURCE_COMMIT" in env
+            else ""
+        ),
+        flush=True,
+    )
     return int(subprocess.call(_deep_decay_command(args), cwd=REPO, env=env))
 
 

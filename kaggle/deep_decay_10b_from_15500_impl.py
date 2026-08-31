@@ -15,9 +15,10 @@ Usage from repository root:
     python kaggle/deep_decay_10b_from_15500.py --max-steps-this-session 250
 
 Rerunning the same command resumes from the newest manifest-verified Kaggle
-deep-decay checkpoint in the Hugging Face model repository. If the Kaggle
-continuation has never started, the launcher accepts only the exact source
-step-00015500 checkpoint.
+deep-decay checkpoint in the Hugging Face checkpoint Bucket. A newer legacy
+model-repository checkpoint is accepted only as a migration source. If the
+Kaggle continuation has never started, the launcher accepts only the exact
+source step-00015500 checkpoint.
 """
 from __future__ import annotations
 
@@ -181,19 +182,69 @@ def _checkpoint_step(checkpoint_id: str) -> int:
         raise RuntimeError(f"invalid checkpoint ID: {checkpoint_id!r}") from error
 
 
+def _remote_checkpoint_state(runtime_base: Any, *, run_id: str) -> dict[str, object] | None:
+    """Select the newest pointer, preferring Bucket latest on a step tie."""
+
+    candidates: list[tuple[int, int, object, Mapping[str, object], str, str]] = []
+    for priority, store, source, expected_transport in (
+        (
+            1,
+            runtime_base._hf_bucket_store(),
+            "hf_bucket",
+            "modal-hf-bucket-checkpoint-v1",
+        ),
+        (
+            0,
+            runtime_base._hf_model_repo_store(),
+            "legacy_hf_model_repo",
+            "modal-hf-checkpoint-v1",
+        ),
+    ):
+        pointer = store.read_json(f"run/{run_id}/latest.json")
+        if pointer is None:
+            continue
+        if not isinstance(pointer, Mapping):
+            raise RuntimeError(f"{source} pointer for {run_id} is not an object")
+        checkpoint_id = pointer.get("checkpoint_id")
+        if not isinstance(checkpoint_id, str):
+            raise RuntimeError(f"{source} pointer for {run_id} has no checkpoint_id")
+        candidates.append(
+            (
+                _checkpoint_step(checkpoint_id),
+                priority,
+                store,
+                pointer,
+                source,
+                expected_transport,
+            )
+        )
+    if not candidates:
+        return None
+    step, _, store, pointer, source, expected_transport = max(
+        candidates,
+        key=lambda item: (item[0], item[1]),
+    )
+    return {
+        "checkpoint_id": pointer["checkpoint_id"],
+        "step": step,
+        "store": store,
+        "pointer": pointer,
+        "source": source,
+        "expected_transport": expected_transport,
+    }
+
+
 def _restore_pointer(runtime_base: Any, *, run_id: str, destination_run_dir: Path, require_checkpoint_id: str | None = None) -> dict[str, object] | None:
     from dataset.src.joint_checkpoint import restore_on_empty_vps
     from dataset.src.remote import TwoPhaseCheckpointPublisher
 
-    store = runtime_base._hf_model_repo_store()
-    pointer = store.read_json(f"run/{run_id}/latest.json")
-    if pointer is None:
+    remote_state = _remote_checkpoint_state(runtime_base, run_id=run_id)
+    if remote_state is None:
         return None
-    if not isinstance(pointer, Mapping):
-        raise RuntimeError(f"HF pointer for {run_id} is not an object")
-    checkpoint_id = pointer.get("checkpoint_id")
-    if not isinstance(checkpoint_id, str):
-        raise RuntimeError(f"HF pointer for {run_id} has no checkpoint_id")
+    store = remote_state["store"]
+    pointer = remote_state["pointer"]
+    checkpoint_id = remote_state["checkpoint_id"]
+    assert isinstance(pointer, Mapping) and isinstance(checkpoint_id, str)
     if require_checkpoint_id is not None and checkpoint_id != require_checkpoint_id:
         raise RuntimeError(f"exact source checkpoint required: expected {require_checkpoint_id}, HF latest points to {checkpoint_id}")
 
@@ -211,7 +262,13 @@ def _restore_pointer(runtime_base: Any, *, run_id: str, destination_run_dir: Pat
         prefetch_shards=0,
     )
     metadata = runtime_base._verified_checkpoint_metadata(restored, checkpoint_id)
-    metadata.update(source="hf_model_repo")
+    transport = json.loads((restored / "drive_manifest.json").read_text(encoding="utf-8"))
+    if (
+        not isinstance(transport, Mapping)
+        or transport.get("transport") != remote_state["expected_transport"]
+    ):
+        raise RuntimeError("restored Kaggle checkpoint has the wrong HF transport identity")
+    metadata.update(source=remote_state["source"])
     return metadata
 
 
@@ -400,6 +457,85 @@ def _dual_t4_command(trainer_command: Sequence[str]) -> list[str]:
     ]
 
 
+def _publish_latest_to_bucket(
+    runtime_base: Any,
+    *,
+    checkpoint_id: str,
+    dataset: Path,
+) -> dict[str, object]:
+    """Make the verified Kaggle execution state the durable Bucket latest."""
+
+    store = runtime_base._hf_bucket_store()
+    pointer = store.read_json(f"run/{RUN_ID}/latest.json")
+    if pointer is not None and not isinstance(pointer, Mapping):
+        raise RuntimeError("Kaggle checkpoint Bucket latest pointer is not an object")
+    current_id = pointer.get("checkpoint_id") if isinstance(pointer, Mapping) else None
+    force_id = os.environ.get("SMALL_LLM_KAGGLE_PROVIDER_MIGRATION_CHECKPOINT_ID", "").strip()
+    checkpoint_root = CHECKPOINT_DIR / checkpoint_id
+    source_commit = os.environ.get("SMALL_LLM_SOURCE_COMMIT", "kaggle-main")
+    previous_source_commit: str | None = None
+    previous_payload: Mapping[str, object] | None = None
+    previous_transport = checkpoint_root / "drive_manifest.json"
+    if previous_transport.is_file():
+        raw_previous_payload = json.loads(previous_transport.read_text(encoding="utf-8"))
+        previous_payload = raw_previous_payload if isinstance(raw_previous_payload, Mapping) else None
+        observed_source = (
+            previous_payload.get("source_commit")
+            if isinstance(previous_payload, Mapping)
+            else None
+        )
+        if isinstance(observed_source, str) and observed_source and observed_source != source_commit:
+            previous_source_commit = observed_source
+    checkpoint_bucket_id = runtime_base._hf_checkpoint_bucket_id()
+    local_bucket_transport_current = (
+        isinstance(previous_payload, Mapping)
+        and previous_payload.get("transport") == "modal-hf-bucket-checkpoint-v1"
+        and previous_payload.get("bucket_id") == checkpoint_bucket_id
+        and previous_payload.get("microbatch_size") == MICROBATCH_SIZE
+        and previous_payload.get("source_commit") == source_commit
+    )
+    from dataset.src.remote import build_checkpoint_manifest
+
+    remote_bytes_current = (
+        isinstance(pointer, Mapping)
+        and pointer.get("checkpoint_manifest")
+        == build_checkpoint_manifest(checkpoint_root)
+    )
+    if (
+        current_id == checkpoint_id
+        and force_id != checkpoint_id
+        and local_bucket_transport_current
+        and remote_bytes_current
+    ):
+        return {"status": "already_current", "checkpoint_id": checkpoint_id}
+
+    manifest = runtime_base._write_hf_transport_manifest(
+        RUN_DIR / "hf_checkpoint_transport.json",
+        run_id=RUN_ID,
+        dataset=dataset,
+        dataset_profile=DATASET_PROFILE,
+        source_commit=source_commit,
+        microbatch_size=MICROBATCH_SIZE,
+        resume_parent_source_commit=previous_source_commit,
+        bucket_id=checkpoint_bucket_id,
+    )
+    from dataset.src.remote import TwoPhaseCheckpointPublisher
+
+    publisher = TwoPhaseCheckpointPublisher(store, run_id=RUN_ID)
+    publisher.publish(
+        checkpoint_root,
+        checkpoint_id=checkpoint_id,
+        drive_manifest=manifest,
+        metric=None,
+        best_metric=None,
+    )
+    cleanup = store.prune_run_checkpoints(run_id=RUN_ID, checkpoint_id=checkpoint_id)
+    durable = store.read_json(f"run/{RUN_ID}/latest.json")
+    if not isinstance(durable, Mapping) or durable.get("checkpoint_id") != checkpoint_id:
+        raise RuntimeError("Kaggle checkpoint Bucket latest changed during migration")
+    return dict(cleanup)
+
+
 def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     local_id, local_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
@@ -420,11 +556,20 @@ def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
             raise RuntimeError("deep-decay Kaggle contract drifted")
         if step == FINAL_STEP:
             return local_id, step, Path()
-        return local_id, step, _stage_dataset(runtime_base, start_block_id=step)
+        dataset = _stage_dataset(runtime_base, start_block_id=step)
+        _publish_latest_to_bucket(
+            runtime_base,
+            checkpoint_id=local_id,
+            dataset=dataset,
+        )
+        return local_id, step, dataset
 
     source = _restore_pointer(runtime_base, run_id=SOURCE_RUN_ID, destination_run_dir=SOURCE_CACHE_DIR, require_checkpoint_id=SOURCE_CHECKPOINT_ID)
     if source is None:
-        raise RuntimeError(f"exact source {SOURCE_RUN_ID}/{SOURCE_CHECKPOINT_ID} is unavailable in the HF model repository")
+        raise RuntimeError(
+            f"exact source {SOURCE_RUN_ID}/{SOURCE_CHECKPOINT_ID} is unavailable "
+            "in the HF checkpoint Bucket or legacy model repository"
+        )
     if int(source["step"]) != SOURCE_STEP:
         raise RuntimeError("restored source step is not exactly 15,500")
     dataset = _stage_dataset(runtime_base, start_block_id=SOURCE_STEP)
@@ -433,6 +578,11 @@ def _prepare(runtime_base: Any) -> tuple[str, int, Path]:
     local_id, local_step = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
     if local_id != SOURCE_CHECKPOINT_ID or local_step != SOURCE_STEP:
         raise RuntimeError("deep-decay fork did not install exact step-15,500 checkpoint")
+    _publish_latest_to_bucket(
+        runtime_base,
+        checkpoint_id=local_id,
+        dataset=dataset,
+    )
     return local_id, local_step, dataset
 
 
@@ -451,7 +601,7 @@ def _build_trainer_command(runtime_base: Any, *, dataset: Path, resume_checkpoin
     os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = DATASET_RUN_ID
     os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
 
-    checkpoint_repo_id = runtime_base._hf_checkpoint_bucket_id()
+    checkpoint_bucket_id = runtime_base._hf_checkpoint_bucket_id()
     remote_manifest = RUN_DIR / "hf_checkpoint_transport.json"
     runtime_base._write_hf_transport_manifest(
         remote_manifest,
@@ -461,7 +611,7 @@ def _build_trainer_command(runtime_base: Any, *, dataset: Path, resume_checkpoin
         source_commit=os.environ.get("SMALL_LLM_SOURCE_COMMIT", "kaggle-main"),
         microbatch_size=MICROBATCH_SIZE,
         resume_parent_source_commit=None,
-        bucket_id=checkpoint_repo_id,
+        bucket_id=checkpoint_bucket_id,
     )
     plan: dict[str, Any] = {"trainer": {"warmup_tokens": 0, "stable_tokens": 0, "decay_tokens": COOLDOWN_TOKENS, "validation_blocks": 16}}
     command = runtime_base._trainer_command(
@@ -478,7 +628,7 @@ def _build_trainer_command(runtime_base: Any, *, dataset: Path, resume_checkpoin
         online=True,
         resume=resume_checkpoint_id,
         remote_manifest=remote_manifest,
-        remote_bucket_id=checkpoint_repo_id,
+        remote_bucket_id=checkpoint_bucket_id,
     )
     _replace_option(command, "--schedule", "wsqd")
     _replace_option(command, "--warmup-tokens", "0")

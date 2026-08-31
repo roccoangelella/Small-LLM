@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -132,10 +134,59 @@ class BeamLaunchTest(unittest.TestCase):
         runtime = (BEAM / "runtime.py").read_text(encoding="utf-8")
         self.assertIn('f"{tokens.label.lower()}-tokens",\n        "beam",', runtime)
 
-    def test_hf_checkpoint_schema_remains_cross_provider_compatible(self) -> None:
+    def test_hf_checkpoint_transport_defaults_to_bucket_latest_and_dedicated_best(self) -> None:
         adapter = (BEAM / "model_repo_checkpoint.py").read_text(encoding="utf-8")
-        self.assertIn('expected_transport="modal-hf-checkpoint-v1"', adapter)
-        self.assertIn('payload["transport"] = "modal-hf-checkpoint-v1"', adapter)
+        runtime = (BEAM / "runtime.py").read_text(encoding="utf-8")
+        self.assertIn('"--remote-checkpoint-bucket"', runtime)
+        self.assertIn('"modal-hf-bucket-checkpoint-v1"', runtime)
+        self.assertIn('"--best-model-repo"', adapter)
+        self.assertIn('"--best-model-recreate"', adapter)
+        self.assertNotIn('rewritten.append("--remote-checkpoint-repo")', adapter)
+
+    def test_beam_adapter_keeps_bucket_flags_in_the_actual_command(self) -> None:
+        code = """
+import os
+os.environ["SMALL_LLM_HF_REPO_ID"] = "owner/base"
+import model_repo_checkpoint as transport
+transport._ORIGINAL_TRAINER_COMMAND = lambda *args, **kwargs: [
+    "python", "-m", "trainer",
+    "--remote-checkpoint-bucket", "owner/base-checkpoints",
+    "--remote-create-bucket", "--remote-rolling-latest-only",
+]
+command = transport._trainer_command_split_store(
+    online=True,
+    wandb_run_id="beam-run-001",
+)
+print("\\n".join(command))
+"""
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join((str(BEAM), str(ROOT)))
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = result.stdout.splitlines()
+        self.assertIn("--remote-checkpoint-bucket", command)
+        self.assertNotIn("--remote-checkpoint-repo", command)
+        self.assertEqual(
+            command[command.index("--best-model-repo") + 1],
+            "owner/base-best-beam-run-001",
+        )
+        self.assertIn("--best-model-recreate", command)
+
+    def test_deep_decay_cpu_gate_migrates_legacy_latest_before_gpu(self) -> None:
+        source = (BEAM / "deep_decay_10b_from_15500.py").read_text(encoding="utf-8")
+        self.assertIn("runtime_base._hf_bucket_store()", source)
+        self.assertIn("runtime_base._hf_model_repo_store()", source)
+        self.assertIn('source="legacy_hf_model_repo"', source)
+        self.assertIn("publisher.publish(", source)
+        self.assertIn("bucket_store.prune_run_checkpoints(", source)
+        self.assertIn("durable_pointer = bucket_store.read_json", source)
 
 
 if __name__ == "__main__":

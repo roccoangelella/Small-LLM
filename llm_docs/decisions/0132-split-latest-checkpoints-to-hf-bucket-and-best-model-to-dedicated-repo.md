@@ -93,3 +93,11 @@ Beam and Kaggle must adopt the same role split in their provider-specific launch
 - [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md)
 - [`../../modal/model_repo_checkpoint.py`](../../modal/model_repo_checkpoint.py)
 - [`../../trainer/best_model.py`](../../trainer/best_model.py)
+
+## Implementation rollout
+
+On 2026-08-30, the separate provider rollout completed for Beam and Kaggle
+deep-decay. Their native pretraining adapters now preserve Bucket latest and
+the shared trainer best-model contract. Both providers prefer Bucket `latest`;
+a newer legacy model-repository pointer is migration-only and must be
+CPU-verified, published, and read back from the Bucket before GPU work.

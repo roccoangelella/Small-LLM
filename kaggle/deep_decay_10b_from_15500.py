@@ -133,16 +133,13 @@ def _dataset_configuration_hash(dataset: Path) -> str:
 
 
 def _remote_continuation(runtime_base: Any) -> tuple[str | None, int]:
-    store = runtime_base._hf_model_repo_store()
-    pointer = store.read_json(f"run/{RUN_ID}/latest.json")
-    if pointer is None:
+    remote = _impl._remote_checkpoint_state(runtime_base, run_id=RUN_ID)
+    if remote is None:
         return None, 0
-    if not isinstance(pointer, Mapping):
-        raise RuntimeError("HF deep-decay latest pointer is not an object")
-    checkpoint_id = pointer.get("checkpoint_id")
-    if not isinstance(checkpoint_id, str):
-        raise RuntimeError("HF deep-decay latest pointer has no checkpoint_id")
-    step = _impl._checkpoint_step(checkpoint_id)
+    checkpoint_id = remote.get("checkpoint_id")
+    step = remote.get("step")
+    if not isinstance(checkpoint_id, str) or isinstance(step, bool) or not isinstance(step, int):
+        raise RuntimeError("HF deep-decay continuation state is malformed")
     if not SOURCE_STEP <= step <= FINAL_STEP:
         raise RuntimeError(f"HF deep-decay checkpoint step {step} is outside the frozen horizon")
     return checkpoint_id, step
@@ -391,7 +388,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "--dry-run" not in args:
         _ensure_host_hf_bucket_runtime(args)
         runtime_base = _impl._beam_runtime()
-        _migrate_existing_deep_decay_checkpoint(runtime_base)
+        migrated = _migrate_existing_deep_decay_checkpoint(runtime_base)
+        if migrated:
+            checkpoint_id, _ = runtime_base._latest_checkpoint(CHECKPOINT_DIR)
+            if checkpoint_id is None:
+                raise RuntimeError("provider migration completed without a local checkpoint")
+            os.environ["SMALL_LLM_KAGGLE_PROVIDER_MIGRATION_CHECKPOINT_ID"] = checkpoint_id
     return int(_impl.main(args))
 
 

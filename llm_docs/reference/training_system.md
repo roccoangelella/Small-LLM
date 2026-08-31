@@ -73,16 +73,33 @@ Joint checkpoints are legal only at completed block boundaries with no outstandi
 
 ## Remote model durability
 
-ADR 0055 uses one Hugging Face model repository:
+ADR 0132 makes the following split the default for native provider pretraining
+launchers (Modal, Beam, and Kaggle deep-decay):
 
 ```text
-run/<run_id>/latest.json
-run/<run_id>/checkpoints/<checkpoint_id>/last/...
-models/<run_id>/artifact.json
-models/<run_id>/<checkpoint_id>/...
+HF checkpoint Storage Bucket
+  run/<run_id>/latest.json
+  run/<run_id>/checkpoints/<checkpoint_id>/last/...
+  -> mutable exact-resume latest only
+
+Dedicated per-run HF model repository
+  best_model.json
+  models/<run_id>/<checkpoint_id>/...
+  -> strict validation-loss best only
+
+Shared/stable HF model repository
+  models/<run_id>/artifact.json
+  models/<run_id>/<checkpoint_id>/...
+  -> completed model artifacts
 ```
 
-`run/...` is the two-phase live exact-resume namespace. `models/...` is the stable completed-artifact namespace. Stable artifacts verify their native `local_manifest.json`; the live publication manifest belongs to the two-phase `run/...` protocol.
+The Bucket uses the two-phase live exact-resume protocol and retains only the
+newest verified checkpoint for a run. A strict validation improvement
+marker-verifies, deletes, recreates, and republishes only that run's dedicated
+best-model repository. Stable artifacts verify their native `local_manifest.json`.
+Legacy model-repository `run/...` checkpoints are restore/migration sources only:
+a provider CPU gate must verify and publish them to the Bucket before a new
+provider segment relies on them.
 
 Canonical Git-backed SFT and R-SFT publication uses rolling latest-only
 retention. After the new checkpoint tree and `latest.json` pointer are verified,

@@ -16,6 +16,8 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Current scaling comparison
 
+- [`scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md) — verifies Bucket step 70,250 versus stale legacy model-repository step 61,500, diagnoses the Kaggle rewind, and records the Bucket-first restore repair.
+- [`scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md`](scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md) — verifies the complete local step-61,750 tree, migrates it into Bucket latest, and confirms finite resumed H100 updates.
 - [`scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md`](scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md) — diagnoses the step-61,500 stop as a Hugging Face private-repository storage-limit failure, records the history compaction and CPU-only checkpoint repair, and verifies the exact detached H100 resume.
 - [`scaling/100m_10b_modal_deep_decay_step59750_resume_2026-08-30.md`](scaling/100m_10b_modal_deep_decay_step59750_resume_2026-08-30.md) — verified cross-provider HF step-59,750 restore into the new Modal workspace, exact execution-only microbatch/RNG migration, and finite detached H100 progress.
 - [`scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md`](scaling/100m_10b_modal_deep_decay_resume_2026-08-21.md) — newest verified step-27,750 restore, exact one-H100 execution migration, frozen-LR confirmation, finite live updates, and fail-closed startup incidents.

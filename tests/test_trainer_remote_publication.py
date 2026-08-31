@@ -41,8 +41,9 @@ class _Session:
         self.engine.global_step += 1
         return _Metrics(self.engine.global_step)
 
-    def save_checkpoint(self, coordinator, checkpoint_id: str, **kwargs) -> None:
+    def save_checkpoint(self, coordinator, checkpoint_id: str, **kwargs) -> Path:
         self.saved.append(checkpoint_id)
+        return Path("/tmp/checkpoints") / checkpoint_id
 
 
 class _Coordinator:

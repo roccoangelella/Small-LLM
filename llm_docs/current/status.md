@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-30
+last_reviewed: 2026-08-31
 ---
 
 # Current project status
@@ -63,26 +63,39 @@ froze the current deep-decay schedule from the exact uncooled step-15,500
 state, and ADR 0114 authorizes its execution on one Modal H100. ADR 0132 now
 splits durability by role: exact-resume `latest` is in the mutable checkpoint
 Bucket and strict validation-loss `best` is in a dedicated recreate-on-improvement
-model repository. The previous detached app is no longer live; the newest verified
-durable continuation is Bucket `step-00061500`. A new Modal invocation is currently
-blocked by the workspace spend limit, not by checkpoint validity. The unchanged
-run ID remains `100m-10b-deep-decay-from-step15500` through the full 76,294-update
-plan without a 5B continuation gate.
+model repository. The Modal segment from source commit `61573f2` advanced the
+unchanged W&B run through step 70,291 and durably published Bucket
+`step-00070250`; its exact next block is 70,250. A later Kaggle launch from the
+same committed tree incorrectly read the stale legacy model-repository pointer
+`step-00061500` and was observed replaying through step 61,574. That Kaggle
+branch is duplicate work, not continuation authority. The repaired Kaggle CPU
+gate now compares Bucket and legacy pointers, manifest-verifies the newest,
+and selects step 70,250 before any GPU work. The unchanged run ID remains
+`100m-10b-deep-decay-from-step15500` through the full 76,294-update plan without
+a 5B continuation gate.
 
 ## GDN-2 production execution
 
 Production CUDA GDN-2 execution is mixed FLA on `fla-core==0.5.2` with FP32 master parameters plus CUDA FP16 autocast. Saved/configured `gdn_chunk_size` is 32; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence remains the correctness/reference fallback. See [`../reference/gdn2_fla_backend.md`](../reference/gdn2_fla_backend.md).
 
-The current production continuation uses one exact Modal H100 under ADR 0114.
-It preserves the 64-sequence optimizer block and changes only execution slicing
-to four ordered microbatch-16 accumulations. Kaggle two-T4 DDP and Beam remain
-historical/alternate execution evidence, not the live lane.
+The most recent accepted forward segment used one exact Modal H100 under ADR
+0114. It preserved the 64-sequence optimizer block and changed only execution
+slicing to four ordered microbatch-16 accumulations. Kaggle two-T4 DDP remains
+an alternate execution lane, but the currently observed stale-pointer Kaggle
+process must not be treated as accepted forward progress; a repaired launch
+must exact-resume Bucket step 70,250 and migrate only execution slicing to
+microbatch two.
 
 ## Dataset and checkpoint durability
 
 For **new** dataset production, Hugging Face Storage Buckets are the only remote dataset durability backend under ADR 0054. Google Drive is historical only; legacy fields such as `drive_manifest.json` remain readable provider-neutral compatibility identifiers for already-built artifacts.
 
 Under ADR 0132, rolling exact-resume state and selected model state use different Hugging Face transports. `latest` checkpoints use a mutable private Storage Bucket, by default `<SMALL_LLM_HF_REPO_ID>-checkpoints`, with only the newest verified checkpoint retained per run. Strict validation-loss `best` uses a dedicated per-run model repository derived as `<owner>/<base>-best-<run_id>`; every strict improvement marker-verifies the existing dedicated repo, deletes it, recreates it, and publishes the new best in one fresh repository history. Stable completed `models/...` artifacts remain model artifacts and are not moved by this transport change.
+
+This is now the default native-pretraining transport for Modal, Beam, and
+Kaggle deep-decay. Beam and Kaggle read Bucket `latest` first and accept a
+newer legacy model-repository pointer only as a CPU-verified migration source;
+the continuation is published and read back in the Bucket before GPU work.
 
 Legacy model-repository `run/...` namespaces remain restore/migration sources until their valuable state is safely classified or moved. Shared model repositories that also contain stable artifacts or other runs are not safe for wholesale deletion. Stable model artifacts are verified with their native `local_manifest.json`; `checkpoint_manifest.json` remains publication metadata for the live two-phase exact-resume protocol.
 
@@ -167,22 +180,37 @@ historical `small-llm-billing-guard` tmux supervisor, recognized only this
 aggressive task, stopped it at the cap, and relaunched the same RTX4090 tmux
 command after a crash when control-plane state was readable.
 
-The first ADR-0114 Modal segment advanced to a locally valid
-`step-00061500`, then stopped because Hugging Face rejected its checkpoint
-upload at the private-repository storage limit. The trainer had finite state.
-After the earlier model-repository repair, ADR 0132 moved the verified step-61,500
-exact-resume tree into the dedicated checkpoint Storage Bucket. The Bucket's
-`latest.json` now resolves `step-00061500`; the 913,885,544-byte trainer state
-matches manifest SHA-256 `a3c8b018f49f3315a3443eb73810712dfc2adbb53bc3c49774ef693d32cf43ff`,
-and the rewritten transport metadata is bound to implementation commit
-`5b942181163ce5ca3f74e1ae61da4f9bcbb4e92b`. The legacy model repo has only an
-incomplete step-61,750 staging attempt and its pointer remains step 61,500.
-The persisted historical best validation loss is `2.8437069645151496` at step
-59,250, while step 61,500 is worse at `2.8463459765771404`; because the retained
-step-59,250 bytes are unavailable, no dedicated best repo was falsely initialized.
-The global block remains 64 and microbatch 16 remains the execution-only four-slice
-adaptation. Canonical transport-migration evidence is
-[`../evidence/scaling/100m_10b_modal_hf_bucket_best_split_2026-08-30.md`](../evidence/scaling/100m_10b_modal_hf_bucket_best_split_2026-08-30.md); the preceding quota incident remains recorded in
+The first ADR-0114 Modal segment stopped after creating a valid local
+`step-00061750` because Hugging Face rejected its model-repository checkpoint
+upload at the private-repository storage limit. The initial ADR-0132 migration
+could only see and move step 61,500; the later Volume commit made step 61,750
+visible with all five files intact. A CPU-only Modal verification checked its
+manifest and scientific state, including trainer-state SHA-256
+`0bb16f9e907f3953cc26aa0d6c5bc9699b4df43e610cfd61b7cee73ecde467cc`,
+global step 61,750, 8,093,696,000 consumed targets, cursor block 61,749,
+microbatch 16, and scheduler LR `1.3200863017015169e-05`. The production CPU
+gate then published that exact tree to the checkpoint Bucket, read back
+`latest.json`, and pruned step 61,500 before allocating the H100.
+
+The resumed Modal segment later reached W&B step 70,291 / block 70,290. Its
+newest exact durable state is Bucket `step-00070250`, whose checkpoint metadata
+records cursor block 70,249, validation loss `2.830845956457779`, and a
+913,885,860-byte trainer state with SHA-256
+`e53732922f4fcaae373c0b6bc581203b575d7aa634c6a7f113171b8bd503bd34`.
+The 41 later Modal updates were inside the durability window and must replay.
+The dedicated best-model repository now marker-verifies `step-00068250` at
+validation loss `2.824985434883274`.
+
+The stale Kaggle restore was caused by committed Kaggle code reading only the
+legacy shared model repository, whose pointer remains step 61,500. W&B showed
+the new Kaggle process replaying through step 61,574. The repair makes Bucket
+latest authoritative on a tie or whenever newer, verifies and migrates the
+selected checkpoint on CPU, and republishes Kaggle latest back to the Bucket.
+Canonical incident evidence is
+[`../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md).
+The earlier live-resume evidence remains
+[`../evidence/scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md`](../evidence/scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md); the initial split migration is recorded in
+[`../evidence/scaling/100m_10b_modal_hf_bucket_best_split_2026-08-30.md`](../evidence/scaling/100m_10b_modal_hf_bucket_best_split_2026-08-30.md), and the preceding quota incident remains recorded in
 [`../evidence/scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md`](../evidence/scaling/100m_10b_modal_step61500_hf_quota_repair_resume_2026-08-30.md).
 
 The repository-wide unit-test job is still red for unrelated existing/concurrent failures outside this lane (including test modules that import unavailable `pytest`, stale eval-entrypoint/eval-core expectations, historical ADR-shape failures, and an older remote-checkpoint state-equality regression). Do not interpret the global red job as a failure of the incremental 10B path, but also do not describe the repository as globally green.
