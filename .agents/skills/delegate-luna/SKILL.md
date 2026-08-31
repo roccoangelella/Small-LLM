@@ -15,10 +15,11 @@ Use this skill when handling bulky documentation, long reference contracts, inci
    - Multi-file regex or codebase searches across directories.
    - Shallow extraction (table parsing, manifest verification, JSON formatting).
 
-2. **Worker Invocation**:
+2. **Worker Invocation (Zero Pre-Flight Probing)**:
    - Model target: `GPT-5.6 Luna` with maximum thinking / reasoning budget.
-   - Instruction: Perform deep reading and return strictly a concise, high-signal summary (< 300 words) or structured table.
-   - Output constraint: Never return raw file contents to the parent session.
+   - Do NOT run verification commands (`command -v pi`, `pi --help`, `pi --list-models`) to check availability; dispatch directly.
+   - Instruction: Perform deep reading and return synthesized high-signal findings or structured tables.
+   - Output constraint: Never dump raw file contents to the parent session.
 
 3. **Parent Synthesis**:
    - The primary agent consumes the synthesized output to execute engineering decisions, keeping the primary context window lean and fast.

@@ -16,7 +16,12 @@ To protect the rolling token quota and prevent context rot:
 
 ## 2. Delegation Protocol to GPT-5.6 Luna
 
-Whenever a task involves heavy reading or shallow mechanical work, **delegate the subtask to a `GPT-5.6 Luna` worker agent configured with maximum thinking**:
+Whenever a task involves heavy reading, log exploration, or shallow mechanical work, **delegate the subtask to `GPT-5.6 Luna` with maximum thinking**:
+
+### Invariant Execution Rules (Zero Pre-flight Probing):
+- **NEVER run pre-flight verification commands** (`command -v pi`, `pi --help`, `pi --list-models`, or model registry checks).
+- `pi` CLI and model `openai-codex/gpt-5.6-luna` are **guaranteed to exist and be permanently available**.
+- Invoke the worker directly without any exploratory tool calls.
 
 ### Delegation Triggers:
 1. **Document Ingestion**: Reading any documentation, reference contract, runbook, or incident record longer than 50 lines.
@@ -24,14 +29,14 @@ Whenever a task involves heavy reading or shallow mechanical work, **delegate th
 3. **Broad Multi-File Search**: Scanning across multiple directories for usages, patterns, or file structures.
 4. **Mechanical / Shallow Tasks**: Extracting tables, verifying JSON manifests, parsing schema structures, or formatting data.
 
-### Worker Prompt & Output Constraints:
-- When dispatching to `GPT-5.6 Luna`, supply an atomic objective and exact file paths.
-- **Strict Word Limit**: Require `GPT-5.6 Luna` to return **ONLY a concise, high-signal synthesized answer under 300 words** (or a compact structured table/bullet list).
+### Worker Output & Context Protection:
+- Supply an atomic task objective and exact file paths/scopes to the worker.
+- Require `GPT-5.6 Luna` to return **synthesized high-signal findings, answers, or structured tables**.
 - **Never dump raw document text into the primary conversation context.**
 
 ### Execution:
-- Ingest only the concise (< 300 words) synthesized summary into your reasoning.
-- Use that summary to make authoritative engineering decisions and write clean, tested code.
+- Ingest the synthesized findings into your reasoning.
+- Use the worker's synthesis to make authoritative engineering decisions and write clean, tested code.
 
 ---
 
