@@ -44,7 +44,7 @@ _PRETRAINED_CHAT_RUNS = {
 _SFT_CHAT_RUNS = {
     (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
     (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
-    (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-001", _SOURCE_SFT),
+    (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-10pct-peak3000-001", _SOURCE_SFT),
 }
 _R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {
     (100_000_000, 2_000_000_000): (
