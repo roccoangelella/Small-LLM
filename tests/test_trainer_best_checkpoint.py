@@ -58,6 +58,12 @@ class _Session:
         return f"/tmp/{checkpoint_id}"
 
 
+class _NonPrimarySession(_Session):
+    def save_checkpoint(self, coordinator, checkpoint_id: str, **kwargs):
+        self.saved.append(checkpoint_id)
+        return None
+
+
 class _ValidationReader:
     def iter_from_start(self, maximum_blocks=None):
         return iter((object(),))
@@ -130,6 +136,46 @@ class TrainerBestCheckpointTests(unittest.TestCase):
         self.assertEqual(kwargs["metric"], -2.0)
         self.assertEqual(kwargs["validation_loss"], 2.0)
         self.assertTrue(kwargs["recreate"])
+
+    def test_non_primary_distributed_rank_skips_external_publication(self) -> None:
+        engine = _Engine()
+        session = _NonPrimarySession(engine)
+        trainer_config = SimpleNamespace(
+            evaluation_every_steps=1,
+            checkpoint_every_steps=1,
+        )
+        args = SimpleNamespace(
+            steps=1,
+            validation_blocks=1,
+            resume=None,
+            checkpoint_dir=Path("/tmp"),
+            best_model_repo="owner/model-best-pretrain-run",
+            best_model_recreate=True,
+            remote_token_env="HF_TOKEN",
+            wandb_run_id="pretrain-run",
+        )
+        setup_result = (object(), trainer_config, engine, session, _Coordinator())
+        with (
+            patch("trainer.cli.parse_args", return_value=args),
+            patch("trainer.cli.setup", return_value=setup_result),
+            patch("trainer.cli.validation_reader", return_value=_ValidationReader()),
+            patch("trainer.cli.configure_remote_publication") as configure_remote,
+            patch("trainer.cli.get_dedicated_best_metric") as get_best_metric,
+            patch("trainer.cli.publish_dedicated_best_model") as publish,
+            patch("trainer.cli.configure_wandb") as configure_wandb,
+            patch("trainer.cli.torch.distributed.is_available", return_value=True),
+            patch("trainer.cli.torch.distributed.is_initialized", return_value=True),
+            patch("trainer.cli.torch.distributed.get_rank", return_value=1),
+            patch("trainer.cli.torch.cuda.is_available", return_value=False),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(main([]), 0)
+
+        self.assertEqual(session.saved, ["step-00000001"])
+        configure_remote.assert_not_called()
+        get_best_metric.assert_not_called()
+        publish.assert_not_called()
+        configure_wandb.assert_not_called()
 
     def test_dedicated_best_model_respects_persisted_historical_best(self) -> None:
         engine = _Engine()
