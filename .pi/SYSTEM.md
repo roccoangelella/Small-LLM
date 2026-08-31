@@ -32,6 +32,7 @@ Whenever a task involves heavy reading, log exploration, or shallow mechanical w
 ### Worker Output & Context Protection:
 - Supply an atomic task objective and exact file paths/scopes to the worker.
 - Require `GPT-5.6 Luna` to return **synthesized high-signal findings, answers, or structured tables**.
+- **No Word Limits**: Do NOT append artificial word-count constraints (e.g. "respond in under 220 words", "under 300 words") to the prompt. Let the worker return complete, thorough technical explanations.
 - **Never dump raw document text into the primary conversation context.**
 
 ### Execution:

@@ -18,7 +18,7 @@ Use this skill when handling bulky documentation, long reference contracts, inci
 2. **Worker Invocation (Zero Pre-Flight Probing)**:
    - Model target: `GPT-5.6 Luna` with maximum thinking / reasoning budget.
    - Do NOT run verification commands (`command -v pi`, `pi --help`, `pi --list-models`) to check availability; dispatch directly.
-   - Instruction: Perform deep reading and return synthesized high-signal findings or structured tables.
+   - Instruction: Perform deep reading and return synthesized high-signal findings or structured tables. Do NOT append arbitrary word-count limits (e.g. "under 220 words").
    - Output constraint: Never dump raw file contents to the parent session.
 
 3. **Parent Synthesis**:
