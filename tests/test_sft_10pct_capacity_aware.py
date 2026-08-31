@@ -34,8 +34,8 @@ class SFT10PctCapacityAwareTests(unittest.TestCase):
 
     def test_profile_identity_and_budget_are_isolated_from_four_percent(self) -> None:
         profile = self._profile()
-        self.assertEqual(profile.sft_run_id, "100m-2b-sft-s0-10pct-longpeak-001")
-        self.assertEqual(profile.wandb_run_id, "100m-2b-sft-s0-10pct-longpeak-001")
+        self.assertEqual(profile.sft_run_id, "100m-2b-sft-s0-10pct-peak3000-001")
+        self.assertEqual(profile.wandb_run_id, "100m-2b-sft-s0-10pct-peak3000-001")
         self.assertEqual(profile.dataset_slug, "small-llm-100m-2b-sft-s0-10pct-001")
         self.assertEqual(profile.sft_fraction_numerator, 1)
         self.assertEqual(profile.sft_fraction_denominator, 10)
