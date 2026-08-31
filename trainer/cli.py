@@ -192,13 +192,22 @@ def main(argv: list[str] | None = None) -> int:
             validation_metrics=validation,
         )
         elapsed = time.perf_counter() - started
-        path = Path(checkpoint)
+        if checkpoint is None:
+            # Distributed execution shims may no-op checkpoint writes on
+            # non-primary ranks while rank zero persists and publishes the
+            # scientific checkpoint. Keep the generic trainer loop advancing
+            # without inventing a local byte size for that non-written path.
+            path = Path(args.checkpoint_dir) / checkpoint_id
+            byte_size = None
+        else:
+            path = Path(checkpoint)
+            byte_size = _tree_byte_size(checkpoint)
         saved.add(checkpoint_id)
         saved_paths[checkpoint_id] = path
         event = {
             "checkpoint_id": checkpoint_id,
             "elapsed_seconds": elapsed,
-            "byte_size": _tree_byte_size(checkpoint),
+            "byte_size": byte_size,
         }
         print(json.dumps({"local_checkpoint": event}, sort_keys=True), flush=True)
         if telemetry is not None:
