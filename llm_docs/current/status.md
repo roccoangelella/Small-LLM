@@ -40,13 +40,14 @@ Evidence: [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`
 
 - **Schedule & Authority**: ADR 0071 / ADR 0095 (deep decay from uncooled step 15,500) / ADR 0114 (Modal H100 execution).
 - **Run ID**: `100m-10b-deep-decay-from-step15500` (horizon: 76,294 updates / 10,000,007,168 target tokens).
-- **Active Execution Lane**: Modal 1x H100, `microbatch=16`, 4 accumulations, 64-sequence optimizer block.
+- **Active Execution Lane**: Modal 1x H100, `microbatch=16`, 4 accumulations, 64-sequence optimizer block; Kaggle dual-T4 is a recovery/continuation lane.
 - **Remote Durability Backend (ADR 0132)**:
-  - Rolling exact-resume `latest`: private HF Storage Bucket `<REPO_ID>-checkpoints` -> **Bucket `step-00070250`** (block 70,249; val loss 2.8308).
+  - Rolling exact-resume `latest`: private HF Storage Bucket `<REPO_ID>-checkpoints` -> **Bucket `step-00070750`** (block 70,749; val loss 2.827240757760592; rolling publication succeeded before the Kaggle rank-1 abort).
   - Strict validation-loss `best`: dedicated per-run model repo (`<owner>/<base>-best-<run_id>`) -> **`step-00068250`** (val loss 2.824985).
-- **Kaggle CPU Gate Repair**: Compares Bucket vs legacy model-repo pointers, verifies newest on CPU, and selects Bucket step 70,250 before any GPU allocation (ADR 0132).
+- **Kaggle CPU Gate Repair**: Compares Bucket vs legacy model-repo pointers, verifies newest on CPU, and selects Bucket checkpoints before any GPU allocation (ADR 0132).
 - **Dataset**: Pinned ClimbMix 10B shards complete on HF and Beam (21 train / 21 val shards; manifest SHA-256 `d23e7e4641e30c25b56189093bf1270cd11e85efc8b26bc4660af1873edb96f1`). Evidence: [`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
 - **Execution & Recovery Evidence**:
+  - Kaggle rank-1 best-publication abort at step 70,750 and primary-rank side-effect fix: [`../evidence/scaling/100m_10b_kaggle_rank1_best_publication_abort_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_rank1_best_publication_abort_2026-08-31.md).
   - Modal step 61,750 / 70,250 bucket resume: [`../evidence/scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md`](../evidence/scaling/100m_10b_modal_step61750_bucket_resume_2026-08-30.md).
   - Kaggle stale pointer repair: [`../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md).
   - Historical Beam logs: [`../evidence/scaling/100m_10b_beam_launch_2026-08-14.md`](../evidence/scaling/100m_10b_beam_launch_2026-08-14.md).
