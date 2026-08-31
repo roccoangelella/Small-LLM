@@ -478,6 +478,12 @@ def _install_pinned_trainer_ddp(*, rank: int, local_rank: int, world_size: int) 
             args.device = requested_device
         model_config, trainer_config, engine, session, coordinator = result
 
+        # The generic trainer evaluates dedicated-best state after setup. Rank 1
+        # deliberately uses a dummy validation result and never writes local
+        # checkpoints, so it must not inspect or publish the dedicated best repo.
+        if rank != 0:
+            args.best_model_repo = None
+
         # Resume, when requested, has already loaded the topology-neutral raw
         # checkpoint at this point.
         _prewarm_raw_model(engine, rank=rank)
