@@ -12,7 +12,7 @@ The 100M/10B deep-decay continuation from step 15,500 shows no strong validation
 
 The control branch remains `100m-10b-deep-decay-from-step15500`. Probe A originally forked the newest verified control checkpoint, then was pinned to `step-00068250` when that was believed to be the strict-best checkpoint. On Kaggle, `best_model.json` later resolved successfully and reported `step-00071750`, proving the replace-only dedicated best-model repository had advanced and the old `step-00068250` source was no longer the current HF best artifact. Probe A is now pinned to the current available strict-best checkpoint `step-00071750`.
 
-The current best-model snapshot downloaded from Hugging Face contains the loss-bearing checkpoint payload, but Kaggle observed it without `local_manifest.json` at the checkpoint root. Probe A therefore reconstructs a deterministic local manifest from the downloaded checkpoint tree before using the standard `verify_local_manifest()` gate.
+The current best-model snapshot downloaded from Hugging Face contains the loss-bearing checkpoint payload, but Kaggle observed it without `local_manifest.json` at the checkpoint root and then observed that the HF cache path can expose `local_manifest.json` as a symlink. Probe A therefore materializes the snapshot into a normal local checkpoint tree with symlinks dereferenced before reconstructing or verifying `local_manifest.json`.
 
 ## Considered options
 
@@ -24,6 +24,8 @@ The current best-model snapshot downloaded from Hugging Face contains the loss-b
 - Start Probe A from the current available strict-best checkpoint `step-00071750`.
 - Require the best-model repository to preserve `local_manifest.json` exactly.
 - Reconstruct `local_manifest.json` locally for marker-verified best-model snapshots that contain the required checkpoint files.
+- Verify the Hugging Face cache path directly.
+- Dereference-copy the Hugging Face cache path into local checkpoint storage before any checkpoint verification.
 
 ## Decision outcome
 
@@ -39,7 +41,7 @@ roccoangelella/small-llm-100m-qualification-best-100m-10b-deep-decay-from-step15
 models/100m-10b-deep-decay-from-step15500/step-00071750
 ```
 
-If that downloaded checkpoint root lacks `local_manifest.json`, the Probe A wrapper rebuilds it by hashing every downloaded checkpoint file except publication metadata (`local_manifest.json`, `drive_manifest.json`, and `checkpoint_manifest.json`). The rebuilt manifest must cover at least `trainer_state.pkl` and `checkpoint.json`, and the normal `verify_local_manifest()` check still runs before the checkpoint is copied into the local control-checkpoint namespace.
+The HF snapshot path is treated only as a download cache. Probe A first copies the checkpoint tree into the local deep-decay checkpoint namespace with `shutil.copytree(..., symlinks=False)`, rejects any remaining symlink, and only then runs manifest reconstruction and `verify_local_manifest()` on the materialized local copy. If that materialized checkpoint root lacks `local_manifest.json`, the Probe A wrapper rebuilds it by hashing every downloaded checkpoint file except publication metadata (`local_manifest.json`, `drive_manifest.json`, and `checkpoint_manifest.json`). The rebuilt manifest must cover at least `trainer_state.pkl` and `checkpoint.json`.
 
 The public `kaggle/probe_a_lr_reset_10b.py` entrypoint must force the 100M Hugging Face namespace before restore or dataset staging. Kaggle notebooks can retain environment variables from older 20M runs; Probe A must therefore set `SMALL_LLM_HF_REPO_ID=roccoangelella/small-llm-100m-qualification`, `SMALL_LLM_HF_CHECKPOINT_BUCKET_ID=roccoangelella/small-llm-100m-qualification-checkpoints`, and `SMALL_LLM_HF_DATASET_BUCKET_ID=roccoangelella/small-llm-100m-qualification-datasets` unless dedicated `SMALL_LLM_PROBE_A_*` overrides are provided.
 
@@ -61,6 +63,7 @@ Probe A must not call the deep-decay entrypoint's HF-runtime reexec helper direc
 - The public Probe A entrypoint survives Kaggle's old HF Hub client by re-executing back into itself rather than into the normal deep-decay trainer.
 - Stale `SMALL_LLM_HF_REPO_ID` values from older 20M work cannot redirect Probe A to the wrong HF repo.
 - A missing best-model `local_manifest.json` no longer blocks a marker-verified checkpoint restore when the required files are present and re-hashed locally.
+- Hugging Face cache symlinks no longer reach checkpoint verification or trainer resume because Probe A materializes the snapshot into ordinary local files first.
 
 ### Negative or limiting
 
@@ -69,6 +72,7 @@ Probe A must not call the deep-decay entrypoint's HF-runtime reexec helper direc
 - The branch source is no longer the newest verified rolling checkpoint; it is intentionally pinned to `step-00071750`.
 - The abandoned `step-00068250` source is not recoverable from the current replace-only dedicated best-model marker; using it would require another preserved copy or a direct `SMALL_LLM_PROBE_A_SOURCE_REPO_ID` override.
 - Reconstructing `local_manifest.json` validates the files as downloaded, but it cannot recover a historical manifest that was not present in the best-model snapshot.
+- Materializing the HF cache duplicates the 914 MiB best checkpoint locally during restore, increasing temporary disk usage by roughly one checkpoint copy.
 - Rerunning the same branch from the same source step intentionally resumes or reuses that branch's own W&B run ID.
 
 ## Validation
@@ -91,7 +95,7 @@ Expected fixed source fields:
 }
 ```
 
-If the best-model checkpoint lacks `local_manifest.json`, the launcher should print `probe_a_rebuilt_local_manifest` and then continue through `verify_local_manifest()`.
+The launcher must never run `verify_local_manifest()` on the Hugging Face cache path. It must first materialize the checkpoint with `symlinks=False`, then verify the staging directory and final target. If the materialized checkpoint lacks `local_manifest.json`, the launcher should print `probe_a_rebuilt_local_manifest` and then continue through `verify_local_manifest()`.
 
 Expected W&B run IDs:
 
