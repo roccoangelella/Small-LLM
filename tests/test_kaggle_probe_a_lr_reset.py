@@ -59,8 +59,19 @@ def test_probe_a_reconstructs_missing_best_checkpoint_local_manifest() -> None:
     assert "sha256_path" in text
     assert "probe_a_rebuilt_local_manifest" in text
     assert "local_manifest_rebuilt" in text
-    assert "verify_local_manifest(source)" in text
     assert "verify_local_manifest(staging)" in text
+    assert "verify_local_manifest(target)" in text
+
+
+def test_probe_a_materializes_hf_cache_symlinks_before_verification() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "_materialize_best_source_checkpoint" in text
+    assert "shutil.copytree(source, staging, symlinks=False)" in text
+    assert "materialized_from_hf_cache" in text
+    assert "still contains a symlink after materialization" in text
+    assert "verify_local_manifest(source)" not in text
+    assert "_ensure_best_source_local_manifest(source)" not in text
+    assert "_ensure_best_source_local_manifest(staging)" in text
 
 
 def test_probe_a_entrypoint_allows_new_fixed_step_wandb_runs() -> None:
