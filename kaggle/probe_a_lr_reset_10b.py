@@ -37,6 +37,9 @@ PROBE_BASE_HF_REPO_ID = (
 )
 PROBE_SOURCE_CHECKPOINT_ID = "step-00071750"
 PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"
+_POST_SAVE_METADATA = frozenset(
+    {"local_manifest.json", "drive_manifest.json", "checkpoint_manifest.json"}
+)
 
 
 def _force_probe_hf_identity() -> None:
@@ -175,6 +178,66 @@ def _load_best_source_marker(*, repo_id: str, token: str | None, impl: Any) -> d
     return dict(marker)
 
 
+def _ensure_best_source_local_manifest(root: Path) -> bool:
+    """Create the local checkpoint manifest missing from some best-model artifacts.
+
+    The dedicated best-model repository is marker-verified and the downloaded
+    trainer state is validated again before training. Some best snapshots can be
+    downloaded without ``local_manifest.json`` at the checkpoint root, so Probe A
+    reconstructs the manifest required by the standard checkpoint verifier.
+    """
+
+    manifest_path = root / "local_manifest.json"
+    if manifest_path.is_file() and not manifest_path.is_symlink():
+        return False
+    if manifest_path.is_symlink():
+        raise RuntimeError("Probe A source local_manifest.json is a symlink")
+
+    names: list[str] = []
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise RuntimeError(f"Probe A source checkpoint contains a symlink: {path.relative_to(root)}")
+        if not path.is_file():
+            continue
+        name = path.relative_to(root).as_posix()
+        if name in _POST_SAVE_METADATA:
+            continue
+        names.append(name)
+
+    required = {"trainer_state.pkl", "checkpoint.json"}
+    missing = sorted(required - set(names))
+    if missing:
+        raise RuntimeError(
+            "Probe A cannot reconstruct local_manifest.json; missing checkpoint "
+            f"files: {missing}"
+        )
+
+    from dataset.src.remote import sha256_path
+
+    payload = {
+        "version": 1,
+        "files": [
+            {
+                "name": name,
+                "sha256": sha256_path(root / name),
+                "byte_size": (root / name).stat().st_size,
+            }
+            for name in names
+        ],
+    }
+    tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, manifest_path)
+    print(
+        json.dumps(
+            {"probe_a_rebuilt_local_manifest": {"root": str(root), "files": names}},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return True
+
+
 def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, object]:
     """Restore exactly step-00071750 from the dedicated best-model repo.
 
@@ -199,6 +262,7 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
             "source": "local_fixed_best",
             "repo_id": repo_id,
             "path_in_repo": prefix,
+            "local_manifest_rebuilt": False,
         }
 
     token = runtime_base._hf_token()
@@ -215,6 +279,7 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
     source = snapshot_root / prefix
     if not source.is_dir():
         raise RuntimeError(f"Probe A source checkpoint {repo_id}/{prefix} was not downloaded")
+    rebuilt_manifest = _ensure_best_source_local_manifest(source)
     verify_local_manifest(source)
 
     impl._impl.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
@@ -232,6 +297,7 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
         "repo_id": repo_id,
         "path_in_repo": prefix,
         "validation_loss": marker.get("validation_loss"),
+        "local_manifest_rebuilt": rebuilt_manifest,
     }
 
 
@@ -261,6 +327,7 @@ def _prepare_fixed_source_checkpoint(runtime_base: Any, impl: Any) -> tuple[str,
                     "path_in_repo": restored.get("path_in_repo"),
                     "restored_from": restored.get("source"),
                     "validation_loss": restored.get("validation_loss"),
+                    "local_manifest_rebuilt": restored.get("local_manifest_rebuilt"),
                     "migrated_to_kaggle_execution": bool(migrated),
                     "dataset": str(dataset),
                 }
