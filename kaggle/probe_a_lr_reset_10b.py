@@ -5,8 +5,8 @@ The implementation lives in ``probe_a_lr_reset_10b_impl.py``. This thin shim
 exists because the shared deep-decay HF runtime helper re-execs its own file;
 Probe A must instead restart back into this probe entrypoint before delegating.
 
-Probe A is intentionally fixed to start from the strict-best checkpoint
-``step-00068250`` rather than from the rolling latest checkpoint.
+Probe A is intentionally fixed to start from the current available strict-best
+checkpoint ``step-00071750`` rather than from the rolling latest checkpoint.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ PROBE_BASE_HF_REPO_ID = (
     ).strip()
     or "roccoangelella/small-llm-100m-qualification"
 )
-PROBE_SOURCE_CHECKPOINT_ID = "step-00068250"
+PROBE_SOURCE_CHECKPOINT_ID = "step-00071750"
 PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"
 
 
@@ -176,7 +176,7 @@ def _load_best_source_marker(*, repo_id: str, token: str | None, impl: Any) -> d
 
 
 def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, object]:
-    """Restore exactly step-00068250 from the dedicated best-model repo.
+    """Restore exactly step-00071750 from the dedicated best-model repo.
 
     This deliberately ignores rolling latest. Probe A must compare LR resets from
     one fixed checkpoint even if the control run has a newer Bucket latest.
