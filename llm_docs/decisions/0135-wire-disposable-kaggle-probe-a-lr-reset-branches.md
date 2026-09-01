@@ -29,6 +29,8 @@ Each branch uses the Kaggle dual-T4 exact 64-sequence optimizer block, logs trai
 
 The launcher must also isolate W&B identity per branch. Sequential Kaggle subprocesses can inherit notebook/global W&B environment such as `WANDB_RUN_ID`, `WANDB_ID`, `WANDB_NAME`, or `WANDB_RESUME`; Probe A therefore wraps each trainer subprocess with a branch-specific W&B environment and still passes the same branch-specific identity through CLI args.
 
+Probe A must not call the deep-decay entrypoint's HF-runtime reexec helper directly. That helper restarts into `kaggle/deep_decay_10b_from_15500.py`, which would bypass Probe A and enter the normal HF-published deep-decay trainer. The public `kaggle/probe_a_lr_reset_10b.py` entrypoint must first restart into itself with private `huggingface_hub==1.5.0`, then delegate to `kaggle/probe_a_lr_reset_10b_impl.py` with the imported deep-decay restart shim disabled.
+
 ## Consequences
 
 ### Positive
@@ -38,6 +40,7 @@ The launcher must also isolate W&B identity per branch. Sequential Kaggle subpro
 - HF remains a read source for checkpoint/dataset hydration only; model publication is disabled.
 - The probe is disposable and can be rerun from whatever verified control checkpoint is current at launch time.
 - Reset-low and reset-mid are protected from W&B identity leakage and should appear as separate W&B runs.
+- The public Probe A entrypoint survives Kaggle's old HF Hub client by re-executing back into itself rather than into the normal deep-decay trainer.
 
 ### Negative or limiting
 
@@ -64,7 +67,10 @@ The trainer command must include `--remote-publish-every-steps 0` and must not i
 
 The trainer subprocess must clear inherited W&B identity environment and then set a branch-specific `WANDB_RUN_ID`, `WANDB_ID`, `WANDB_NAME`, `WANDB_RESUME=must`, and `WANDB_RUN_GROUP=probe-a-lr-reset`.
 
+The public entrypoint must re-exec `str(Path(__file__).resolve())` for the private HF Hub runtime, not `deep_decay_10b_from_15500.py`, and then import `probe_a_lr_reset_10b_impl`.
+
 ## Links
 
 - `kaggle/probe_a_lr_reset_10b.py`
+- `kaggle/probe_a_lr_reset_10b_impl.py`
 - `tests/test_kaggle_probe_a_lr_reset.py`
