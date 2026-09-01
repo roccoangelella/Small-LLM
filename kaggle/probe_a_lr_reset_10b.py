@@ -28,8 +28,53 @@ if str(KAGGLE) not in sys.path:
 import deep_decay_10b_from_15500 as deep_decay
 
 HF_HUB_VERSION = getattr(deep_decay, "HF_HUB_VERSION", "1.5.0")
+PROBE_BASE_HF_REPO_ID = (
+    os.environ.get(
+        "SMALL_LLM_PROBE_A_BASE_REPO_ID",
+        "roccoangelella/small-llm-100m-qualification",
+    ).strip()
+    or "roccoangelella/small-llm-100m-qualification"
+)
 PROBE_SOURCE_CHECKPOINT_ID = "step-00068250"
 PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"
+
+
+def _force_probe_hf_identity() -> None:
+    """Force Probe A to the 100M qualification HF namespace.
+
+    Kaggle notebooks can retain environment variables from older 20M runs. Probe A
+    is a 100M/10B experiment, so all implicit runtime helpers must resolve the
+    100M model repo, checkpoint bucket, and dataset bucket unless a dedicated
+    Probe-A override is supplied.
+    """
+
+    desired = {
+        "SMALL_LLM_HF_REPO_ID": PROBE_BASE_HF_REPO_ID,
+        "SMALL_LLM_HF_CHECKPOINT_BUCKET_ID": os.environ.get(
+            "SMALL_LLM_PROBE_A_CHECKPOINT_BUCKET_ID",
+            f"{PROBE_BASE_HF_REPO_ID}-checkpoints",
+        ).strip()
+        or f"{PROBE_BASE_HF_REPO_ID}-checkpoints",
+        "SMALL_LLM_HF_DATASET_BUCKET_ID": os.environ.get(
+            "SMALL_LLM_PROBE_A_DATASET_BUCKET_ID",
+            f"{PROBE_BASE_HF_REPO_ID}-datasets",
+        ).strip()
+        or f"{PROBE_BASE_HF_REPO_ID}-datasets",
+    }
+    previous = {key: os.environ.get(key) for key in desired}
+    for key, value in desired.items():
+        os.environ[key] = value
+
+    overridden = {
+        key: {"previous": value, "current": desired[key]}
+        for key, value in previous.items()
+        if value and value != desired[key]
+    }
+    if overridden:
+        print(
+            json.dumps({"probe_a_hf_identity_override": overridden}, sort_keys=True),
+            flush=True,
+        )
 
 
 def _ensure_probe_hf_bucket_runtime(argv: Sequence[str]) -> None:
@@ -87,10 +132,11 @@ def _fixed_source_step(impl: Any) -> int:
 
 
 def _fixed_source_repo_id(runtime_base: Any, impl: Any) -> str:
+    del runtime_base
     explicit = os.environ.get("SMALL_LLM_PROBE_A_SOURCE_REPO_ID", "").strip()
     if explicit:
         return explicit
-    return f"{runtime_base._hf_model_repo_id()}-best-{impl._impl.RUN_ID}"
+    return f"{PROBE_BASE_HF_REPO_ID}-best-{impl._impl.RUN_ID}"
 
 
 def _best_checkpoint_prefix(impl: Any) -> str:
@@ -210,6 +256,7 @@ def _prepare_fixed_source_checkpoint(runtime_base: Any, impl: Any) -> tuple[str,
                     "checkpoint_id": checkpoint_id,
                     "step": step,
                     "source_kind": PROBE_SOURCE_KIND,
+                    "base_hf_repo_id": PROBE_BASE_HF_REPO_ID,
                     "repo_id": restored.get("repo_id"),
                     "path_in_repo": restored.get("path_in_repo"),
                     "restored_from": restored.get("source"),
@@ -236,7 +283,10 @@ def _patch_impl_dry_run(impl: Any) -> None:
                 "source": PROBE_SOURCE_KIND,
                 "source_checkpoint_id": PROBE_SOURCE_CHECKPOINT_ID,
                 "source_step": source_step,
-                "source_repo": "$SMALL_LLM_PROBE_A_SOURCE_REPO_ID or $SMALL_LLM_HF_REPO_ID-best-" + impl._impl.RUN_ID,
+                "base_hf_repo_id": PROBE_BASE_HF_REPO_ID,
+                "source_repo": "$SMALL_LLM_PROBE_A_SOURCE_REPO_ID or "
+                + f"{PROBE_BASE_HF_REPO_ID}-best-"
+                + impl._impl.RUN_ID,
                 "source_path_in_repo": _best_checkpoint_prefix(impl),
                 "hf_reads": [
                     "fixed dedicated best-model checkpoint restore",
@@ -257,6 +307,7 @@ def _patch_impl_dry_run(impl: Any) -> None:
 def _patch_impl_wandb_resume_allow(impl: Any) -> None:
     original_prefix = impl._wandb_env_prefix
     original_build = impl._build_branch_trainer_command
+    original_assert = impl._assert_branch_wandb_identity
 
     def wandb_env_prefix_allow(branch: Any, source_step: int, branch_run_dir: Path) -> list[str]:
         command = list(original_prefix(branch, source_step, branch_run_dir))
@@ -277,8 +328,16 @@ def _patch_impl_wandb_resume_allow(impl: Any) -> None:
             )
 
     def build_branch_trainer_command_allow(*args: Any, **kwargs: Any) -> list[str]:
-        command = list(original_build(*args, **kwargs))
+        previous_assert = impl._assert_branch_wandb_identity
+        impl._assert_branch_wandb_identity = original_assert
+        try:
+            command = list(original_build(*args, **kwargs))
+        finally:
+            impl._assert_branch_wandb_identity = previous_assert
         impl._replace_option(command, "--wandb-resume", "allow")
+        branch = kwargs["branch"]
+        source_step = int(kwargs["source_step"])
+        assert_branch_wandb_identity_allow(command, branch=branch, source_step=source_step)
         return command
 
     impl._wandb_env_prefix = wandb_env_prefix_allow
@@ -290,6 +349,7 @@ def _patch_impl_for_fixed_source(impl: Any) -> None:
     impl.PROBE_SOURCE_CHECKPOINT_ID = PROBE_SOURCE_CHECKPOINT_ID
     impl.PROBE_SOURCE_STEP = _fixed_source_step(impl)
     impl.PROBE_SOURCE_KIND = PROBE_SOURCE_KIND
+    impl.PROBE_BASE_HF_REPO_ID = PROBE_BASE_HF_REPO_ID
     impl._prepare_source_checkpoint = lambda runtime_base: _prepare_fixed_source_checkpoint(runtime_base, impl)
     _patch_impl_dry_run(impl)
     _patch_impl_wandb_resume_allow(impl)
@@ -297,6 +357,7 @@ def _patch_impl_for_fixed_source(impl: Any) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    _force_probe_hf_identity()
     if "--dry-run" not in args:
         _ensure_probe_hf_bucket_runtime(args)
 
