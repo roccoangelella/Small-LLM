@@ -27,6 +27,8 @@ Chosen option: **separate Kaggle-only disposable probe launcher**, because the g
 
 Each branch uses the Kaggle dual-T4 exact 64-sequence optimizer block, logs training and validation to its own W&B run, and sets `--remote-publish-every-steps 0`. The launcher forbids remote checkpoint and best-model publication flags so probe models do not end up in Hugging Face.
 
+The launcher must also isolate W&B identity per branch. Sequential Kaggle subprocesses can inherit notebook/global W&B environment such as `WANDB_RUN_ID`, `WANDB_ID`, `WANDB_NAME`, or `WANDB_RESUME`; Probe A therefore wraps each trainer subprocess with a branch-specific W&B environment and still passes the same branch-specific identity through CLI args.
+
 ## Consequences
 
 ### Positive
@@ -35,12 +37,14 @@ Each branch uses the Kaggle dual-T4 exact 64-sequence optimizer block, logs trai
 - The probe tests LR-limited training without committing to a risky `1e-3` long phase.
 - HF remains a read source for checkpoint/dataset hydration only; model publication is disabled.
 - The probe is disposable and can be rerun from whatever verified control checkpoint is current at launch time.
+- Reset-low and reset-mid are protected from W&B identity leakage and should appear as separate W&B runs.
 
 ### Negative or limiting
 
 - The trainer still writes a final local checkpoint by its generic end-of-run behavior, but this checkpoint is local scratch only.
 - The probe does not retain remote recoverability; interrupted Kaggle work may be lost.
 - The branch source is the newest verified control checkpoint available at launch time, not necessarily a historical best checkpoint if that checkpoint has already been pruned.
+- Rerunning the same branch from the same source step intentionally resumes that branch's own W&B run ID.
 
 ## Validation
 
@@ -57,6 +61,8 @@ Expected W&B run IDs follow:
 - `100m-10b-probe-a-reset-mid-from-step<SOURCE_STEP>`
 
 The trainer command must include `--remote-publish-every-steps 0` and must not include `--remote-drive-manifest`, `--remote-checkpoint-bucket`, `--remote-checkpoint-repo`, or `--best-model-repo`.
+
+The trainer subprocess must clear inherited W&B identity environment and then set a branch-specific `WANDB_RUN_ID`, `WANDB_ID`, `WANDB_NAME`, `WANDB_RESUME=must`, and `WANDB_RUN_GROUP=probe-a-lr-reset`.
 
 ## Links
 
