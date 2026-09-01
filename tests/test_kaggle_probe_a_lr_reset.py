@@ -4,15 +4,29 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "kaggle" / "probe_a_lr_reset_10b.py"
+ENTRYPOINT = ROOT / "kaggle" / "probe_a_lr_reset_10b.py"
+IMPL = ROOT / "kaggle" / "probe_a_lr_reset_10b_impl.py"
 
 
-def test_probe_a_script_compiles() -> None:
-    compile(SCRIPT.read_text(encoding="utf-8"), str(SCRIPT), "exec")
+def test_probe_a_entrypoint_compiles() -> None:
+    compile(ENTRYPOINT.read_text(encoding="utf-8"), str(ENTRYPOINT), "exec")
 
 
-def test_probe_a_has_two_distinct_wandb_only_branches() -> None:
-    text = SCRIPT.read_text(encoding="utf-8")
+def test_probe_a_impl_compiles() -> None:
+    compile(IMPL.read_text(encoding="utf-8"), str(IMPL), "exec")
+
+
+def test_probe_a_entrypoint_reexecs_itself_for_hf_runtime() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "probe_a_lr_reset_10b_impl" in text
+    assert "_ensure_probe_hf_bucket_runtime" in text
+    assert "[kaggle-probe-a]" in text
+    assert "str(Path(__file__).resolve())" in text
+    assert "deep_decay._ensure_host_hf_bucket_runtime = _noop_hf_runtime_restart" in text
+
+
+def test_probe_a_impl_has_two_distinct_wandb_only_branches() -> None:
+    text = IMPL.read_text(encoding="utf-8")
     assert "reset-low" in text
     assert "reset-mid" in text
     assert "100m-10b-probe-a-{branch.slug}-from-step{source_step}" in text
@@ -24,8 +38,8 @@ def test_probe_a_has_two_distinct_wandb_only_branches() -> None:
     assert '"online"' in text
 
 
-def test_probe_a_isolates_wandb_identity_per_branch() -> None:
-    text = SCRIPT.read_text(encoding="utf-8")
+def test_probe_a_impl_isolates_wandb_identity_per_branch() -> None:
+    text = IMPL.read_text(encoding="utf-8")
     assert "WANDB_IDENTITY_ENV" in text
     assert '"WANDB_RUN_ID"' in text
     assert '"WANDB_ID"' in text
@@ -39,8 +53,8 @@ def test_probe_a_isolates_wandb_identity_per_branch() -> None:
     assert "_assert_branch_wandb_identity" in text
 
 
-def test_probe_a_disables_hf_publication() -> None:
-    text = SCRIPT.read_text(encoding="utf-8")
+def test_probe_a_impl_disables_hf_publication() -> None:
+    text = IMPL.read_text(encoding="utf-8")
     assert "_publish_latest_to_bucket" not in text
     assert "_prepare(runtime_base)" not in text
     assert '"--remote-publish-every-steps", "0"' in text
