@@ -74,6 +74,18 @@ def test_probe_a_materializes_hf_cache_symlinks_before_verification() -> None:
     assert "_ensure_best_source_local_manifest(staging)" in text
 
 
+def test_probe_a_canonicalizes_constant_branch_checkpoint_config() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "_patch_impl_probe_config_canonicalization" in text
+    assert "original_probe_config = impl._probe_config" in text
+    assert "from trainer.config import TrainerConfig" in text
+    assert "TrainerConfig(**raw).as_dict()" in text
+    assert "probe_a_canonicalized_branch_config" in text
+    assert "dropped_constant_schedule_keys" in text
+    assert "impl._probe_config = canonical_probe_config" in text
+    assert "_patch_impl_probe_config_canonicalization(impl)" in text
+
+
 def test_probe_a_entrypoint_allows_new_fixed_step_wandb_runs() -> None:
     text = ENTRYPOINT.read_text(encoding="utf-8")
     assert "WANDB_RESUME=allow" in text
