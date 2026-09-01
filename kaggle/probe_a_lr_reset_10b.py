@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 """Disposable Probe A LR-reset branches for the 100M/10B continuation on Kaggle 2xT4.
 
-This launcher compares two optimizer/schedule reset hypotheses against the
+Probe A compares two W&B-visible, HF-disposable LR reset branches against the
 already-running control branch:
 
-* reset-low: resume the newest verified deep-decay checkpoint, keep optimizer
-  moments/data cursor, reset to constant 1e-4.
-* reset-mid: same source checkpoint, reset to constant 3e-4.
+* reset-low: constant LR 1e-4.
+* reset-mid: constant LR 3e-4.
 
-The probe is intentionally W&B-only for remote observability. It reads Hugging
-Face only to hydrate the source checkpoint and rolling 10B dataset shards. It
-must not publish checkpoints or best models to Hugging Face.
-
-Usage from repository root on Kaggle:
-
-    python kaggle/probe_a_lr_reset_10b.py --dry-run
-    python kaggle/probe_a_lr_reset_10b.py
-    python kaggle/probe_a_lr_reset_10b.py --branch reset-low --max-steps-this-session 2000
-    python kaggle/probe_a_lr_reset_10b.py --reset-mid-lr 2e-4 --max-steps-this-session 5000
+The launcher reads Hugging Face only to hydrate the source checkpoint and rolling
+10B dataset shards. It must not publish checkpoints or best models to HF.
 """
 from __future__ import annotations
 
@@ -38,10 +29,9 @@ if str(ROOT) not in sys.path:
 if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 
-import dual_t4_runtime
 import deep_decay_10b_from_15500 as deep_decay
 
-_impl = deep_decay._impl  # canonical scientific continuation implementation
+_impl = deep_decay._impl
 
 PROBE_NAME = "probe-a-lr-reset"
 DEFAULT_PROBE_STEPS = 3_000
@@ -49,9 +39,18 @@ DEFAULT_EVAL_EVERY_STEPS = 250
 DEFAULT_VALIDATION_BLOCKS = 16
 RESET_LOW_LR = 1e-4
 RESET_MID_LR = 3e-4
-
 WORK_ROOT = _impl.WORK_ROOT
 PROBE_ROOT = WORK_ROOT / "runs" / PROBE_NAME
+
+WANDB_IDENTITY_ENV = (
+    "WANDB_RUN_ID",
+    "WANDB_ID",
+    "WANDB_NAME",
+    "WANDB_RESUME",
+    "WANDB_RUN_GROUP",
+    "WANDB_JOB_TYPE",
+    "WANDB_DIR",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,8 +83,66 @@ def _remove_option_with_value(command: list[str], option: str) -> None:
         del command[index : index + 2]
 
 
-def _checkpoint_step(checkpoint_id: str) -> int:
-    return _impl._checkpoint_step(checkpoint_id)
+def _remove_option_values_until_next(command: list[str], option: str) -> None:
+    while option in command:
+        index = command.index(option)
+        stop = index + 1
+        while stop < len(command) and not command[stop].startswith("--"):
+            stop += 1
+        del command[index:stop]
+
+
+def _all_option_values(command: Sequence[str], option: str) -> list[str]:
+    return [
+        command[index + 1]
+        for index, token in enumerate(command[:-1])
+        if token == option
+    ]
+
+
+def _branch_run_id(branch: ProbeBranch, source_step: int) -> str:
+    return f"100m-10b-probe-a-{branch.slug}-from-step{source_step}"
+
+
+def _branch_run_name(branch: ProbeBranch, source_step: int) -> str:
+    return (
+        f"100M/10B Probe A {branch.label} from step {source_step} "
+        f"(constant LR {branch.learning_rate:g}, no HF publish)"
+    )
+
+
+def _branch_wandb_dir(branch_run_dir: Path) -> Path:
+    return branch_run_dir / "wandb"
+
+
+def _wandb_env_prefix(branch: ProbeBranch, source_step: int, branch_run_dir: Path) -> list[str]:
+    run_id = _branch_run_id(branch, source_step)
+    env_binary = shutil.which("env") or "env"
+    return [
+        env_binary,
+        *(item for name in WANDB_IDENTITY_ENV for item in ("-u", name)),
+        f"WANDB_RUN_ID={run_id}",
+        f"WANDB_ID={run_id}",
+        f"WANDB_NAME={_branch_run_name(branch, source_step)}",
+        "WANDB_RESUME=must",
+        "WANDB_MODE=online",
+        f"WANDB_RUN_GROUP={PROBE_NAME}",
+        "WANDB_JOB_TYPE=probe-a-lr-reset",
+        f"WANDB_DIR={_branch_wandb_dir(branch_run_dir)}",
+    ]
+
+
+def _with_branch_wandb_environment(
+    command: Sequence[str],
+    *,
+    branch: ProbeBranch,
+    source_step: int,
+    branch_run_dir: Path,
+) -> list[str]:
+    return [
+        *_wandb_env_prefix(branch, source_step, branch_run_dir),
+        *list(command),
+    ]
 
 
 def _dataset_configuration_hash(dataset: Path) -> str:
@@ -95,40 +152,6 @@ def _dataset_configuration_hash(dataset: Path) -> str:
     if not isinstance(value, str) or not value:
         raise RuntimeError("staged 10B dataset lacks production.configuration_hash")
     return value
-
-
-def _prepare_source_checkpoint(runtime_base: Any) -> tuple[str, int, Path]:
-    """Restore the newest verified control checkpoint locally without publishing."""
-
-    migrated = deep_decay._migrate_existing_deep_decay_checkpoint(runtime_base)
-    checkpoint_id, step = runtime_base._latest_checkpoint(_impl.CHECKPOINT_DIR)
-    if checkpoint_id is None:
-        raise RuntimeError(
-            "Probe A requires an existing 100M/10B deep-decay continuation checkpoint. "
-            "The control branch is the source; this launcher will not fork the original "
-            "step-15500 source into a new HF-published run."
-        )
-    verified_step = _impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)
-    if verified_step != step:
-        raise RuntimeError("verified control checkpoint step disagrees with runtime cursor")
-
-    stage_block = min(step, _impl.FINAL_STEP - 1)
-    dataset = _impl._stage_dataset(runtime_base, start_block_id=stage_block)
-    print(
-        json.dumps(
-            {
-                "probe_a_source": {
-                    "checkpoint_id": checkpoint_id,
-                    "step": step,
-                    "migrated_to_kaggle_execution": bool(migrated),
-                    "dataset": str(dataset),
-                }
-            },
-            sort_keys=True,
-        ),
-        flush=True,
-    )
-    return checkpoint_id, step, dataset
 
 
 def _probe_config(
@@ -158,6 +181,46 @@ def _probe_config(
     return config
 
 
+def _set_rolling_dataset_env(runtime_base: Any) -> None:
+    dataset_bucket_id = (
+        os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
+        or f"{runtime_base._hf_model_repo_id()}-datasets"
+    )
+    os.environ["SMALL_LLM_MODAL_ROLLING_DATASET"] = "1"
+    os.environ["SMALL_LLM_DATASET_SHARD_BUCKET"] = dataset_bucket_id
+    os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = _impl.DATASET_RUN_ID
+    os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
+    os.environ.setdefault("WANDB_DISABLE_CODE", "true")
+
+
+def _prepare_source_checkpoint(runtime_base: Any) -> tuple[str, int, Path]:
+    migrated = deep_decay._migrate_existing_deep_decay_checkpoint(runtime_base)
+    checkpoint_id, step = runtime_base._latest_checkpoint(_impl.CHECKPOINT_DIR)
+    if checkpoint_id is None:
+        raise RuntimeError(
+            "Probe A requires an existing 100M/10B deep-decay continuation checkpoint."
+        )
+    verified_step = _impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)
+    if verified_step != step:
+        raise RuntimeError("verified control checkpoint step disagrees with runtime cursor")
+    dataset = _impl._stage_dataset(runtime_base, start_block_id=min(step, _impl.FINAL_STEP - 1))
+    print(
+        json.dumps(
+            {
+                "probe_a_source": {
+                    "checkpoint_id": checkpoint_id,
+                    "step": step,
+                    "migrated_to_kaggle_execution": bool(migrated),
+                    "dataset": str(dataset),
+                }
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return checkpoint_id, step, dataset
+
+
 def _fork_branch_checkpoint(
     *,
     runtime_base: Any,
@@ -168,8 +231,6 @@ def _fork_branch_checkpoint(
     dataset: Path,
     eval_every_steps: int,
 ) -> None:
-    """Copy the control checkpoint into a disposable branch and patch only LR schedule."""
-
     import torch
     from dataset.src.joint_checkpoint import verify_local_manifest
     from dataset.src.remote import sha256_path
@@ -177,8 +238,7 @@ def _fork_branch_checkpoint(
     from trainer.state import load_trainer_state_file, release_host_memory
 
     source_root = _impl.CHECKPOINT_DIR / source_checkpoint_id
-    source_verified_step = _impl._verify_deep_decay_checkpoint(runtime_base, source_checkpoint_id)
-    if source_verified_step != source_step:
+    if _impl._verify_deep_decay_checkpoint(runtime_base, source_checkpoint_id) != source_step:
         raise RuntimeError("source checkpoint step changed during probe fork")
     verify_local_manifest(source_root)
 
@@ -187,8 +247,10 @@ def _fork_branch_checkpoint(
     staging = branch_checkpoint_dir / f".{source_checkpoint_id}.{branch.slug}.fork"
     shutil.rmtree(staging, ignore_errors=True)
 
-    state: dict[str, object] | None = None
-    state = load_trainer_state_file(source_root / "trainer_state.pkl", map_location="cpu")
+    state: dict[str, object] | None = load_trainer_state_file(
+        source_root / "trainer_state.pkl",
+        map_location="cpu",
+    )
     try:
         if state.get("global_step") != source_step:
             raise RuntimeError("source trainer_state global_step disagrees with checkpoint ID")
@@ -274,27 +336,45 @@ def _fork_branch_checkpoint(
     verify_local_manifest(target_root)
 
 
-def _branch_run_id(branch: ProbeBranch, source_step: int) -> str:
-    return f"100m-10b-probe-a-{branch.slug}-from-step{source_step}"
+def _assert_no_hf_publication(command: Sequence[str]) -> None:
+    forbidden = {
+        "--remote-drive-manifest",
+        "--remote-checkpoint-bucket",
+        "--remote-checkpoint-repo",
+        "--best-model-repo",
+    }
+    present = sorted(flag for flag in forbidden if flag in command)
+    if present:
+        raise RuntimeError(f"HF publication flags are forbidden for Probe A: {present}")
+    if "--remote-publish-every-steps" not in command:
+        raise RuntimeError("Probe A trainer command must explicitly disable remote publication")
+    index = command.index("--remote-publish-every-steps")
+    try:
+        value = int(command[index + 1])
+    except (IndexError, ValueError) as error:
+        raise RuntimeError("invalid Probe A remote publication flag") from error
+    if value != 0:
+        raise RuntimeError("Probe A must run with --remote-publish-every-steps 0")
 
 
-def _branch_run_name(branch: ProbeBranch, source_step: int) -> str:
-    return (
-        f"100M/10B Probe A {branch.label} from step {source_step} "
-        f"(constant LR {branch.learning_rate:g}, no HF publish)"
-    )
-
-
-def _set_rolling_dataset_env(runtime_base: Any) -> None:
-    dataset_bucket_id = (
-        os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
-        or f"{runtime_base._hf_model_repo_id()}-datasets"
-    )
-    os.environ["SMALL_LLM_MODAL_ROLLING_DATASET"] = "1"
-    os.environ["SMALL_LLM_DATASET_SHARD_BUCKET"] = dataset_bucket_id
-    os.environ["SMALL_LLM_DATASET_SHARD_RUN_ID"] = _impl.DATASET_RUN_ID
-    os.environ["SMALL_LLM_DATASET_SHARD_PREFETCH"] = "1"
-    os.environ.setdefault("WANDB_DISABLE_CODE", "true")
+def _assert_branch_wandb_identity(
+    command: Sequence[str],
+    *,
+    branch: ProbeBranch,
+    source_step: int,
+) -> None:
+    expected = _branch_run_id(branch, source_step)
+    values = _all_option_values(command, "--wandb-run-id")
+    if values != [expected]:
+        raise RuntimeError(
+            f"Probe A branch {branch.slug} must have exactly one W&B run ID "
+            f"{expected!r}; got {values!r}"
+        )
+    resumes = _all_option_values(command, "--wandb-resume")
+    if resumes != ["must"]:
+        raise RuntimeError(
+            f"Probe A branch {branch.slug} must use --wandb-resume must; got {resumes!r}"
+        )
 
 
 def _build_branch_trainer_command(
@@ -303,6 +383,7 @@ def _build_branch_trainer_command(
     branch: ProbeBranch,
     dataset: Path,
     branch_checkpoint_dir: Path,
+    branch_run_dir: Path,
     source_checkpoint_id: str,
     source_step: int,
     steps: int,
@@ -315,8 +396,6 @@ def _build_branch_trainer_command(
     if token_preset.dataset_profile != _impl.DATASET_PROFILE:
         raise RuntimeError("100M/10B profile drifted away from modal-10b-b64")
 
-    # We deliberately request runtime online=False to avoid the HF publication
-    # manifest/bucket path, then opt W&B back in by explicit CLI flags below.
     command = runtime_base._trainer_command(
         model=model_preset,
         tokens=token_preset,
@@ -355,14 +434,15 @@ def _build_branch_trainer_command(
     _remove_option_with_value(command, "--remote-checkpoint-bucket")
     _remove_option_with_value(command, "--remote-token-env")
     _remove_option_with_value(command, "--best-model-repo")
+    _remove_option_values_until_next(command, "--wandb-tags")
 
+    run_id = _branch_run_id(branch, source_step)
+    _append_option(command, "--wandb-project", "Small-LLM")
+    _append_option(command, "--wandb-run-id", run_id)
+    _append_option(command, "--wandb-run-name", _branch_run_name(branch, source_step))
+    _append_option(command, "--wandb-resume", "must")
+    _append_option(command, "--wandb-dir", str(_branch_wandb_dir(branch_run_dir)))
     command += [
-        "--wandb-project",
-        "Small-LLM",
-        "--wandb-run-id",
-        _branch_run_id(branch, source_step),
-        "--wandb-run-name",
-        _branch_run_name(branch, source_step),
         "--wandb-tags",
         "100m",
         "10b-tokens",
@@ -374,36 +454,14 @@ def _build_branch_trainer_command(
         "no-hf-publication",
         "exact-resume",
         "constant-lr",
-        "--wandb-resume",
-        "allow",
     ]
     entity = os.environ.get("WANDB_ENTITY")
     if entity:
-        command += ["--wandb-entity", entity]
+        _append_option(command, "--wandb-entity", entity)
+
     _assert_no_hf_publication(command)
+    _assert_branch_wandb_identity(command, branch=branch, source_step=source_step)
     return command
-
-
-def _assert_no_hf_publication(command: Sequence[str]) -> None:
-    forbidden = {
-        "--remote-drive-manifest",
-        "--remote-checkpoint-bucket",
-        "--remote-checkpoint-repo",
-        "--best-model-repo",
-    }
-    present = sorted(flag for flag in forbidden if flag in command)
-    if present:
-        raise RuntimeError(f"HF publication flags are forbidden for Probe A: {present}")
-
-    if "--remote-publish-every-steps" not in command:
-        raise RuntimeError("Probe A trainer command must explicitly disable remote publication")
-    index = command.index("--remote-publish-every-steps")
-    try:
-        value = int(command[index + 1])
-    except (IndexError, ValueError) as error:
-        raise RuntimeError("invalid Probe A remote publication flag") from error
-    if value != 0:
-        raise RuntimeError("Probe A must run with --remote-publish-every-steps 0")
 
 
 def _run_branch(
@@ -434,6 +492,7 @@ def _run_branch(
         branch=branch,
         dataset=dataset,
         branch_checkpoint_dir=branch_checkpoint_dir,
+        branch_run_dir=branch_run_dir,
         source_checkpoint_id=source_checkpoint_id,
         source_step=source_step,
         steps=steps,
@@ -441,6 +500,12 @@ def _run_branch(
         validation_blocks=validation_blocks,
     )
     command = _impl._dual_t4_command(trainer_command)
+    command = _with_branch_wandb_environment(
+        command,
+        branch=branch,
+        source_step=source_step,
+        branch_run_dir=branch_run_dir,
+    )
     _assert_no_hf_publication(command)
 
     log_path = branch_run_dir / "evidence" / f"{run_id}.log"
@@ -461,6 +526,8 @@ def _run_branch(
                     "validation_blocks": validation_blocks,
                     "hf_publication": "disabled",
                     "wandb": "online",
+                    "wandb_env_run_id": run_id,
+                    "wandb_dir": str(_branch_wandb_dir(branch_run_dir)),
                 }
             },
             sort_keys=True,
@@ -488,6 +555,7 @@ def _run_branch(
         "elapsed_seconds": time.perf_counter() - started,
         "hf_publication": "disabled",
         "log_path": str(log_path),
+        "wandb_dir": str(_branch_wandb_dir(branch_run_dir)),
     }
     print(json.dumps({"probe_a_branch_complete": result}, sort_keys=True), flush=True)
     return result
@@ -543,6 +611,11 @@ def _dry_run_payload(args: argparse.Namespace) -> dict[str, object]:
         "source": "newest_verified_control_checkpoint_at_runtime",
         "hf_reads": ["control checkpoint restore", "rolling 10B dataset shards"],
         "hf_publication": "disabled",
+        "wandb_identity_isolation": {
+            "strategy": "branch-specific env wrapper plus explicit CLI run id",
+            "cleared_env": list(WANDB_IDENTITY_ENV),
+            "run_group": PROBE_NAME,
+        },
         "remote_publish_every_steps": 0,
         "checkpoint_every_steps": 0,
         "final_checkpoint": "local_only_trainer_default",
