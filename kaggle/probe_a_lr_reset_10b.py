@@ -185,18 +185,25 @@ def _ensure_best_source_local_manifest(root: Path) -> bool:
     trainer state is validated again before training. Some best snapshots can be
     downloaded without ``local_manifest.json`` at the checkpoint root, so Probe A
     reconstructs the manifest required by the standard checkpoint verifier.
+
+    ``root`` must be a materialized local copy, not the Hugging Face cache path.
     """
 
     manifest_path = root / "local_manifest.json"
-    if manifest_path.is_file() and not manifest_path.is_symlink():
-        return False
     if manifest_path.is_symlink():
-        raise RuntimeError("Probe A source local_manifest.json is a symlink")
+        raise RuntimeError(
+            "Probe A source local_manifest.json is still a symlink after materialization"
+        )
+    if manifest_path.is_file():
+        return False
 
     names: list[str] = []
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
-            raise RuntimeError(f"Probe A source checkpoint contains a symlink: {path.relative_to(root)}")
+            raise RuntimeError(
+                f"Probe A source checkpoint still contains a symlink after materialization: "
+                f"{path.relative_to(root)}"
+            )
         if not path.is_file():
             continue
         name = path.relative_to(root).as_posix()
@@ -238,6 +245,24 @@ def _ensure_best_source_local_manifest(root: Path) -> bool:
     return True
 
 
+def _materialize_best_source_checkpoint(source: Path, staging: Path) -> None:
+    """Copy an HF snapshot checkpoint tree into real local files.
+
+    ``snapshot_download`` commonly exposes repo files through symlinks into the
+    Hugging Face cache. Checkpoint verification intentionally rejects symlinks, so
+    Probe A must dereference-copy the snapshot before hashing or loading it.
+    """
+
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(source, staging, symlinks=False)
+    for path in staging.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError(
+                f"Probe A materialized checkpoint still contains a symlink: "
+                f"{path.relative_to(staging)}"
+            )
+
+
 def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, object]:
     """Restore exactly step-00071750 from the dedicated best-model repo.
 
@@ -263,6 +288,7 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
             "repo_id": repo_id,
             "path_in_repo": prefix,
             "local_manifest_rebuilt": False,
+            "materialized_from_hf_cache": False,
         }
 
     token = runtime_base._hf_token()
@@ -279,13 +305,11 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
     source = snapshot_root / prefix
     if not source.is_dir():
         raise RuntimeError(f"Probe A source checkpoint {repo_id}/{prefix} was not downloaded")
-    rebuilt_manifest = _ensure_best_source_local_manifest(source)
-    verify_local_manifest(source)
 
     impl._impl.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     staging = impl._impl.CHECKPOINT_DIR / f".{checkpoint_id}.probe-a-fixed-best"
-    shutil.rmtree(staging, ignore_errors=True)
-    shutil.copytree(source, staging)
+    _materialize_best_source_checkpoint(source, staging)
+    rebuilt_manifest = _ensure_best_source_local_manifest(staging)
     verify_local_manifest(staging)
     os.replace(staging, target)
     verify_local_manifest(target)
@@ -298,6 +322,7 @@ def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, ob
         "path_in_repo": prefix,
         "validation_loss": marker.get("validation_loss"),
         "local_manifest_rebuilt": rebuilt_manifest,
+        "materialized_from_hf_cache": True,
     }
 
 
@@ -328,6 +353,7 @@ def _prepare_fixed_source_checkpoint(runtime_base: Any, impl: Any) -> tuple[str,
                     "restored_from": restored.get("source"),
                     "validation_loss": restored.get("validation_loss"),
                     "local_manifest_rebuilt": restored.get("local_manifest_rebuilt"),
+                    "materialized_from_hf_cache": restored.get("materialized_from_hf_cache"),
                     "migrated_to_kaggle_execution": bool(migrated),
                     "dataset": str(dataset),
                 }
