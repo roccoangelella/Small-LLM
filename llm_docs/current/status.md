@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-08-31
+last_reviewed: 2026-09-01
 ---
 
 # Current project status
@@ -44,6 +44,7 @@ Evidence: [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`
 - **Remote Durability Backend (ADR 0132)**:
   - Rolling exact-resume `latest`: private HF Storage Bucket `<REPO_ID>-checkpoints` -> **Bucket `step-00070750`** (block 70,749; val loss 2.827240757760592; rolling publication succeeded before the Kaggle rank-1 abort).
   - Strict validation-loss `best`: dedicated per-run model repo (`<owner>/<base>-best-<run_id>`) -> **`step-00068250`** (val loss 2.824985).
+- **Probe A LR-reset launcher (ADR 0135)**: `python kaggle/probe_a_lr_reset_10b.py` is the public Kaggle entrypoint. It delegates to `kaggle/probe_a_lr_reset_10b_impl.py` only after restarting into itself with private `huggingface_hub==1.5.0` when Kaggle's host client lacks Storage Bucket APIs; this prevents accidental re-entry into `deep_decay_10b_from_15500.py`. Probe branches are W&B-only, HF-disposable, and must use distinct run IDs (`reset-low`, `reset-mid`).
 - **Kaggle CPU Gate Repair**: Compares Bucket vs legacy model-repo pointers, verifies newest on CPU, and selects Bucket checkpoints before any GPU allocation (ADR 0132).
 - **Dataset**: Pinned ClimbMix 10B shards complete on HF and Beam (21 train / 21 val shards; manifest SHA-256 `d23e7e4641e30c25b56189093bf1270cd11e85efc8b26bc4660af1873edb96f1`). Evidence: [`../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md`](../evidence/scaling/100m_10b_dataset_completion_2026-08-14.md).
 - **Execution & Recovery Evidence**:
