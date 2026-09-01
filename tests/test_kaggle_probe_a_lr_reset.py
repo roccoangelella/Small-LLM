@@ -25,6 +25,25 @@ def test_probe_a_entrypoint_reexecs_itself_for_hf_runtime() -> None:
     assert "deep_decay._ensure_host_hf_bucket_runtime = _noop_hf_runtime_restart" in text
 
 
+def test_probe_a_entrypoint_pins_fixed_best_source_step() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert 'PROBE_SOURCE_CHECKPOINT_ID = "step-00068250"' in text
+    assert 'PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"' in text
+    assert "_restore_fixed_best_checkpoint" in text
+    assert "best_model.json" in text
+    assert "snapshot_download" in text
+    assert "models/{impl._impl.RUN_ID}/{PROBE_SOURCE_CHECKPOINT_ID}" in text
+    assert "_patch_impl_for_fixed_source" in text
+    assert "fixed dedicated best-model checkpoint restore" in text
+
+
+def test_probe_a_entrypoint_allows_new_fixed_step_wandb_runs() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "WANDB_RESUME=allow" in text
+    assert 'impl._replace_option(command, "--wandb-resume", "allow")' in text
+    assert "must use --wandb-resume allow" in text
+
+
 def test_probe_a_impl_has_two_distinct_wandb_only_branches() -> None:
     text = IMPL.read_text(encoding="utf-8")
     assert "reset-low" in text
@@ -47,7 +66,6 @@ def test_probe_a_impl_isolates_wandb_identity_per_branch() -> None:
     assert '"WANDB_RESUME"' in text
     assert "WANDB_RUN_ID={run_id}" in text
     assert "WANDB_ID={run_id}" in text
-    assert "WANDB_RESUME=must" in text
     assert "WANDB_RUN_GROUP={PROBE_NAME}" in text
     assert "_with_branch_wandb_environment" in text
     assert "_assert_branch_wandb_identity" in text
