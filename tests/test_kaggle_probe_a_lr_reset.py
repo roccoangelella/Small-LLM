@@ -39,7 +39,7 @@ def test_probe_a_entrypoint_forces_100m_hf_identity() -> None:
 
 def test_probe_a_entrypoint_pins_fixed_best_source_step() -> None:
     text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert 'PROBE_SOURCE_CHECKPOINT_ID = "step-00068250"' in text
+    assert 'PROBE_SOURCE_CHECKPOINT_ID = "step-00071750"' in text
     assert 'PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"' in text
     assert "_restore_fixed_best_checkpoint" in text
     assert "best_model.json" in text
