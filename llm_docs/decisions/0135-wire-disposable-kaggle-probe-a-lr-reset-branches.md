@@ -14,6 +14,8 @@ The control branch remains `100m-10b-deep-decay-from-step15500`. Probe A origina
 
 The current best-model snapshot downloaded from Hugging Face contains the loss-bearing checkpoint payload, but Kaggle observed it without `local_manifest.json` at the checkpoint root and then observed that the HF cache path can expose `local_manifest.json` as a symlink. Probe A therefore materializes the snapshot into a normal local checkpoint tree with symlinks dereferenced before reconstructing or verifying `local_manifest.json`.
 
+Kaggle then reached DDP trainer startup, proving restore/materialization succeeded, but branch resume failed with `trainer checkpoint version or configuration mismatch`. The cause was the forked branch checkpoint storing a hand-built constant-LR trainer config that still contained WSqD-only serialized keys, while the live trainer serializes constant schedules through `TrainerConfig.as_dict()` and drops those keys. Probe A branch checkpoints must therefore canonicalize the rewritten constant-LR config through `TrainerConfig(...).as_dict()` before saving `trainer_state.pkl`.
+
 ## Considered options
 
 - Run a full new high-LR 100M/10B training attempt from step 15,500.
@@ -26,6 +28,8 @@ The current best-model snapshot downloaded from Hugging Face contains the loss-b
 - Reconstruct `local_manifest.json` locally for marker-verified best-model snapshots that contain the required checkpoint files.
 - Verify the Hugging Face cache path directly.
 - Dereference-copy the Hugging Face cache path into local checkpoint storage before any checkpoint verification.
+- Save a hand-built branch trainer config in the forked checkpoint.
+- Canonicalize the branch trainer config through `TrainerConfig.as_dict()` before saving the forked checkpoint.
 
 ## Decision outcome
 
@@ -42,6 +46,8 @@ models/100m-10b-deep-decay-from-step15500/step-00071750
 ```
 
 The HF snapshot path is treated only as a download cache. Probe A first copies the checkpoint tree into the local deep-decay checkpoint namespace with `shutil.copytree(..., symlinks=False)`, rejects any remaining symlink, and only then runs manifest reconstruction and `verify_local_manifest()` on the materialized local copy. If that materialized checkpoint root lacks `local_manifest.json`, the Probe A wrapper rebuilds it by hashing every downloaded checkpoint file except publication metadata (`local_manifest.json`, `drive_manifest.json`, and `checkpoint_manifest.json`). The rebuilt manifest must cover at least `trainer_state.pkl` and `checkpoint.json`.
+
+When Probe A forks the source checkpoint into a branch checkpoint, it rewrites the scheduler to a constant LR policy and must serialize the patched trainer config with the same canonical path as the live trainer: `TrainerConfig(**raw).as_dict()`. This drops constant-schedule-inapplicable WSqD fields before the branch `trainer_state.pkl` is written, keeping exact resume compatible with the branch trainer command.
 
 The public `kaggle/probe_a_lr_reset_10b.py` entrypoint must force the 100M Hugging Face namespace before restore or dataset staging. Kaggle notebooks can retain environment variables from older 20M runs; Probe A must therefore set `SMALL_LLM_HF_REPO_ID=roccoangelella/small-llm-100m-qualification`, `SMALL_LLM_HF_CHECKPOINT_BUCKET_ID=roccoangelella/small-llm-100m-qualification-checkpoints`, and `SMALL_LLM_HF_DATASET_BUCKET_ID=roccoangelella/small-llm-100m-qualification-datasets` unless dedicated `SMALL_LLM_PROBE_A_*` overrides are provided.
 
@@ -64,6 +70,7 @@ Probe A must not call the deep-decay entrypoint's HF-runtime reexec helper direc
 - Stale `SMALL_LLM_HF_REPO_ID` values from older 20M work cannot redirect Probe A to the wrong HF repo.
 - A missing best-model `local_manifest.json` no longer blocks a marker-verified checkpoint restore when the required files are present and re-hashed locally.
 - Hugging Face cache symlinks no longer reach checkpoint verification or trainer resume because Probe A materializes the snapshot into ordinary local files first.
+- Branch checkpoints now use canonical trainer-config serialization, so constant-LR branch resumes do not retain WSqD-only config keys.
 
 ### Negative or limiting
 
@@ -96,6 +103,8 @@ Expected fixed source fields:
 ```
 
 The launcher must never run `verify_local_manifest()` on the Hugging Face cache path. It must first materialize the checkpoint with `symlinks=False`, then verify the staging directory and final target. If the materialized checkpoint lacks `local_manifest.json`, the launcher should print `probe_a_rebuilt_local_manifest` and then continue through `verify_local_manifest()`.
+
+When forking each branch checkpoint, the launcher should print `probe_a_canonicalized_branch_config` if canonicalization drops stale WSqD-only keys. The subsequent DDP load should not fail with `trainer checkpoint version or configuration mismatch` for schedule-field drift.
 
 Expected W&B run IDs:
 
