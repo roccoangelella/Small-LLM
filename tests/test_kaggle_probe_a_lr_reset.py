@@ -50,6 +50,19 @@ def test_probe_a_entrypoint_pins_fixed_best_source_step() -> None:
     assert "base_hf_repo_id" in text
 
 
+def test_probe_a_reconstructs_missing_best_checkpoint_local_manifest() -> None:
+    text = ENTRYPOINT.read_text(encoding="utf-8")
+    assert "_ensure_best_source_local_manifest" in text
+    assert "_POST_SAVE_METADATA" in text
+    assert "trainer_state.pkl" in text
+    assert "checkpoint.json" in text
+    assert "sha256_path" in text
+    assert "probe_a_rebuilt_local_manifest" in text
+    assert "local_manifest_rebuilt" in text
+    assert "verify_local_manifest(source)" in text
+    assert "verify_local_manifest(staging)" in text
+
+
 def test_probe_a_entrypoint_allows_new_fixed_step_wandb_runs() -> None:
     text = ENTRYPOINT.read_text(encoding="utf-8")
     assert "WANDB_RESUME=allow" in text
