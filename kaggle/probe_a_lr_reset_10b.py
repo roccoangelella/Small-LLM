@@ -397,6 +397,44 @@ def _patch_impl_dry_run(impl: Any) -> None:
     impl._dry_run_payload = fixed_dry_run_payload
 
 
+def _patch_impl_probe_config_canonicalization(impl: Any) -> None:
+    original_probe_config = impl._probe_config
+
+    def canonical_probe_config(
+        original_config: Mapping[str, object],
+        *,
+        branch: Any,
+        eval_every_steps: int,
+    ) -> dict[str, object]:
+        from trainer.config import TrainerConfig
+
+        raw = dict(
+            original_probe_config(
+                original_config,
+                branch=branch,
+                eval_every_steps=eval_every_steps,
+            )
+        )
+        canonical = TrainerConfig(**raw).as_dict()
+        dropped = sorted(set(raw) - set(canonical))
+        if dropped:
+            print(
+                json.dumps(
+                    {
+                        "probe_a_canonicalized_branch_config": {
+                            "branch": getattr(branch, "slug", "unknown"),
+                            "dropped_constant_schedule_keys": dropped,
+                        }
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        return canonical
+
+    impl._probe_config = canonical_probe_config
+
+
 def _patch_impl_wandb_resume_allow(impl: Any) -> None:
     original_prefix = impl._wandb_env_prefix
     original_build = impl._build_branch_trainer_command
@@ -445,6 +483,7 @@ def _patch_impl_for_fixed_source(impl: Any) -> None:
     impl.PROBE_BASE_HF_REPO_ID = PROBE_BASE_HF_REPO_ID
     impl._prepare_source_checkpoint = lambda runtime_base: _prepare_fixed_source_checkpoint(runtime_base, impl)
     _patch_impl_dry_run(impl)
+    _patch_impl_probe_config_canonicalization(impl)
     _patch_impl_wandb_resume_allow(impl)
 
 
