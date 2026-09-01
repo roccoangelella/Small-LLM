@@ -4,15 +4,19 @@
 The implementation lives in ``probe_a_lr_reset_10b_impl.py``. This thin shim
 exists because the shared deep-decay HF runtime helper re-execs its own file;
 Probe A must instead restart back into this probe entrypoint before delegating.
+
+Probe A is intentionally fixed to start from the strict-best checkpoint
+``step-00068250`` rather than from the rolling latest checkpoint.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 KAGGLE = Path(__file__).resolve().parent
 ROOT = KAGGLE.parent
@@ -24,6 +28,8 @@ if str(KAGGLE) not in sys.path:
 import deep_decay_10b_from_15500 as deep_decay
 
 HF_HUB_VERSION = getattr(deep_decay, "HF_HUB_VERSION", "1.5.0")
+PROBE_SOURCE_CHECKPOINT_ID = "step-00068250"
+PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"
 
 
 def _ensure_probe_hf_bucket_runtime(argv: Sequence[str]) -> None:
@@ -76,6 +82,219 @@ def _noop_hf_runtime_restart(argv: Sequence[str]) -> None:
     return None
 
 
+def _fixed_source_step(impl: Any) -> int:
+    return int(impl._impl._checkpoint_step(PROBE_SOURCE_CHECKPOINT_ID))
+
+
+def _fixed_source_repo_id(runtime_base: Any, impl: Any) -> str:
+    explicit = os.environ.get("SMALL_LLM_PROBE_A_SOURCE_REPO_ID", "").strip()
+    if explicit:
+        return explicit
+    return f"{runtime_base._hf_model_repo_id()}-best-{impl._impl.RUN_ID}"
+
+
+def _best_checkpoint_prefix(impl: Any) -> str:
+    return f"models/{impl._impl.RUN_ID}/{PROBE_SOURCE_CHECKPOINT_ID}"
+
+
+def _load_best_source_marker(*, repo_id: str, token: str | None, impl: Any) -> dict[str, object]:
+    from huggingface_hub import hf_hub_download
+
+    marker_path = Path(
+        hf_hub_download(
+            repo_id=repo_id,
+            repo_type="model",
+            filename="best_model.json",
+            token=token,
+            force_download=True,
+        )
+    )
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    if not isinstance(marker, Mapping):
+        raise RuntimeError("Probe A best_model.json is not a JSON object")
+    if marker.get("role") != "small-llm-dedicated-best-model":
+        raise RuntimeError(f"{repo_id!r} is not a Small-LLM dedicated best-model repo")
+    if marker.get("run_id") != impl._impl.RUN_ID:
+        raise RuntimeError(
+            f"Probe A source repo belongs to {marker.get('run_id')!r}, "
+            f"not {impl._impl.RUN_ID!r}"
+        )
+    if marker.get("checkpoint_id") != PROBE_SOURCE_CHECKPOINT_ID:
+        raise RuntimeError(
+            f"Probe A requires {PROBE_SOURCE_CHECKPOINT_ID}, but best_model.json "
+            f"points to {marker.get('checkpoint_id')!r}"
+        )
+    if marker.get("artifact_path") != _best_checkpoint_prefix(impl):
+        raise RuntimeError("Probe A best_model.json artifact_path disagrees with fixed source")
+    return dict(marker)
+
+
+def _restore_fixed_best_checkpoint(runtime_base: Any, impl: Any) -> dict[str, object]:
+    """Restore exactly step-00068250 from the dedicated best-model repo.
+
+    This deliberately ignores rolling latest. Probe A must compare LR resets from
+    one fixed checkpoint even if the control run has a newer Bucket latest.
+    """
+
+    from dataset.src.joint_checkpoint import verify_local_manifest
+    from huggingface_hub import snapshot_download
+
+    checkpoint_id = PROBE_SOURCE_CHECKPOINT_ID
+    step = _fixed_source_step(impl)
+    repo_id = _fixed_source_repo_id(runtime_base, impl)
+    prefix = _best_checkpoint_prefix(impl)
+    target = impl._impl.CHECKPOINT_DIR / checkpoint_id
+
+    if target.exists():
+        verify_local_manifest(target)
+        return {
+            "checkpoint_id": checkpoint_id,
+            "step": step,
+            "source": "local_fixed_best",
+            "repo_id": repo_id,
+            "path_in_repo": prefix,
+        }
+
+    token = runtime_base._hf_token()
+    marker = _load_best_source_marker(repo_id=repo_id, token=token, impl=impl)
+    snapshot_root = Path(
+        snapshot_download(
+            repo_id=repo_id,
+            repo_type="model",
+            token=token,
+            allow_patterns=[f"{prefix}/*", "best_model.json"],
+            force_download=True,
+        )
+    )
+    source = snapshot_root / prefix
+    if not source.is_dir():
+        raise RuntimeError(f"Probe A source checkpoint {repo_id}/{prefix} was not downloaded")
+    verify_local_manifest(source)
+
+    impl._impl.CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    staging = impl._impl.CHECKPOINT_DIR / f".{checkpoint_id}.probe-a-fixed-best"
+    shutil.rmtree(staging, ignore_errors=True)
+    shutil.copytree(source, staging)
+    verify_local_manifest(staging)
+    os.replace(staging, target)
+    verify_local_manifest(target)
+
+    return {
+        "checkpoint_id": checkpoint_id,
+        "step": step,
+        "source": "hf_dedicated_best_model_repo",
+        "repo_id": repo_id,
+        "path_in_repo": prefix,
+        "validation_loss": marker.get("validation_loss"),
+    }
+
+
+def _prepare_fixed_source_checkpoint(runtime_base: Any, impl: Any) -> tuple[str, int, Path]:
+    restored = _restore_fixed_best_checkpoint(runtime_base, impl)
+    checkpoint_id = str(restored["checkpoint_id"])
+    step = int(restored["step"])
+    expected_step = _fixed_source_step(impl)
+    if checkpoint_id != PROBE_SOURCE_CHECKPOINT_ID or step != expected_step:
+        raise RuntimeError("Probe A fixed source identity changed during restore")
+
+    dataset = impl._impl._stage_dataset(runtime_base, start_block_id=min(step, impl._impl.FINAL_STEP - 1))
+    migrated = deep_decay._install_execution_migration(checkpoint_id=checkpoint_id, dataset=dataset)
+    verified_step = impl._impl._verify_deep_decay_checkpoint(runtime_base, checkpoint_id)
+    if verified_step != step:
+        raise RuntimeError("verified fixed Probe A source step disagrees with requested step")
+
+    print(
+        json.dumps(
+            {
+                "probe_a_source": {
+                    "checkpoint_id": checkpoint_id,
+                    "step": step,
+                    "source_kind": PROBE_SOURCE_KIND,
+                    "repo_id": restored.get("repo_id"),
+                    "path_in_repo": restored.get("path_in_repo"),
+                    "restored_from": restored.get("source"),
+                    "validation_loss": restored.get("validation_loss"),
+                    "migrated_to_kaggle_execution": bool(migrated),
+                    "dataset": str(dataset),
+                }
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return checkpoint_id, step, dataset
+
+
+def _patch_impl_dry_run(impl: Any) -> None:
+    original_dry_run_payload = impl._dry_run_payload
+
+    def fixed_dry_run_payload(args: Any) -> dict[str, object]:
+        payload = dict(original_dry_run_payload(args))
+        source_step = _fixed_source_step(impl)
+        payload.update(
+            {
+                "source": PROBE_SOURCE_KIND,
+                "source_checkpoint_id": PROBE_SOURCE_CHECKPOINT_ID,
+                "source_step": source_step,
+                "source_repo": "$SMALL_LLM_PROBE_A_SOURCE_REPO_ID or $SMALL_LLM_HF_REPO_ID-best-" + impl._impl.RUN_ID,
+                "source_path_in_repo": _best_checkpoint_prefix(impl),
+                "hf_reads": [
+                    "fixed dedicated best-model checkpoint restore",
+                    "rolling 10B dataset shards",
+                ],
+            }
+        )
+        for item in payload.get("branches", []):
+            if isinstance(item, dict) and isinstance(item.get("branch"), str):
+                item["wandb_run_id_template"] = (
+                    f"100m-10b-probe-a-{item['branch']}-from-step{source_step}"
+                )
+        return payload
+
+    impl._dry_run_payload = fixed_dry_run_payload
+
+
+def _patch_impl_wandb_resume_allow(impl: Any) -> None:
+    original_prefix = impl._wandb_env_prefix
+    original_build = impl._build_branch_trainer_command
+
+    def wandb_env_prefix_allow(branch: Any, source_step: int, branch_run_dir: Path) -> list[str]:
+        command = list(original_prefix(branch, source_step, branch_run_dir))
+        return ["WANDB_RESUME=allow" if item == "WANDB_RESUME=must" else item for item in command]
+
+    def assert_branch_wandb_identity_allow(command: Sequence[str], *, branch: Any, source_step: int) -> None:
+        expected = impl._branch_run_id(branch, source_step)
+        values = impl._all_option_values(command, "--wandb-run-id")
+        if values != [expected]:
+            raise RuntimeError(
+                f"Probe A branch {branch.slug} must have exactly one W&B run ID "
+                f"{expected!r}; got {values!r}"
+            )
+        resumes = impl._all_option_values(command, "--wandb-resume")
+        if resumes != ["allow"]:
+            raise RuntimeError(
+                f"Probe A branch {branch.slug} must use --wandb-resume allow; got {resumes!r}"
+            )
+
+    def build_branch_trainer_command_allow(*args: Any, **kwargs: Any) -> list[str]:
+        command = list(original_build(*args, **kwargs))
+        impl._replace_option(command, "--wandb-resume", "allow")
+        return command
+
+    impl._wandb_env_prefix = wandb_env_prefix_allow
+    impl._assert_branch_wandb_identity = assert_branch_wandb_identity_allow
+    impl._build_branch_trainer_command = build_branch_trainer_command_allow
+
+
+def _patch_impl_for_fixed_source(impl: Any) -> None:
+    impl.PROBE_SOURCE_CHECKPOINT_ID = PROBE_SOURCE_CHECKPOINT_ID
+    impl.PROBE_SOURCE_STEP = _fixed_source_step(impl)
+    impl.PROBE_SOURCE_KIND = PROBE_SOURCE_KIND
+    impl._prepare_source_checkpoint = lambda runtime_base: _prepare_fixed_source_checkpoint(runtime_base, impl)
+    _patch_impl_dry_run(impl)
+    _patch_impl_wandb_resume_allow(impl)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--dry-run" not in args:
@@ -89,6 +308,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import probe_a_lr_reset_10b_impl as impl
 
+    _patch_impl_for_fixed_source(impl)
     return int(impl.main(args))
 
 
