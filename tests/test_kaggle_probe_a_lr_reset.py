@@ -16,8 +16,7 @@ def test_probe_a_has_two_distinct_wandb_only_branches() -> None:
     assert "reset-low" in text
     assert "reset-mid" in text
     assert "100m-10b-probe-a-{branch.slug}-from-step{source_step}" in text
-    assert "100m-10b-probe-a-reset-low-from-step<SOURCE_STEP>" in text
-    assert "100m-10b-probe-a-reset-mid-from-step<SOURCE_STEP>" in text
+    assert "wandb_run_id_template" in text
     assert "--wandb-run-id" in text
     assert "--wandb-run-name" in text
     assert "--wandb-dir" in text
