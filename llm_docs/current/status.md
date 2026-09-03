@@ -5,7 +5,7 @@ Last reviewed: 2026-09-03
 ## Repository and protocol state
 
 - Repository: `roccoangelella/Small-LLM`.
-- Current evaluation decision: ADR 0140 is now wired into the active pretrained and SFT evaluation paths.
+- Current evaluation decisions: ADR 0140 defines evaluation v2 and ADR 0141 activates the pretrained and SFT evaluator entrypoints.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
