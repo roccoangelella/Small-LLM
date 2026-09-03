@@ -18,6 +18,8 @@ from trainer.model_artifact import download_verified_model_artifact
 from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
 from trainer.state import load_trainer_state_file, release_host_memory
 
+_PARENT_TRANSPORTS = {"auto", "model_repo", "hf_storage_bucket"}
+
 
 def _read_json(path: Path, *, label: str) -> dict[str, object]:
     try:
@@ -96,27 +98,59 @@ def download_parent_checkpoint(
     repo_id: str,
     run_id: str,
     pointer: str = "best",
+    transport: str = "auto",
     token: str | None = None,
     revision: str | None = None,
     destination: Path | str | None = None,
 ) -> tuple[Path, dict[str, object]]:
     """Download one verified published parent checkpoint.
 
-    Historical SFT parents use the live two-phase ``run/<run_id>/<pointer>.json``
-    namespace. Completed parents may instead be promoted to the stable
-    ``models/<run_id>/artifact.json`` namespace. Preserve the requested live
-    pointer when it exists, but fall back to the verified stable artifact when
-    that pointer is absent. Integrity/transport failures are never silently
-    converted into a fallback.
+    ``model_repo`` preserves the historical SFT resolution contract: prefer the
+    requested live ``run/<run_id>/<pointer>.json`` checkpoint, then fall back to
+    a verified stable ``models/<run_id>/artifact.json`` completed-model artifact
+    only when that live pointer is absent.
+
+    ``hf_storage_bucket`` resolves the rolling production checkpoint through the
+    existing verified Storage Bucket transport. This is required by completed
+    trajectories such as the 100M/10B final parent, whose accepted endpoint is
+    retained as ``latest`` in the checkpoint bucket rather than as the strict
+    validation-loss ``best`` model artifact.
+
+    ``auto`` intentionally retains the historical model-repository behavior; it
+    does not guess between a final rolling checkpoint and a separately selected
+    best model. Callers must request bucket transport explicitly when endpoint
+    identity depends on that distinction.
     """
 
     if pointer not in {"best", "latest"}:
         raise ValueError("parent pointer must be best or latest")
+    if transport not in _PARENT_TRANSPORTS:
+        supported = ", ".join(sorted(_PARENT_TRANSPORTS))
+        raise ValueError(f"parent transport must be one of: {supported}")
     if destination is None:
         destination_path = Path(tempfile.mkdtemp(prefix="small-llm-parent-"))
     else:
         destination_path = Path(destination)
         destination_path.mkdir(parents=True, exist_ok=True)
+
+    if transport == "hf_storage_bucket":
+        from trainer.post_pretraining_prompt_suite_bucket import (
+            download_verified_bucket_checkpoint,
+        )
+
+        root, remote = download_verified_bucket_checkpoint(
+            repo_id=repo_id,
+            run_id=run_id,
+            token=token,
+            revision=revision,
+            pointer_name=pointer,
+            destination=destination_path,
+        )
+        info = dict(remote)
+        info["requested_parent_pointer"] = pointer
+        info["parent_resolution"] = "hf_storage_bucket"
+        return root, info
+
     try:
         root, remote = download_verified_checkpoint(
             repo_id=repo_id,
