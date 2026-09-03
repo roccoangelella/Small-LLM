@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-08-13
 supersedes: null
+superseded_by: 0136
 ---
 
 # 0059 — Run supplementary sampled three-way full evaluation
@@ -64,8 +65,13 @@ This decision is supplementary and **does not supersede ADR 0025**. Claims about
 
 The three output JSON bundles must record identical qualitative sampling fields (`temperature=1.0`, `top_k=20`, `top_p=0.9`, `seed=17`, one sample) and the expected checkpoint identities. Their intrinsic `eval_core_v1` metrics should match the existing same-checkpoint full-evaluation results to normal deterministic/numerical tolerance.
 
+## Supersession note
+
+ADR 0136 supersedes this sampled configuration for all future standard cross-checkpoint sampled evaluations. Historical ADR 0059 results remain valid under the settings recorded above and must not be relabeled as ADR 0136 results.
+
 ## Links
 
 - [`0025-freeze-canonical-full-post-pretraining-prompt-suite.md`](0025-freeze-canonical-full-post-pretraining-prompt-suite.md)
+- [`0136-standardize-sampled-evaluation-on-native-untruncated-decoding.md`](0136-standardize-sampled-evaluation-on-native-untruncated-decoding.md)
 - [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md)
 - [`../runbooks/eval_core_v1_runbook.md`](../runbooks/eval_core_v1_runbook.md)
