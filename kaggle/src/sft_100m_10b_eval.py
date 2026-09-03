@@ -8,6 +8,9 @@ import sys
 import sft_runtime as base
 import sft_scaled_runtime
 
+KAGGLE_SRC_DIR = Path(__file__).resolve().parent
+REPO = KAGGLE_SRC_DIR.parents[1]
+
 
 def evaluate(
     profile: base.SFTProfileSpec,
@@ -43,7 +46,7 @@ def evaluate(
     if eval_dir:
         selected_eval_dir = Path(eval_dir).expanduser().resolve()
     else:
-        test_eval = base.REPO / "tests" / "test_datasets" / "eval_core_v1"
+        test_eval = REPO / "tests" / "test_datasets" / "eval_core_v1"
         selected_eval_dir = test_eval.resolve() if (test_eval / "manifest.json").is_file() else (base.WORK / "eval_core_v1")
 
     selected_output = (
@@ -53,7 +56,7 @@ def evaluate(
     )
     cmd = [
         sys.executable,
-        str(Path(__file__).resolve().parent / "sft_100m_10b_eval_runner.py"),
+        str(KAGGLE_SRC_DIR / "sft_100m_10b_eval_runner.py"),
         "--dataset-dir", str(bundle),
         "--eval-dir", str(selected_eval_dir),
         "--suite", suite,
@@ -80,7 +83,7 @@ def evaluate(
             "--sft-run-id", profile.sft_run_id,
             "--sft-pointer", "latest",
         ]
-    return base._run(base._uv_prefix() + cmd, cwd=base.REPO)
+    return base._run(base._uv_prefix() + cmd, cwd=REPO)
 
 
 __all__ = ["evaluate"]
