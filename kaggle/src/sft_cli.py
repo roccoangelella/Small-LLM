@@ -15,7 +15,9 @@ import sft_scaled_runtime
 from sft_100m import PROFILE as PROFILE_100M_2B
 from sft_100m_10b import PROFILE as PROFILE_100M_10B
 
-REPO = Path(__file__).resolve().parents[1]
+KAGGLE_SRC_DIR = Path(__file__).resolve().parent
+KAGGLE_DIR = KAGGLE_SRC_DIR.parent if KAGGLE_SRC_DIR.name == "src" else KAGGLE_SRC_DIR
+REPO = KAGGLE_DIR.parent
 LEGACY_IMPLEMENTATION_COMMIT = "806411edc1a93a32ce913e4e73b15452619f5579"
 _PARENT_RUNS = {
     (20_000_000, 500_000_000): "20m-500m-dataset-001",
@@ -96,6 +98,10 @@ def _parent_transport(profile: sft_runtime.SFTProfileSpec) -> str:
     return str(getattr(profile, "parent_transport", "model_repo"))
 
 
+def _allow_sft_fraction_override(profile: sft_runtime.SFTProfileSpec) -> bool:
+    return bool(getattr(profile, "allow_sft_fraction_override", True))
+
+
 def with_sft_fraction(
     profile: sft_runtime.SFTProfileSpec,
     fraction: Fraction | None,
@@ -105,6 +111,10 @@ def with_sft_fraction(
     current = Fraction(profile.sft_fraction_numerator, profile.sft_fraction_denominator)
     if fraction == current:
         return profile
+    if not _allow_sft_fraction_override(profile):
+        raise sft_runtime.RuntimeFailure(
+            f"{profile.model_label}/{profile.token_label} SFT uses a fixed absolute corpus budget; do not pass --sft-fraction"
+        )
     dataset_label = _fraction_label(fraction)
     canonical_peak3000_10pct = (
         profile.model_parameters == 100_000_000
@@ -282,7 +292,7 @@ def _profiles() -> int:
     for profile in profiles:
         if _recipe_ready(profile):
             fraction = profile.sft_fraction_numerator / profile.sft_fraction_denominator
-            fraction_text = f"{fraction:.0%}"
+            fraction_text = f"{fraction:.2%}" if fraction < 0.04 else f"{fraction:.0%}"
             targets_text = str(profile.requested_sft_targets)
         else:
             fraction_text = "pending"
