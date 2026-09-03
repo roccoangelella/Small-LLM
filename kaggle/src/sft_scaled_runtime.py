@@ -24,6 +24,7 @@ INLINE_BEHAVIOR_CASES = 2
 TEN_PERCENT_PARENT_TARGETS = 2_001_000_448
 TEN_PERCENT_TRAIN_TARGETS = 200_100_044
 TEN_PERCENT_RECIPE = "s0-10pct-capacity-aware-v1"
+TEN_PERCENT_DATASET_SLUG = "small-llm-100m-2b-sft-s0-10pct-001"
 # This commit contains the dedicated builder plus its routing regression tests.
 # The historical 4% profile keeps its older launch pin; only 10% bundle creation
 # temporarily materializes a worktree at this implementation commit.
@@ -74,6 +75,14 @@ KAGGLE_SFT_PROCESS_ENV = (
 )
 
 
+def _profile_parent_pointer(profile: base.SFTProfileSpec) -> str:
+    return str(getattr(profile, "parent_pointer", "best"))
+
+
+def _profile_parent_transport(profile: base.SFTProfileSpec) -> str:
+    return str(getattr(profile, "parent_transport", "model_repo"))
+
+
 def _is_capacity_aware_10pct(
     profile: base.SFTProfileSpec,
     *,
@@ -85,6 +94,21 @@ def _is_capacity_aware_10pct(
         and parent_consumed_tokens == TEN_PERCENT_PARENT_TARGETS
         and profile.sft_fraction_numerator * 10 == profile.sft_fraction_denominator
     )
+
+
+def _uses_published_10pct_s0_bundle(profile: base.SFTProfileSpec) -> bool:
+    return (
+        profile.model_parameters == 100_000_000
+        and profile.dataset_slug == TEN_PERCENT_DATASET_SLUG
+        and profile.requested_sft_targets == TEN_PERCENT_TRAIN_TARGETS
+    )
+
+
+def _runner_path(worktree: Path, runner: str) -> Path:
+    for candidate in (worktree / "kaggle" / runner, worktree / "kaggle" / "src" / runner):
+        if candidate.is_file():
+            return candidate
+    raise base.RuntimeFailure(f"SFT runner {runner!r} is not present in pinned worktree {worktree}")
 
 
 def _read_capacity_aware_manifest(output: Path) -> dict[str, object]:
@@ -191,6 +215,29 @@ def _require_stable_parent_artifact(
     )
 
 
+def _require_parent_artifact(
+    profile: base.SFTProfileSpec,
+    *,
+    repo_id: str,
+    run_id: str,
+    token: str | None,
+) -> None:
+    transport = _profile_parent_transport(profile)
+    if transport == "model_repo":
+        _require_stable_parent_artifact(repo_id=repo_id, run_id=run_id, token=token)
+        return
+    if transport == "hf_storage_bucket":
+        if not token:
+            raise base.RuntimeFailure("HF_TOKEN is required for the private SFT parent bucket")
+        print(
+            f"[sft-parent-preflight] repo={repo_id} run={run_id} "
+            "transport=hf_storage_bucket status=verified-download-deferred",
+            flush=True,
+        )
+        return
+    raise base.RuntimeFailure(f"unsupported SFT parent transport: {transport}")
+
+
 def prepare(
     profile: base.SFTProfileSpec,
     *,
@@ -206,6 +253,7 @@ def prepare(
         profile,
         parent_consumed_tokens=exact_parent_tokens,
     )
+    published_10pct = _uses_published_10pct_s0_bundle(profile)
     worktree_profile = (
         replace(profile, launch_commit=TEN_PERCENT_BUILD_COMMIT)
         if capacity_aware
@@ -224,7 +272,7 @@ def prepare(
                 raise base.RuntimeFailure("existing prepared SFT source manifest is invalid") from error
             if not isinstance(payload, dict) or payload.get("revision") != revision:
                 raise base.RuntimeFailure("existing prepared SFT source uses a different pinned revision")
-    else:
+    elif not published_10pct:
         base._run(
             base._uv_prefix(datasets=True)
             + ["python", "-m", "post_training.sft.bundle", "prepare", "--output-dir", str(prepared), *revision_args],
@@ -233,9 +281,16 @@ def prepare(
 
     expected_targets = base._expected_sft_targets(profile, exact_parent_tokens)
     if base._verify_existing_bundle_budget(output, expected_targets=expected_targets):
-        if capacity_aware:
+        if published_10pct:
+            _verify_published_10pct_training_bundle(output)
+        elif capacity_aware:
             _verify_capacity_aware_bundle(output)
     else:
+        if published_10pct and not capacity_aware:
+            raise base.RuntimeFailure(
+                "100M/10B same-data SFT reuses the already-published 100M/2B 10% S0 bundle; "
+                "attach that Kaggle dataset or pass its local directory instead of rebuilding a new corpus"
+            )
         if output.exists():
             raise base.RuntimeFailure(
                 f"refusing to replace incomplete/non-bundle SFT output directory: {output}"
@@ -298,6 +353,7 @@ def train(
         profile,
         parent_consumed_tokens=exact_parent_tokens,
     )
+    published_10pct = _uses_published_10pct_s0_bundle(profile)
     dataset_profile = profile
     if capacity_aware:
         profile = replace(
@@ -309,9 +365,9 @@ def train(
         )
     worktree = base._prepare_worktree(profile)
     bundle = base._find_bundle(dataset_dir, dataset_profile)
-    if capacity_aware:
+    if published_10pct:
         if float(profile.learning_rate) != 3e-5:
-            raise base.RuntimeFailure("100M/2B 10% SFT peak LR is frozen at 3e-5")
+            raise base.RuntimeFailure("published 10% S0 SFT peak LR is frozen at 3e-5")
         _verify_published_10pct_training_bundle(bundle)
 
     parent_repo = parent_repo_id or os.environ.get("SMALL_LLM_HF_REPO_ID")
@@ -321,7 +377,8 @@ def train(
     if not checkpoint_repo:
         raise base.RuntimeFailure("pass --checkpoint-repo-id or set SMALL_LLM_SFT_HF_REPO_ID")
     entity = wandb_entity or os.environ.get("WANDB_ENTITY")
-    _require_stable_parent_artifact(
+    _require_parent_artifact(
+        profile,
         repo_id=parent_repo,
         run_id=profile.parent_run_id,
         token=os.environ.get("HF_TOKEN"),
@@ -334,7 +391,7 @@ def train(
         "--sft-run-id", profile.sft_run_id,
         "--parent-repo-id", parent_repo,
         "--parent-run-id", profile.parent_run_id,
-        "--parent-pointer", "best",
+        "--parent-pointer", _profile_parent_pointer(profile),
         "--checkpoint-repo-id", checkpoint_repo,
         "--device", "cuda",
         "--precision", "fp16",
@@ -356,10 +413,13 @@ def train(
     if max_steps_this_session is not None:
         trainer_args += ["--max-steps-this-session", str(max_steps_this_session)]
 
-    runner = "dual_t4_sft_10pct.py" if capacity_aware else "dual_t4_sft.py"
+    if profile.parent_training_tokens == 10_000_000_000 and published_10pct:
+        runner = "dual_t4_sft_10b_same_data.py"
+    else:
+        runner = "dual_t4_sft_10pct.py" if capacity_aware else "dual_t4_sft.py"
     command = ["env", *KAGGLE_SFT_PROCESS_ENV] + base._uv_prefix(wandb=True) + dual_t4_runtime.qualified_runtime_uv_args() + [
         "python", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
-        str(worktree / "kaggle" / runner),
+        str(_runner_path(worktree, runner)),
         "--worktree", str(worktree),
         "--sft-fraction-numerator", str(profile.sft_fraction_numerator),
         "--sft-fraction-denominator", str(profile.sft_fraction_denominator),
@@ -377,6 +437,7 @@ __all__ = [
     "INLINE_VALIDATION_BLOCKS",
     "KAGGLE_SFT_PROCESS_ENV",
     "TEN_PERCENT_BUILD_COMMIT",
+    "TEN_PERCENT_DATASET_SLUG",
     "TEN_PERCENT_PARENT_TARGETS",
     "TEN_PERCENT_PUBLISHED_FILE_COUNT",
     "TEN_PERCENT_PUBLISHED_SPLITS",
