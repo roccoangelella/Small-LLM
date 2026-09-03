@@ -1,41 +1,20 @@
 #!/usr/bin/env python3
-"""Single human entry point for Small-LLM reasoning SFT on Kaggle.
+"""Compatibility wrapper for kaggle/src/launch_r_sft.py.
 
-Canonical production R-SFT is atomic-only. By default it materializes the
-committed 16,716-row expanded Superior-instruction corpus with the completed S0 retention
-bundle, verifies the resulting ``atomic-production-v1`` bundle, then trains:
-
-  python kaggle/launch_r_sft.py train --model 100M --tokens 2B
-
-The canonical completed S0-versus-production-R-SFT qualification is:
-
-  python kaggle/launch_r_sft.py eval --model 100M --tokens 2B --suite full
-
-It preserves the post-SFT eval-core, instruction-behavior, greedy-32 and wider
-sampled regressions, then adds held-out R-SFT loss, novel mechanically scored
-reasoning probes, repeated reasoning sampling and atomic protocol telemetry.
-
-A prebuilt verified bundle can still be supplied explicitly with ``--dataset-dir``.
-
-The completed 630-example delimiter experiment remains reproducible separately:
-
-  python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B \
-    --delimiter-format atomic
-  python kaggle/launch_r_sft.py ablation --model 100M --tokens 2B \
-    --delimiter-format textual
-
-Production ``train`` has no textual mode. It validates the bundle and frozen
-<think>, </think>, <answer> token contract before dual-T4 dispatch. ``--num-epochs``
-replays the exact frozen production train blocks and automatically selects an
-epoch-specific run ID when greater than one.
+Keep this file thin so existing Kaggle commands that call `python kaggle/launch_r_sft.py`
+continue to work after the Kaggle workspace reorganization.
 """
 from __future__ import annotations
 
-from rsft_cli import build_parser, main, parse_quantity
+import runpy
+import sys
+from pathlib import Path
 
+_KAGGLE_DIR = Path(__file__).resolve().parent
+_SRC_DIR = _KAGGLE_DIR / "src"
+_TARGET = _SRC_DIR / "launch_r_sft.py"
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
 
-
-__all__ = ["build_parser", "main", "parse_quantity"]
+runpy.run_path(str(_TARGET), run_name="__main__")
