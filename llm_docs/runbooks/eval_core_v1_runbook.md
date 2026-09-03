@@ -1,101 +1,64 @@
-# `eval_core_v1` runbook
-
-_Last reviewed: 2026-08-13_
+# eval_core_v1 and Pretraining Qualification v2 Runbook
 
 ## Purpose
 
-`eval_core_v1` is the frozen intrinsic evaluation used for scale decisions. The normal entrypoints discover or build the frozen corpus, verify it, download/verify the selected native checkpoint, reconstruct the model, stream metrics, and write one self-hashed JSON bundle.
+Run the frozen intrinsic evaluation together with the current external
+capability and expanded base-prompt layers.
 
-A completed corpus contains:
+## Environment
 
-```text
-manifest.json
-fast.bin
-fast.records.jsonl
-full.bin
-full.records.jsonl
-```
-
-Kaggle automatically discovers an attached verified copy when present. Otherwise the evaluator uses its configured cache/build path and verifies before evaluation.
-
-## Stable completed model artifacts
-
-For completed `models/<run_id>/...` artifacts, use the stable transport wrapper:
+Install the normal model environment plus the isolated evaluator dependency:
 
 ```bash
-python -m trainer.eval_entrypoint_model full \
-  --repo-id <repo> \
-  --run-id <run> \
-  --pointer latest \
-  --temperature 0 \
-  --top-p 1 \
-  --top-k 0 \
-  --seed 17 \
-  --samples-per-prompt 1 \
-  --output-json artifacts/<run>_eval_full.json
+python -m pip install -r requirements-eval.txt
 ```
 
-Stable model artifacts verify native `local_manifest.json` and intentionally do not require live-run publication metadata.
+`lm-evaluation-harness` is pinned separately so evaluation tooling does not
+change the training lock.
 
-## Live two-phase `run/...` checkpoints
-
-For live/rolling checkpoints use:
+## Full qualification
 
 ```bash
 python -m trainer.eval_entrypoint full \
   --repo-id <repo> \
   --run-id <run> \
-  --pointer latest \
-  --temperature 0 \
-  --top-p 1 \
-  --top-k 0 \
-  --seed 17 \
-  --samples-per-prompt 1 \
-  --output-json artifacts/<run>_eval_full.json
+  --pointer best \
+  --output-json artifacts/<run>-pretraining-qualification-v2.json
 ```
 
-Use `--pointer best` when the scientific question is explicitly validation-best selection rather than terminal/latest endpoint comparison.
+If `eval_core_v1` is not attached, the entrypoint self-provisions and verifies
+the frozen corpus.
 
-## What `full` records
+The full report contains:
 
-The result includes:
+- frozen `eval_core_v1`;
+- full six-task L20 conditional-likelihood evaluation;
+- 100 mechanically scored base prompts;
+- 20 qualitative continuations;
+- greedy and canonical sampled prompt views.
 
-- NLL/loss and perplexity;
-- bits per decoded target byte;
-- top-1/5/10 next-token accuracy;
-- ECE calibration and bins;
-- per-cluster loss/perplexity;
-- cluster macro and source-mixture-weighted loss;
-- worst cluster;
-- sequence-position bucket loss;
-- global/per-cluster bootstrap intervals;
-- wall time, throughput, and peak VRAM;
-- prompt text/output/token IDs and decoding settings;
-- checkpoint/model identity.
+Prompt budgets are native per case.
 
-For scientific comparisons, require identical `eval_manifest_sha256`.
+## Fast diagnostic
 
-## Fast suite
-
-Use `fast` for intermediate diagnostics; use `full` for endpoint/scale decisions. `--skip-prompts` is metric-only diagnostic mode, not a replacement for the project's separate qualitative qualification.
-
-## Qualitative-protocol caveat
-
-The full evaluator currently uses each prompt case's native generation budget and does not expose ADR 0025's global `max_new_tokens=32`. Therefore its intrinsic metrics are canonical, and prompt outputs from identically configured full runs are directly comparable, but those prompt outputs are **not the exact ADR-0025 canonical qualitative comparison**.
-
-When the exact frozen qualitative comparison is required, also run [`post_pretraining_prompt_suite.md`](post_pretraining_prompt_suite.md) with the global 32-token cap.
-
-## Current three-way reference
-
-The accepted 20M/500M, 20M/2B, and 100M/2B full bundles use:
-
-```text
-eval manifest: aa7b6157e5f420dd53a99552685eaed01962ee45c23cbe438e1321a886422792
-full targets: 3,095,181
+```bash
+python -m trainer.eval_entrypoint fast \
+  --repo-id <repo> \
+  --run-id <run> \
+  --output-json artifacts/<run>-pretraining-fast-v2.json
 ```
 
-Evidence and interpretation: [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md).
+Fast mode limits external tasks to 100 examples each and uses a reduced prompt
+subset. It is useful for smoke testing but is not a final qualification.
 
-## Offline verification/tests
+## Interpretation
 
-The ordinary repository test suite remains network-free. Production corpus building or HF access should not occur in unit tests; entrypoint tests mock those boundaries.
+Read `read_me_first` and `headline_summary` first.
+
+- loss / perplexity / BPB: lower is better;
+- top-k accuracy: higher is better;
+- L20 mean-6: higher is better;
+- base-prompt accuracy: higher is better.
+
+EOS termination is intentionally absent from pretraining scoring.
+Teacher-forced confidence remains a separate diagnostic.
