@@ -13,6 +13,7 @@ import launch as pretraining_launch
 import sft_runtime
 import sft_scaled_runtime
 from sft_100m import PROFILE as PROFILE_100M_2B
+from sft_100m_10b import PROFILE as PROFILE_100M_10B
 
 REPO = Path(__file__).resolve().parents[1]
 LEGACY_IMPLEMENTATION_COMMIT = "806411edc1a93a32ce913e4e73b15452619f5579"
@@ -81,6 +82,18 @@ def _variant_id(value: str, label: str) -> str:
     if value.endswith("-001"):
         return f"{value[:-4]}-{label}-001"
     return f"{value}-{label}"
+
+
+def _recipe_ready(profile: sft_runtime.SFTProfileSpec) -> bool:
+    return bool(getattr(profile, "recipe_ready", True))
+
+
+def _parent_pointer(profile: sft_runtime.SFTProfileSpec) -> str:
+    return str(getattr(profile, "parent_pointer", "best"))
+
+
+def _parent_transport(profile: sft_runtime.SFTProfileSpec) -> str:
+    return str(getattr(profile, "parent_transport", "model_repo"))
 
 
 def with_sft_fraction(
@@ -197,6 +210,8 @@ def resolve_profile(model: int, tokens: int) -> sft_runtime.SFTProfileSpec:
     key = (model, tokens)
     if key == (100_000_000, 2_000_000_000):
         return PROFILE_100M_2B
+    if key == (100_000_000, 10_000_000_000):
+        return PROFILE_100M_10B
     raw = sft_runtime.resolve_profile(model, tokens)
     try:
         parent_run = _PARENT_RUNS[key]
@@ -212,7 +227,10 @@ def resolve_profile(model: int, tokens: int) -> sft_runtime.SFTProfileSpec:
 
 
 def runtime_for(profile: sft_runtime.SFTProfileSpec):
-    if isinstance(profile, type(PROFILE_100M_2B)) and profile.model_parameters == 100_000_000 and profile.parent_training_tokens == 2_000_000_000:
+    if (
+        profile.model_parameters == 100_000_000
+        and profile.parent_training_tokens in {2_000_000_000, 10_000_000_000}
+    ):
         return sft_scaled_runtime
     return sft_runtime
 
@@ -225,19 +243,27 @@ def dry_run_payload(
         for key, value in vars(args).items()
         if key not in {"action", "model", "tokens", "dry_run", "sft_fraction"} and value is not None
     }
+    recipe_ready = _recipe_ready(profile)
     return {
         "action": args.action,
         "model": profile.model_label,
         "parent_pretraining_tokens": profile.token_label,
         "parent_run_id": profile.parent_run_id,
+        "parent_pointer": _parent_pointer(profile),
+        "parent_transport": _parent_transport(profile),
         "sft_run_id": profile.sft_run_id,
         "dataset_slug": profile.dataset_slug,
-        "sft_fraction": profile.sft_fraction_numerator / profile.sft_fraction_denominator,
+        "recipe_status": "ready" if recipe_ready else "pending",
+        "sft_fraction": (
+            profile.sft_fraction_numerator / profile.sft_fraction_denominator
+            if recipe_ready
+            else None
+        ),
         "known_exact_parent_consumed_tokens": profile.known_parent_consumed_tokens,
         "requested_sft_targets": profile.requested_sft_targets,
         "microbatch_size": profile.microbatch_size,
         "cadence_steps": profile.cadence_steps,
-        "learning_rate": profile.learning_rate,
+        "learning_rate": profile.learning_rate if recipe_ready else None,
         "kaggle_training_topology": "2xT4-DDP" if runtime_for(profile) is sft_scaled_runtime else "single-cuda",
         "launch_commit": profile.launch_commit,
         "resume": "automatic_verified",
@@ -251,13 +277,20 @@ def _profiles() -> int:
         resolve_profile(20_000_000, 500_000_000),
         resolve_profile(20_000_000, 2_000_000_000),
         PROFILE_100M_2B,
+        PROFILE_100M_10B,
     ]
     for profile in profiles:
-        fraction = profile.sft_fraction_numerator / profile.sft_fraction_denominator
+        if _recipe_ready(profile):
+            fraction = profile.sft_fraction_numerator / profile.sft_fraction_denominator
+            fraction_text = f"{fraction:.0%}"
+            targets_text = str(profile.requested_sft_targets)
+        else:
+            fraction_text = "pending"
+            targets_text = "pending"
         print(
             f"  model={profile.model_label:<4} parent_tokens={profile.token_label:<4} "
             f"parent_run={profile.parent_run_id} sft_run={profile.sft_run_id} "
-            f"fraction={fraction:.0%} targets={profile.requested_sft_targets}"
+            f"fraction={fraction_text} targets={targets_text}"
         )
     return 0
 
@@ -303,6 +336,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.dry_run:
         print(json.dumps(dry_run_payload(args, profile), indent=2, sort_keys=True))
         return 0
+    if not _recipe_ready(profile):
+        parser.error(
+            "100M/10B SFT parent wiring is registered, but ADR 0138 leaves the scientific "
+            "recipe pending; prepare/publish/train/eval remain fail-closed until a later "
+            "decision pins the target budget, data recipe, and LR schedule"
+        )
 
     print(
         f"[launch] action={args.action} model={profile.model_label} "
