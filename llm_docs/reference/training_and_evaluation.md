@@ -1,10 +1,15 @@
 # Training and Evaluation Reference
 
-## Canonical pretraining qualification
+## Evaluation v2 staging state
 
-Use `small-llm-eval` / `python -m trainer.eval_entrypoint`.
+ADR 0140 adopts evaluation v2 as the next canonical target and lands additive
+implementation modules. The final in-place replacement of active evaluator
+entrypoints is pending a tested follow-up patch.
 
-A **full** qualification contains:
+## Pretraining qualification target
+
+The evaluation v2 target for `small-llm-eval` / `python -m trainer.eval_entrypoint`
+contains:
 
 - `eval_core_v1`: frozen intrinsic next-token metrics;
 - L20 six-task zero-shot conditional-likelihood evaluation;
@@ -20,7 +25,7 @@ Install evaluator-only dependencies separately:
 python -m pip install -r requirements-eval.txt
 ```
 
-Qualitative decoding contracts:
+Qualitative decoding target:
 
 ```text
 greedy:  temperature=0, top_p=1, top_k=0, seed=17
@@ -31,11 +36,10 @@ budget:  native per prompt
 EOS termination is not a pretraining metric. Teacher-forced confidence remains
 a separate diagnostic (`trainer.teacher_forced_diagnostic`).
 
-## Canonical SFT qualification
+## SFT qualification target
 
-Use `small-llm-sft-eval` / `python -m post_training.sft.eval_suite`.
-
-The report compares immutable parent and SFT checkpoints on:
+The evaluation v2 target for `small-llm-sft-eval` / `python -m post_training.sft.eval_suite`
+compares immutable parent and SFT checkpoints on:
 
 - `eval_core_v1` retention;
 - masked SFT validation/test loss as diagnostics only;
@@ -53,7 +57,7 @@ Greedy is primary. Sampled robustness uses
 
 ## Report reading order
 
-Canonical v2 JSON deliberately preserves semantic key order:
+Canonical v2 JSON should preserve semantic key order:
 
 1. `read_me_first`;
 2. `headline_summary`;
