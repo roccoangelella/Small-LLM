@@ -1,4 +1,10 @@
-"""Comprehensive parent-versus-SFT checkpoint qualification."""
+"""Comprehensive parent-versus-SFT checkpoint qualification.
+
+Evaluation v2 is the active path. It preserves eval_core_v1 and the legacy
+30-case behavior suite for longitudinal comparison, but adds SFT Behavior v2 as
+the primary instruction-following benchmark and removes the retired fixed-length
+qualitative prompt protocol from the report.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +19,13 @@ from typing import Mapping, Sequence
 import torch
 
 from trainer.eval_entrypoint import ensure_eval_core
-from trainer.eval_suite import evaluate_split, run_prompt_cases
+from trainer.eval_suite import evaluate_split
 from trainer.identity import canonical_hash
 from trainer.evaluation import evaluate_batches
+from trainer.pretraining_eval_v2 import run_base_prompt_suite_v2
 
 from .behavior_eval import evaluate_behavior
+from .behavior_v2 import evaluate_behavior_v2, paired_behavior_v2_deltas
 from .bundle import verify_bundle
 from .checkpoints import download_parent_checkpoint, load_verified_native_checkpoint
 from .storage import SFTShardReader
@@ -28,6 +36,8 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive")
     return parsed
+
+
 def _resolve_device(device: str) -> torch.device:
     if device == "auto":
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -53,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bootstrap-samples", type=int, default=200)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--token-env", default="HF_TOKEN")
+    parser.add_argument(
+        "--skip-behavior-v2-sampled",
+        action="store_true",
+        help="debug only; production v2 includes sampled robustness with T=1/top_p=1/top_k=0",
+    )
 
     parent = parser.add_argument_group("parent checkpoint")
     parent.add_argument("--parent-checkpoint-dir", type=Path)
@@ -124,50 +139,6 @@ def _masked_split(
     )
 
 
-def _base_prompts_greedy_32(
-    model, *, max_seq_len: int, precision: str, suite: str
-) -> list[dict[str, object]]:
-    return run_prompt_cases(
-        model,
-        model_max_seq_len=max_seq_len,
-        precision=precision,
-        questions_only=False,
-        max_cases=8 if suite == "fast" else None,
-        temperature=0.0,
-        top_p=1.0,
-        top_k=0,
-        seed=17,
-        samples_per_prompt=1,
-        max_new_tokens=32,
-    )
-
-
-def _base_prompts_sampled(
-    model, *, max_seq_len: int, precision: str, suite: str
-) -> list[dict[str, object]]:
-    return run_prompt_cases(
-        model,
-        model_max_seq_len=max_seq_len,
-        precision=precision,
-        questions_only=False,
-        max_cases=8 if suite == "fast" else None,
-        temperature=1.0,
-        top_p=0.9,
-        top_k=20,
-        seed=17,
-        samples_per_prompt=1,
-        max_new_tokens=None,
-    )
-
-
-def _base_prompts(
-    model, *, max_seq_len: int, precision: str, suite: str
-) -> list[dict[str, object]]:
-    return _base_prompts_greedy_32(
-        model, max_seq_len=max_seq_len, precision=precision, suite=suite
-    )
-
-
 def _score_one(
     model,
     *,
@@ -180,6 +151,7 @@ def _score_one(
     validation_blocks: int,
     test_blocks: int,
     bootstrap_samples: int,
+    behavior_v2_sampled: bool,
 ) -> dict[str, object]:
     intrinsic = evaluate_split(
         model,
@@ -211,21 +183,23 @@ def _score_one(
         if suite == "full"
         else None
     )
-    behavior = evaluate_behavior(
+    legacy_behavior = evaluate_behavior(
         model,
         precision=precision,
         max_seq_len=model_config.max_seq_len,
         max_cases=16 if suite == "fast" else None,
     )
-    prompts_greedy_32 = _base_prompts_greedy_32(
+    behavior_v2 = evaluate_behavior_v2(
         model,
-        max_seq_len=model_config.max_seq_len,
         precision=precision,
-        suite=suite,
-    )
-    prompts_sampled = _base_prompts_sampled(
-        model,
         max_seq_len=model_config.max_seq_len,
+        partition="all",
+        max_cases=80 if suite == "fast" else None,
+        sampled=behavior_v2_sampled,
+    )
+    base_prompt_suite = run_base_prompt_suite_v2(
+        model,
+        model_max_seq_len=model_config.max_seq_len,
         precision=precision,
         suite=suite,
     )
@@ -233,10 +207,11 @@ def _score_one(
         "eval_core_v1": intrinsic,
         "sft_validation": validation,
         "sft_test": test,
-        "instruction_behavior": behavior,
-        "base_qualitative_prompts": prompts_greedy_32,
-        "qualitative_greedy_32": prompts_greedy_32,
-        "qualitative_sampled": prompts_sampled,
+        "instruction_behavior": legacy_behavior,
+        "instruction_behavior_v1_legacy": legacy_behavior,
+        "instruction_behavior_v2": behavior_v2,
+        "base_prompt_suite_v2": base_prompt_suite,
+        "base_qualitative_prompts": base_prompt_suite["greedy"]["cases"],
     }
 
 
@@ -325,6 +300,32 @@ def _masked_loss_deltas(parent: object, tuned: object) -> dict[str, object] | No
     }
 
 
+def _prompt_accuracy(section: object, view: str) -> float | None:
+    if not isinstance(section, Mapping):
+        return None
+    selected = section.get(view)
+    if not isinstance(selected, Mapping):
+        return None
+    summary = selected.get("summary")
+    if not isinstance(summary, Mapping):
+        return None
+    value = summary.get("accuracy")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def _behavior_v2_pass_rate(section: object) -> float | None:
+    if not isinstance(section, Mapping):
+        return None
+    greedy = section.get("greedy")
+    if not isinstance(greedy, Mapping):
+        return None
+    summary = greedy.get("summary")
+    if not isinstance(summary, Mapping):
+        return None
+    value = summary.get("pass_rate")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def _deltas(parent: Mapping[str, object], tuned: Mapping[str, object]) -> dict[str, object]:
     p_intrinsic = parent["eval_core_v1"]
     t_intrinsic = tuned["eval_core_v1"]
@@ -375,7 +376,7 @@ def _deltas(parent: Mapping[str, object], tuned: Mapping[str, object]) -> dict[s
             parent.get("sft_validation"), tuned.get("sft_validation")
         ),
         "sft_test": _masked_loss_deltas(parent.get("sft_test"), tuned.get("sft_test")),
-        "instruction_behavior": {
+        "instruction_behavior_v1_legacy": {
             **{
                 name: _delta_number(p_summary.get(name), t_summary.get(name))
                 for name in (
@@ -393,6 +394,69 @@ def _deltas(parent: Mapping[str, object], tuned: Mapping[str, object]) -> dict[s
                 t_behavior.get("per_category"),
             ),
         },
+        "instruction_behavior_v2": {
+            "greedy_pass_rate": _delta_number(
+                _behavior_v2_pass_rate(parent.get("instruction_behavior_v2")),
+                _behavior_v2_pass_rate(tuned.get("instruction_behavior_v2")),
+            ),
+            "paired_greedy": paired_behavior_v2_deltas(
+                parent.get("instruction_behavior_v2", {}),
+                tuned.get("instruction_behavior_v2", {}),
+            ),
+        },
+        "base_prompt_suite_v2": {
+            "greedy_accuracy": _delta_number(
+                _prompt_accuracy(parent.get("base_prompt_suite_v2"), "greedy"),
+                _prompt_accuracy(tuned.get("base_prompt_suite_v2"), "greedy"),
+            ),
+            "sampled_accuracy": _delta_number(
+                _prompt_accuracy(parent.get("base_prompt_suite_v2"), "sampled"),
+                _prompt_accuracy(tuned.get("base_prompt_suite_v2"), "sampled"),
+            ),
+        },
+    }
+
+
+def _read_me_first() -> dict[str, object]:
+    return {
+        "schema": "small-llm-post-sft-qualification-v2",
+        "how_to_read": [
+            "parent.scorecard is the immutable pretrained checkpoint before SFT.",
+            "sft.scorecard is the tuned checkpoint.",
+            "instruction_behavior_v2 is the primary SFT behavior benchmark: 180 semantic tasks expanded to L0-L3 cases.",
+            "L0 measures underlying capability; L1/L2/L3 measure increasingly strict instruction compliance.",
+            "instruction_behavior_v1_legacy is retained only for historical comparison with old reports.",
+            "base_prompt_suite_v2 replaces the retired fixed-length qualitative regression and uses native per-case budgets.",
+            "deltas_sft_minus_parent is tuned minus parent; positive is better only for accuracy/pass-rate fields, while negative is better for losses.",
+        ],
+        "metric_direction": {
+            "eval_core_v1.loss": "lower_is_better",
+            "sft_validation.loss": "lower_is_better",
+            "instruction_behavior_v2.greedy.summary.pass_rate": "higher_is_better",
+            "instruction_behavior_v2.greedy.summary.conditional_compliance.pass_rate": "higher_is_better",
+            "base_prompt_suite_v2.greedy.summary.accuracy": "higher_is_better",
+        },
+        "retired_protocol": "No qualitative_greedy_32 section is emitted by this evaluator.",
+    }
+
+
+def _headline(parent_result: Mapping[str, object], sft_result: Mapping[str, object]) -> dict[str, object]:
+    p_eval = parent_result.get("eval_core_v1", {})
+    s_eval = sft_result.get("eval_core_v1", {})
+    p_v2 = parent_result.get("instruction_behavior_v2")
+    s_v2 = sft_result.get("instruction_behavior_v2")
+    return {
+        "parent": {
+            "eval_core_loss": p_eval.get("loss") if isinstance(p_eval, Mapping) else None,
+            "behavior_v2_greedy_pass_rate": _behavior_v2_pass_rate(p_v2),
+            "base_prompt_v2_greedy_accuracy": _prompt_accuracy(parent_result.get("base_prompt_suite_v2"), "greedy"),
+        },
+        "sft": {
+            "eval_core_loss": s_eval.get("loss") if isinstance(s_eval, Mapping) else None,
+            "behavior_v2_greedy_pass_rate": _behavior_v2_pass_rate(s_v2),
+            "base_prompt_v2_greedy_accuracy": _prompt_accuracy(sft_result.get("base_prompt_suite_v2"), "greedy"),
+        },
+        "interpretation": "SFT is a win only if instruction behavior improves without unacceptable base eval_core regression.",
     }
 
 
@@ -426,7 +490,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         label="sft",
     )
 
-    print("Scoring immutable parent checkpoint...", flush=True)
+    print("Scoring immutable parent checkpoint with SFT evaluation v2...", flush=True)
     parent_model, parent_config, parent_identity = load_verified_native_checkpoint(
         parent_root, device=device
     )
@@ -441,12 +505,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         validation_blocks=args.validation_blocks,
         test_blocks=args.test_blocks,
         bootstrap_samples=args.bootstrap_samples,
+        behavior_v2_sampled=not args.skip_behavior_v2_sampled,
     )
     del parent_model
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    print("Scoring SFT checkpoint...", flush=True)
+    print("Scoring SFT checkpoint with SFT evaluation v2...", flush=True)
     sft_model, sft_config, sft_identity = load_verified_native_checkpoint(sft_root, device=device)
     if parent_config != sft_config:
         raise RuntimeError("parent and SFT checkpoints have different model geometry")
@@ -461,12 +526,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         validation_blocks=args.validation_blocks,
         test_blocks=args.test_blocks,
         bootstrap_samples=args.bootstrap_samples,
+        behavior_v2_sampled=not args.skip_behavior_v2_sampled,
     )
 
+    deltas = _deltas(parent_result, sft_result)
     report_without_hash: dict[str, object] = {
-        "schema": "small-llm-post-sft-qualification",
-        "schema_version": 1,
+        "schema": "small-llm-post-sft-qualification-v2",
+        "schema_version": 2,
         "suite": args.suite,
+        "read_me_first": _read_me_first(),
         "bundle": bundle_verification,
         "parent": {
             "checkpoint": parent_identity,
@@ -478,10 +546,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "transport": sft_transport,
             "scorecard": sft_result,
         },
-        "deltas_sft_minus_parent": _deltas(parent_result, sft_result),
+        "deltas_sft_minus_parent": deltas,
+        "headline_summary": _headline(parent_result, sft_result),
         "selection_policy": {
             "single_master_score": False,
             "interpretation": "inspect instruction acquisition and base-capability retention together",
+            "primary_behavior_suite": "instruction_behavior_v2",
+            "legacy_behavior_suite": "instruction_behavior_v1_legacy",
         },
     }
     report = {**report_without_hash, "report_sha256": canonical_hash(report_without_hash)}
