@@ -2,8 +2,13 @@
 
 ## Purpose
 
-Run the frozen intrinsic evaluation together with the current external
-capability and expanded base-prompt layers.
+Describe the staged evaluation v2 target for running the frozen intrinsic
+evaluation together with the external capability and expanded base-prompt
+layers.
+
+ADR 0140 has landed additive implementation modules and documentation. The final
+in-place replacement of active evaluator entrypoints is pending a tested
+follow-up patch.
 
 ## Environment
 
@@ -16,7 +21,7 @@ python -m pip install -r requirements-eval.txt
 `lm-evaluation-harness` is pinned separately so evaluation tooling does not
 change the training lock.
 
-## Full qualification
+## Full qualification target
 
 ```bash
 python -m trainer.eval_entrypoint full \
@@ -26,10 +31,7 @@ python -m trainer.eval_entrypoint full \
   --output-json artifacts/<run>-pretraining-qualification-v2.json
 ```
 
-If `eval_core_v1` is not attached, the entrypoint self-provisions and verifies
-the frozen corpus.
-
-The full report contains:
+When the v2 entrypoint wiring lands, the full report should contain:
 
 - frozen `eval_core_v1`;
 - full six-task L20 conditional-likelihood evaluation;
@@ -39,7 +41,7 @@ The full report contains:
 
 Prompt budgets are native per case.
 
-## Fast diagnostic
+## Fast diagnostic target
 
 ```bash
 python -m trainer.eval_entrypoint fast \
@@ -48,8 +50,8 @@ python -m trainer.eval_entrypoint fast \
   --output-json artifacts/<run>-pretraining-fast-v2.json
 ```
 
-Fast mode limits external tasks to 100 examples each and uses a reduced prompt
-subset. It is useful for smoke testing but is not a final qualification.
+Fast mode should limit external tasks to 100 examples each and use a reduced
+prompt subset. It is useful for smoke testing but is not a final qualification.
 
 ## Interpretation
 
