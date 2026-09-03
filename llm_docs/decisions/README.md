@@ -89,6 +89,8 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0119-publish-frozen-rsft-1pct-corpus-on-main.md`](0119-publish-frozen-rsft-1pct-corpus-on-main.md)
 - [`0120-ignore-obsolete-rsft-datasets-from-git.md`](0120-ignore-obsolete-rsft-datasets-from-git.md)
 - [`0131-use-rolling-latest-only-retention-for-kaggle-sft.md`](0131-use-rolling-latest-only-retention-for-kaggle-sft.md)
+- [`0138-start-100m-10b-sft-pipeline-wiring.md`](0138-start-100m-10b-sft-pipeline-wiring.md)
+- [`0139-run-100m-10b-sft-on-2b-10pct-s0-data.md`](0139-run-100m-10b-sft-on-2b-10pct-s0-data.md)
 
 ### 5. Evaluation, Memory Governance & Repository Tooling
 - [`0001-use-structured-markdown-project-memory.md`](0001-use-structured-markdown-project-memory.md)
@@ -119,7 +121,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md) — superseded by ADR 0041 (byte-preserving block 64).
 - [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-kaggle.md) — superseded by ADR 0043 (VPS dataset build).
 - [`0045-run-periodic-hf-backups-only-while-modal-training-is-live.md`](0045-run-periodic-hf-backups-only-while-modal-training-is-live.md) — superseded by ADR 0046 (integrated HF publication).
-- [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md) — superseded by ADR 0047 (HF Storage Bucket).
+- [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoints.md) — superseded by ADR 0047 (HF Storage Bucket).
 - [`0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md`](0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md) — superseded by ADR 0055 (unified model repo).
 - [`0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md`](0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md) — superseded by ADR 0055.
 
