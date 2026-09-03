@@ -5,11 +5,12 @@ Last reviewed: 2026-09-03
 ## Repository and protocol state
 
 - Repository: `roccoangelella/Small-LLM`.
-- Current evaluation decision: ADR 0140 adopts/stages evaluation v2 and retires the old fixed-length qualitative protocol as a future active target.
-- Additive modules are present for SFT Behavior v2 and pretraining evaluation v2.
-- The full in-place replacement of active evaluator entrypoints is still pending a tested follow-up patch.
+- Current evaluation decision: ADR 0140 is now wired into the active pretrained and SFT evaluation paths.
+- `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
+- `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
+- SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
 - Canonical sampled qualitative decoding target is `temperature=1`, `top_p=1`, `top_k=0`.
-- Qualitative generation target uses native per-case budgets.
+- Qualitative generation uses native per-case budgets.
 - Pretraining EOS termination is not a metric.
 - Teacher-forced confidence and masked SFT losses are diagnostics, not headline capability scores.
 
@@ -45,9 +46,15 @@ The 100M/10B SFT pipeline is wired and pinned to the current qualified
 worktree/launch configuration. The same-data S0 recipe decision is recorded in
 the project ADRs.
 
-### Evaluation
+### Active SFT qualification
 
-SFT Behavior v2 is staged as the next primary instruction-following evaluation design:
+The active SFT evaluator now emits `small-llm-post-sft-qualification-v2`.
+Its first sections are `read_me_first` and `headline_summary`, followed by
+checkpoint metadata, `eval_core_v1`, masked SFT validation/test loss,
+`instruction_behavior_v2`, `instruction_behavior_v1_legacy`, and
+`base_prompt_suite_v2`.
+
+SFT Behavior v2 is the primary instruction-following evaluation:
 
 - 180 semantic tasks;
 - six balanced families;
@@ -59,8 +66,6 @@ SFT Behavior v2 is staged as the next primary instruction-following evaluation d
 - greedy primary plus sampled robustness over seeds 17/18/19;
 - paired parent/SFT wins, losses, ties and exact McNemar statistics.
 
-The legacy 30-case behavior suite remains the active longitudinal comparison until v2 entrypoint wiring lands.
-
 ## R-SFT
 
 The production R-SFT path remains atomic-protocol based and retains its
@@ -69,9 +74,15 @@ qualitative regressions to use native prompt budgets and for the general sampled
 view to follow `temperature=1`, `top_p=1`, `top_k=0`. Reasoning pass@1 keeps its
 own task-specific sampling protocol.
 
-## Pretraining evaluation v2
+## Active pretraining evaluation v2
 
-The staged target for canonical full pretraining qualification consists of:
+The active pretrained checkpoint entrypoint emits
+`small-llm-pretraining-evaluation-v2` through `trainer.eval_entrypoint`.
+Its first sections are `read_me_first` and `headline_summary`, followed by
+checkpoint metadata, frozen `eval_core_v1`, the external L20-style suite, and
+the expanded base prompt suite.
+
+Canonical full pretraining qualification now consists of:
 
 1. frozen `eval_core_v1`;
 2. six-task L20-Edu-style zero-shot conditional-likelihood evaluation using
