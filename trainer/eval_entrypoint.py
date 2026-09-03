@@ -3,8 +3,7 @@
 The underlying evaluator intentionally keeps eval_core verification explicit.
 This wrapper makes the normal user-facing command operationally complete:
 if the frozen eval corpus is absent, build it with the deterministic accelerated
-scanner; always verify it; then run the existing evaluator against the selected
-checkpoint.
+scanner; always verify it; then run the active evaluation-v2 checkpoint suite.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from dataset.eval_core_accelerated import (
     build_eval_core_accelerated,
     scan_progress_snapshot,
 )
-from trainer import eval_suite
+from trainer import eval_suite_v2 as eval_suite
 
 _BUILD_HEARTBEAT_SECONDS = 15.0
 
