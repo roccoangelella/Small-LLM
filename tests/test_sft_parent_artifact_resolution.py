@@ -91,3 +91,73 @@ def test_parent_download_keeps_live_pointer_when_available(tmp_path: Path) -> No
     assert root == live_root
     assert info == live_info
     stable.assert_not_called()
+
+
+def test_parent_download_can_use_verified_storage_bucket_latest(tmp_path: Path) -> None:
+    bucket_root = tmp_path / "step-00076294"
+    bucket_info = {
+        "checkpoint_source": "hf_storage_bucket",
+        "checkpoint_id": "step-00076294",
+        "pointer": "latest",
+    }
+
+    with (
+        patch(
+            "trainer.post_pretraining_prompt_suite_bucket.download_verified_bucket_checkpoint",
+            return_value=(bucket_root, bucket_info),
+        ) as bucket,
+        patch(
+            "post_training.sft.checkpoints.download_verified_checkpoint"
+        ) as live,
+        patch(
+            "post_training.sft.checkpoints.download_verified_model_artifact"
+        ) as stable,
+    ):
+        root, info = download_parent_checkpoint(
+            repo_id="roccoangelella/small-llm-100m-qualification",
+            run_id="100m-10b-deep-decay-from-step15500",
+            pointer="latest",
+            transport="hf_storage_bucket",
+            token="token",
+            destination=tmp_path / "download",
+        )
+
+    assert root == bucket_root
+    assert info["checkpoint_source"] == "hf_storage_bucket"
+    assert info["checkpoint_id"] == "step-00076294"
+    assert info["requested_parent_pointer"] == "latest"
+    assert info["parent_resolution"] == "hf_storage_bucket"
+    bucket.assert_called_once_with(
+        repo_id="roccoangelella/small-llm-100m-qualification",
+        run_id="100m-10b-deep-decay-from-step15500",
+        token="token",
+        revision=None,
+        pointer_name="latest",
+        destination=tmp_path / "download",
+    )
+    live.assert_not_called()
+    stable.assert_not_called()
+
+
+def test_parent_bucket_transport_does_not_allow_best_pointer(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="rolling latest-only retention"):
+        download_parent_checkpoint(
+            repo_id="owner/qualification",
+            run_id="100m-10b-deep-decay-from-step15500",
+            pointer="best",
+            transport="hf_storage_bucket",
+            token="token",
+            destination=tmp_path / "download",
+        )
+
+
+def test_parent_download_rejects_unknown_transport(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="parent transport must be one of"):
+        download_parent_checkpoint(
+            repo_id="owner/qualification",
+            run_id="100m-10b-deep-decay-from-step15500",
+            pointer="latest",
+            transport="made-up",
+            token="token",
+            destination=tmp_path / "download",
+        )
