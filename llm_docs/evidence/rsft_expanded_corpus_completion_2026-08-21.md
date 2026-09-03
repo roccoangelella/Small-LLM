@@ -29,7 +29,7 @@ Composition is 7,683 unchanged Superior instruction rows, 8,403 unique simplifie
 The deterministic atomic production builder completed successfully (`rc=0`) against the completed 100M/2B S0 bundle:
 
 ```text
-bundle: /home/ubuntu/Projects/small-llm-work/rsft-r0-superior-instruction-expanded-16716
+bundle: <working-root>/rsft-r0-superior-instruction-expanded-16716
 train blocks: 417
 train packed records: 20,313
 reasoning train targets: 12,077,733

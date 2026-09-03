@@ -68,7 +68,7 @@ CONSERVATIVE_TOKENS_PER_SECOND = Decimal("20000")
 
 DEFAULT_SOURCE_ROOT = Path("/tmp/small-llm-beam-resume-1f9dff9")
 DEFAULT_STATE_ROOT = Path("/tmp/small-llm-beam-monitor")
-DEFAULT_PROJECT_ROOT = Path("/home/ubuntu/Projects/Small-LLM")
+DEFAULT_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BILLING_RESET_FILENAME = "billing_reset.json"
 
 

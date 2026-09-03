@@ -124,7 +124,7 @@ The automated guard is configured in the user's UTC crontab every five minutes:
 
 ```cron
 CRON_TZ=UTC
-*/5 * * * * cd /home/ubuntu/Projects/Small-LLM && set -a && . ./.env && set +a && SMALL_LLM_BEAM_BILLING_MODE=account_zero SMALL_LLM_BEAM_CAP_BASIS=notional /home/ubuntu/Projects/Small-LLM/.venv/bin/python ops/monitor_aggressive_wsqd_10b_beam.py >> /tmp/small-llm-aggressive-monitor/hourly.log 2>&1
+*/5 * * * * cd "$HOME/Projects/Small-LLM" && set -a && . ./.env && set +a && SMALL_LLM_BEAM_BILLING_MODE=account_zero SMALL_LLM_BEAM_CAP_BASIS=notional "$HOME/Projects/Small-LLM/.venv/bin/python" ops/monitor_aggressive_wsqd_10b_beam.py >> /tmp/small-llm-aggressive-monitor/hourly.log 2>&1
 ```
 
 The monitor applies a 10% safety factor to the notional estimate and stops

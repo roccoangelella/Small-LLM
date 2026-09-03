@@ -7,4 +7,26 @@ wandb/**
 
 # Local credentials must be supplied through Beam secrets, never source sync.
 .env
+.env.*
+*.env
 .secrets/**
+.aws/**
+.kaggle/**
+.config/gcloud/**
+.netrc
+.npmrc
+*.pem
+*.p12
+*.pfx
+*.key
+*.keystore
+*.kdbx
+id_rsa
+id_ed25519
+client_secret_*.apps.googleusercontent.com.json
+application_default_credentials.json
+authorized_user*.json
+credentials*.json
+token*.json
+service_account*.json
+google-credentials*.json

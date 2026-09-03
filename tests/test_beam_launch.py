@@ -63,8 +63,15 @@ class BeamLaunchTest(unittest.TestCase):
         spec = PathSpec.from_lines("gitwildmatch", patterns)
         for credential_path in (
             ".env",
+            ".env.local",
+            "training.env",
             ".secrets/google-drive-authorized-user.json",
             ".secrets/google-drive-oauth-client.json",
+            "client_secret_example.apps.googleusercontent.com.json",
+            "authorized_user.json",
+            "credentials.json",
+            "token.json",
+            "private-key.pem",
         ):
             self.assertTrue(spec.match_file(credential_path), credential_path)
 

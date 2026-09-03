@@ -23,8 +23,5 @@ The rise of loss coincides with the end of "fast" weight decay. This suggests we
 
 ---
 
-With all this mess I almost forgot that we had the fine tuned 100M 2B model waiting for us. I tested it, and it's quite fun to play with!  
-![alt text](<2026-08-15 10-16-29.gif>)
-
-Better than how i expected! And also very fast after you compile triton kernels for the first time on any device.
+With all this mess I almost forgot that we had the fine tuned 100M 2B model waiting for us. I tested it, and it's quite fun to play with—better than I expected! It is also very fast after you compile the Triton kernels for the first time on a device.
  
