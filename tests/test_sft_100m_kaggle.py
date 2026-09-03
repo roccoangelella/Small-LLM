@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import redirect_stdout
 import io
-import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -10,9 +9,9 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-KAGGLE = ROOT / "kaggle"
-if str(KAGGLE) not in sys.path:
-    sys.path.insert(0, str(KAGGLE))
+KAGGLE_SRC = ROOT / "kaggle" / "src"
+if str(KAGGLE_SRC) not in sys.path:
+    sys.path.insert(0, str(KAGGLE_SRC))
 
 import dual_t4_sft  # noqa: E402
 import launch_sft  # noqa: E402
@@ -73,6 +72,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
     def test_train_pins_the_qualified_dual_t4_runtime(self) -> None:
         profile = sft_cli.resolve_profile(100_000_000, 2_000_000_000)
         worktree = Path("/tmp/small-llm-sft-worktree")
+        runner = worktree / "kaggle" / "src" / "dual_t4_sft.py"
         captured: dict[str, object] = {}
 
         def capture_run(command: list[str], *, cwd: Path) -> int:
@@ -87,6 +87,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
                 "_find_bundle",
                 return_value=Path("/tmp/small-llm-sft-bundle"),
             ),
+            mock.patch.object(sft_scaled_runtime, "_runner_path", return_value=runner),
             mock.patch.object(sft_scaled_runtime, "_require_stable_parent_artifact") as parent_preflight,
             mock.patch.object(sft_scaled_runtime.base, "_wandb_preflight"),
             mock.patch.object(sft_scaled_runtime.base, "_run", side_effect=capture_run),
@@ -120,6 +121,7 @@ class SFT100M2BKaggleTests(unittest.TestCase):
             command.index("https://download.pytorch.org/whl/cu128"),
             python_index,
         )
+        self.assertIn(str(runner), command)
         microbatch_index = command.index("--microbatch-size")
         self.assertEqual(command[microbatch_index + 1], "2")
         validation_index = command.index("--validation-blocks")
