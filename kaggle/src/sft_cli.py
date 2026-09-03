@@ -396,8 +396,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         eval_dir = _discover_eval_dir(args.eval_dir)
     except sft_runtime.RuntimeFailure as error:
         parser.error(str(error))
-    return runtime.evaluate(
-        profile,
+    eval_kwargs = dict(
         dataset_dir=args.dataset_dir,
         eval_dir=eval_dir,
         parent_repo_id=args.parent_repo_id,
@@ -412,6 +411,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         validation_blocks=args.validation_blocks,
         test_blocks=args.test_blocks,
     )
+    if _parent_transport(profile) == "hf_storage_bucket":
+        import sft_100m_10b_eval
+
+        return sft_100m_10b_eval.evaluate(profile, **eval_kwargs)
+    return runtime.evaluate(profile, **eval_kwargs)
 
 
 __all__ = [
