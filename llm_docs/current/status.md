@@ -5,9 +5,11 @@ Last reviewed: 2026-09-03
 ## Repository and protocol state
 
 - Repository: `roccoangelella/Small-LLM`.
-- Current evaluation decision: ADR 0140 wires pretraining qualification v2 and SFT Behavior v2.
-- Canonical sampled qualitative decoding is `temperature=1`, `top_p=1`, `top_k=0`.
-- Qualitative generation uses native per-case budgets.
+- Current evaluation decision: ADR 0140 adopts/stages evaluation v2 and retires the old fixed-length qualitative protocol as a future active target.
+- Additive modules are present for SFT Behavior v2 and pretraining evaluation v2.
+- The full in-place replacement of active evaluator entrypoints is still pending a tested follow-up patch.
+- Canonical sampled qualitative decoding target is `temperature=1`, `top_p=1`, `top_k=0`.
+- Qualitative generation target uses native per-case budgets.
 - Pretraining EOS termination is not a metric.
 - Teacher-forced confidence and masked SFT losses are diagnostics, not headline capability scores.
 
@@ -45,7 +47,7 @@ the project ADRs.
 
 ### Evaluation
 
-SFT Behavior v2 is now the primary instruction-following evaluation design:
+SFT Behavior v2 is staged as the next primary instruction-following evaluation design:
 
 - 180 semantic tasks;
 - six balanced families;
@@ -57,19 +59,19 @@ SFT Behavior v2 is now the primary instruction-following evaluation design:
 - greedy primary plus sampled robustness over seeds 17/18/19;
 - paired parent/SFT wins, losses, ties and exact McNemar statistics.
 
-The legacy 30-case behavior suite remains only for longitudinal comparison.
+The legacy 30-case behavior suite remains the active longitudinal comparison until v2 entrypoint wiring lands.
 
 ## R-SFT
 
 The production R-SFT path remains atomic-protocol based and retains its
-reasoning-specific qualification. Base qualitative regressions now use native
-prompt budgets; their general sampled view follows the project-wide
-`temperature=1`, `top_p=1`, `top_k=0` contract. Reasoning pass@1 keeps its own
-task-specific sampling protocol.
+reasoning-specific qualification. The evaluation v2 target is for base
+qualitative regressions to use native prompt budgets and for the general sampled
+view to follow `temperature=1`, `top_p=1`, `top_k=0`. Reasoning pass@1 keeps its
+own task-specific sampling protocol.
 
 ## Pretraining evaluation v2
 
-Canonical full pretraining qualification now consists of:
+The staged target for canonical full pretraining qualification consists of:
 
 1. frozen `eval_core_v1`;
 2. six-task L20-Edu-style zero-shot conditional-likelihood evaluation using
@@ -78,7 +80,7 @@ Canonical full pretraining qualification now consists of:
    and 20 readable qualitative continuations.
 
 The six external tasks are ARC-Challenge, ARC-Easy, HellaSwag, LAMBADA OpenAI,
-PIQA and WinoGrande. Full qualification uses all available benchmark examples.
+PIQA and WinoGrande. Full qualification should use all available benchmark examples.
 Fast mode may limit the external tasks and is diagnostic only.
 
 ## Evaluation dependency boundary
