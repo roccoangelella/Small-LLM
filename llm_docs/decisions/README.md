@@ -49,7 +49,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0072-pin-beam-client-0207-for-live-gateway.md`](0072-pin-beam-client-0207-for-live-gateway.md)
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
-- [`0144-unify-100m-10b-pretraining-probes.md`](0144-unify-100m-10b-pretraining-probes.md)
+- [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
@@ -103,10 +103,10 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0031-govern-project-memory-with-progressive-disclosure.md`](0031-govern-project-memory-with-progressive-disclosure.md)
 - [`0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md`](0037-consolidate-dataset-profile-tools-and-retire-one-off-qualification-code.md)
 - [`0059-run-supplementary-sampled-three-way-full-evaluation.md`](0059-run-supplementary-sampled-three-way-full-evaluation.md)
-- [`0140-define-evaluation-v2-protocol.md`](0140-define-evaluation-v2-protocol.md)
+- [`0140-wire-evaluation-v2-and-retire-fixed-length-qualitative-protocol.md`](0140-wire-evaluation-v2-and-retire-fixed-length-qualitative-protocol.md)
 - [`0141-activate-evaluation-v2-entrypoints.md`](0141-activate-evaluation-v2-entrypoints.md)
 - [`0142-ignore-local-agent-tooling-directories.md`](0142-ignore-local-agent-tooling-directories.md)
-- [`0143-remove-ire-from-project-infrastructure.md`](0143-remove-ire-from-project-infrastructure.md)
+- [`0143-remove-ire-project-state.md`](0143-remove-ire-project-state.md)
 - [`0145-synchronize-readme-lifecycle-with-current-state.md`](0145-synchronize-readme-lifecycle-with-current-state.md)
 
 ## Superseded ADRs
