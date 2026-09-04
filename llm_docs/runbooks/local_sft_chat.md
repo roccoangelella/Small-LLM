@@ -29,7 +29,7 @@ R-SFT can use its own repository:
 export SMALL_LLM_RSFT_HF_REPO_ID=owner/rsft-repository
 ```
 
-R-SFT profiles prefer `SMALL_LLM_RSFT_HF_REPO_ID`, then `SMALL_LLM_SFT_HF_REPO_ID`, then `SMALL_LLM_HF_REPO_ID`. SFT profiles prefer `SMALL_LLM_SFT_HF_REPO_ID` and fall back to `SMALL_LLM_HF_REPO_ID`. Stable pretrained artifacts always use `SMALL_LLM_HF_REPO_ID`.
+R-SFT profiles prefer `SMALL_LLM_RSFT_HF_REPO_ID`, then `SMALL_LLM_SFT_HF_REPO_ID`, then `SMALL_LLM_HF_REPO_ID`. SFT profiles prefer `SMALL_LLM_SFT_HF_REPO_ID` and fall back to `SMALL_LLM_HF_REPO_ID`. Stable pretrained artifacts use `SMALL_LLM_HF_REPO_ID`. Storage bucket pretrained artifacts (100M / 10B) use `SMALL_LLM_HF_REPO_ID` or `SMALL_LLM_HF_CHECKPOINT_BUCKET_ID`.
 
 ## Mandatory stage selection
 
@@ -69,7 +69,7 @@ Completed 100M / 10B SFT default:
 python chat.py --model_params 100M --num_tokens 10B --sft
 ```
 
-The 100M / 10B SFT profile resolves `100m-10b-sft-s0-2b10pct-data-001`. It uses the normal GPT-2 tokenizer and the same completed-checkpoint verification path as the other SFT profiles. The corresponding 100M / 10B pretrained profile is intentionally not registered in `chat.py`.
+The 100M / 10B SFT profile resolves `100m-10b-sft-s0-2b10pct-data-001`. It uses the normal GPT-2 tokenizer and the same completed-checkpoint verification path as the other SFT profiles.
 
 A different completed SFT run in the same profile can be selected explicitly without changing the registered default. For example, the 10% S0 experiment is:
 
@@ -86,6 +86,14 @@ python chat.py --model_params 100M --num_tokens 2B --pre-trained
 ```
 
 The pretrained 100M / 2B entry resolves the stable Hugging Face model artifact for run `100m-2b-data-001`. It is a pretrained base model, not an SFT/instruction-tuned model.
+
+Completed 100M / 10B pretrained base model:
+
+```bash
+python chat.py --model_params 100M --num_tokens 10B --pre-trained
+```
+
+The pretrained 100M / 10B entry resolves the completed deep-decay continuation endpoint `step-00076294` for run `100m-10b-deep-decay-from-step15500` from the Hugging Face Storage Bucket (`SMALL_LLM_HF_REPO_ID` or `SMALL_LLM_HF_CHECKPOINT_BUCKET_ID`). It is a pretrained base model, not an SFT/instruction-tuned model.
 
 Accepted 100M / 2B atomic R-SFT R0:
 

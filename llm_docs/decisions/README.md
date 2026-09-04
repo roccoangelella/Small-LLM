@@ -108,6 +108,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0142-ignore-local-agent-tooling-directories.md`](0142-ignore-local-agent-tooling-directories.md)
 - [`0143-remove-ire-project-state.md`](0143-remove-ire-project-state.md)
 - [`0145-synchronize-readme-lifecycle-with-current-state.md`](0145-synchronize-readme-lifecycle-with-current-state.md)
+- [`0149-support-100m-10b-pretrained-run-in-local-chat.md`](0149-support-100m-10b-pretrained-run-in-local-chat.md)
 
 ## Superseded ADRs
 
@@ -127,7 +128,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0040-launch-100m-2b-pretraining-on-modal.md`](0040-launch-100m-2b-pretraining-on-modal.md) — superseded by ADR 0041 (byte-preserving block 64).
 - [`0042-derive-modal-block64-corpus-on-kaggle.md`](0042-derive-modal-block64-corpus-on-kaggle.md) — superseded by ADR 0043 (VPS dataset build).
 - [`0045-run-periodic-hf-backups-only-while-modal-training-is-live.md`](0045-run-periodic-hf-backups-only-while-modal-training-is-live.md) — superseded by ADR 0046 (integrated HF publication).
-- [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoints.md) — superseded by ADR 0047 (HF Storage Bucket).
+- [`0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md`](0046-use-rolling-hf-as-modal-cross-workspace-checkpoint-transport.md) — superseded by ADR 0047 (HF Storage Bucket).
 - [`0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md`](0047-use-hf-storage-bucket-for-modal-cross-workspace-checkpoints.md) — superseded by ADR 0055 (unified model repo).
 - [`0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md`](0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md) — superseded by ADR 0055.
 

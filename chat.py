@@ -1,5 +1,6 @@
 # Usage:
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
+#   python chat.py --model_params 100M --num_tokens 10B --pre-trained # completed 10B pretrained run
 #   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
 #   python chat.py --model_params 100M --num_tokens 10B --sft        # completed 100M/10B SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
@@ -10,8 +11,8 @@
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
 TEMPERATURE = 1.0
-TOP_K = 20
-TOP_P = 0.9
+TOP_K = 50
+TOP_P = 1.0
 MAX_NEW_TOKENS = 128
 SEED = 17
 
@@ -33,6 +34,7 @@ load_dotenv()
 _SOURCE_SFT = "sft"
 _SOURCE_R_SFT = "r_sft"
 _SOURCE_STABLE_MODEL = "stable_model"
+_SOURCE_STORAGE_BUCKET = "storage_bucket"
 _STAGE_PRETRAINED = "pre-trained"
 _STAGE_SFT = "sft"
 _STAGE_R_SFT = "r-sft"
@@ -41,6 +43,10 @@ _R_SFT_CANONICAL_MARKERS = ("<think>", "</think>", "<answer>")
 
 _PRETRAINED_CHAT_RUNS = {
     (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
+    (100_000_000, 10_000_000_000): (
+        "100m-10b-deep-decay-from-step15500",
+        _SOURCE_STORAGE_BUCKET,
+    ),
 }
 _SFT_CHAT_RUNS = {
     (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
@@ -238,6 +244,17 @@ def _repo_id(*, source: str) -> str:
         if not repo_id:
             raise RuntimeError("set SMALL_LLM_HF_REPO_ID for stable pretrained model artifacts")
         return repo_id
+    if source == _SOURCE_STORAGE_BUCKET:
+        repo_id = (
+            os.environ.get("SMALL_LLM_HF_REPO_ID")
+            or os.environ.get("SMALL_LLM_HF_CHECKPOINT_BUCKET_ID")
+        )
+        if not repo_id:
+            raise RuntimeError(
+                "set SMALL_LLM_HF_REPO_ID (or SMALL_LLM_HF_CHECKPOINT_BUCKET_ID) for "
+                "storage bucket pretrained model artifacts"
+            )
+        return repo_id
     raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 
 
@@ -257,7 +274,9 @@ def _completed_schedule_targets(trainer_config: Mapping[str, object]) -> int:
     from trainer.config import TrainerConfig
 
     try:
-        config = TrainerConfig(**dict(trainer_config))  # type: ignore[arg-type]
+        valid_fields = set(TrainerConfig.__dataclass_fields__.keys())
+        filtered = {k: v for k, v in trainer_config.items() if k in valid_fields}
+        config = TrainerConfig(**filtered)
     except (TypeError, ValueError) as error:
         raise RuntimeError("checkpoint has an invalid trainer configuration") from error
 
@@ -416,6 +435,33 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                 revision=None,
                 destination=Path(temporary.name),
             )
+        elif source == _SOURCE_STORAGE_BUCKET:
+            try:
+                from trainer.post_pretraining_prompt_suite_bucket import (
+                    download_verified_bucket_checkpoint,
+                )
+
+                checkpoint_root, info = download_verified_bucket_checkpoint(
+                    repo_id=repo_id,
+                    run_id=run_id,
+                    token=token,
+                    revision=None,
+                    pointer_name="latest",
+                    destination=Path(temporary.name),
+                )
+            except Exception as bucket_error:
+                try:
+                    from trainer.model_artifact import download_verified_model_artifact
+
+                    checkpoint_root, info = download_verified_model_artifact(
+                        repo_id=repo_id,
+                        run_id=run_id,
+                        token=token,
+                        revision=None,
+                        destination=Path(temporary.name),
+                    )
+                except Exception:
+                    raise bucket_error
         else:
             raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 

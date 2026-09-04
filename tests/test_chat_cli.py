@@ -66,9 +66,17 @@ def test_resolve_chat_run_is_stage_explicit_and_fail_closed() -> None:
         "100m-2b-rsft-r0-16716-e3-001",
         chat._SOURCE_R_SFT,
     )
+    assert chat._resolve_chat_run(
+        100_000_000,
+        10_000_000_000,
+        stage=chat._STAGE_PRETRAINED,
+    ) == (
+        "100m-10b-deep-decay-from-step15500",
+        chat._SOURCE_STORAGE_BUCKET,
+    )
     with pytest.raises(RuntimeError, match="no registered pre-trained chat profile"):
         chat._resolve_chat_run(
-            100_000_000,
+            20_000_000,
             10_000_000_000,
             stage=chat._STAGE_PRETRAINED,
         )
@@ -78,6 +86,20 @@ def test_resolve_chat_run_is_stage_explicit_and_fail_closed() -> None:
             2_000_000_000,
             stage=chat._STAGE_R_SFT,
         )
+
+
+def test_storage_bucket_repo_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SMALL_LLM_HF_REPO_ID", "owner/base")
+    monkeypatch.delenv("SMALL_LLM_HF_CHECKPOINT_BUCKET_ID", raising=False)
+    assert chat._repo_id(source=chat._SOURCE_STORAGE_BUCKET) == "owner/base"
+
+    monkeypatch.setenv("SMALL_LLM_HF_CHECKPOINT_BUCKET_ID", "owner/explicit-bucket")
+    monkeypatch.delenv("SMALL_LLM_HF_REPO_ID", raising=False)
+    assert chat._repo_id(source=chat._SOURCE_STORAGE_BUCKET) == "owner/explicit-bucket"
+
+    monkeypatch.delenv("SMALL_LLM_HF_CHECKPOINT_BUCKET_ID", raising=False)
+    with pytest.raises(RuntimeError, match="set SMALL_LLM_HF_REPO_ID"):
+        chat._repo_id(source=chat._SOURCE_STORAGE_BUCKET)
 
 
 def test_100m_10b_sft_cli_selects_completed_registered_run() -> None:
@@ -120,6 +142,13 @@ def test_chat_stage_flag_is_mandatory_and_mutually_exclusive() -> None:
     assert pretrained.stage == chat._STAGE_PRETRAINED
     assert sft.stage == chat._STAGE_SFT
     assert rsft.stage == chat._STAGE_R_SFT
+
+    pretrained_10b = chat._parse_args(
+        ["--model_params", "100M", "--num_tokens", "10B", "--pre-trained"]
+    )
+    assert pretrained_10b.stage == chat._STAGE_PRETRAINED
+    assert pretrained_10b.model_params == 100_000_000
+    assert pretrained_10b.num_tokens == 10_000_000_000
 
 
 class _FakeTemplate:
@@ -225,3 +254,94 @@ def test_rsft_chat_requires_reasoning_token_specification() -> None:
 
 def test_accepted_rsft_protocol_is_atomic_and_canonical() -> None:
     assert chat._R_SFT_CANONICAL_MARKERS == ("<think>", "</think>", "<answer>")
+
+
+def test_download_model_storage_bucket_uses_bucket_downloader(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded = {}
+
+    def fake_download_bucket(*, repo_id, run_id, token, revision, pointer_name, destination):
+        recorded["bucket"] = {
+            "repo_id": repo_id,
+            "run_id": run_id,
+            "token": token,
+            "revision": revision,
+            "pointer_name": pointer_name,
+            "destination": destination,
+        }
+        return destination / "step-00076294", {"checkpoint_id": "step-00076294"}
+
+    fake_load_called = {}
+
+    def fake_load(checkpoint_root, *, device, stage):
+        fake_load_called["root"] = checkpoint_root
+        fake_load_called["stage"] = stage
+        return "model", "config", 10_000_007_168, None
+
+    monkeypatch.setattr(
+        "trainer.post_pretraining_prompt_suite_bucket.download_verified_bucket_checkpoint",
+        fake_download_bucket,
+    )
+    monkeypatch.setattr(chat, "_load_completed_checkpoint", fake_load)
+    monkeypatch.setenv("HF_TOKEN", "test-token")
+
+    model, config, consumed, reasoning_spec, info, temp_dir = chat._download_model(
+        repo_id="owner/repo",
+        run_id="100m-10b-deep-decay-from-step15500",
+        source=chat._SOURCE_STORAGE_BUCKET,
+        stage=chat._STAGE_PRETRAINED,
+        device="cpu",
+    )
+    try:
+        assert model == "model"
+        assert config == "config"
+        assert consumed == 10_000_007_168
+        assert reasoning_spec is None
+        assert info["checkpoint_id"] == "step-00076294"
+        assert recorded["bucket"]["run_id"] == "100m-10b-deep-decay-from-step15500"
+        assert recorded["bucket"]["pointer_name"] == "latest"
+        assert recorded["bucket"]["token"] == "test-token"
+    finally:
+        temp_dir.cleanup()
+
+
+def test_download_model_storage_bucket_falls_back_to_model_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_download_bucket(**kwargs):
+        raise RuntimeError("bucket not found")
+
+    recorded = {}
+
+    def fake_download_artifact(*, repo_id, run_id, token, revision, destination):
+        recorded["artifact"] = {
+            "repo_id": repo_id,
+            "run_id": run_id,
+            "token": token,
+            "revision": revision,
+            "destination": destination,
+        }
+        return destination / "step-00076294", {"checkpoint_id": "step-00076294"}
+
+    def fake_load(checkpoint_root, *, device, stage):
+        return "model", "config", 10_000_007_168, None
+
+    monkeypatch.setattr(
+        "trainer.post_pretraining_prompt_suite_bucket.download_verified_bucket_checkpoint",
+        fake_download_bucket,
+    )
+    monkeypatch.setattr(
+        "trainer.model_artifact.download_verified_model_artifact",
+        fake_download_artifact,
+    )
+    monkeypatch.setattr(chat, "_load_completed_checkpoint", fake_load)
+
+    model, config, consumed, reasoning_spec, info, temp_dir = chat._download_model(
+        repo_id="owner/repo",
+        run_id="100m-10b-deep-decay-from-step15500",
+        source=chat._SOURCE_STORAGE_BUCKET,
+        stage=chat._STAGE_PRETRAINED,
+        device="cpu",
+    )
+    try:
+        assert recorded["artifact"]["run_id"] == "100m-10b-deep-decay-from-step15500"
+        assert info["checkpoint_id"] == "step-00076294"
+    finally:
+        temp_dir.cleanup()
