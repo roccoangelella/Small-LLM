@@ -6,6 +6,8 @@ Last reviewed: 2026-09-04
 
 - Repository: `roccoangelella/Small-LLM`.
 - Current evaluation decisions: ADR 0140 defines evaluation v2 and ADR 0141 activates the pretrained and SFT evaluator entrypoints.
+- ADR 0142 ignores local agent-tooling directories (`.agents`, `.Agents`, `.pi`) without deleting their already tracked historical contents.
+- ADR 0143 removes IRE project state (`.ire/`) from the repository and ignores the directory going forward; `llm_docs/` is the canonical project-memory system.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
