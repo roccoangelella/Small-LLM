@@ -15,7 +15,7 @@ from typing import Iterable, Mapping, Sequence
 
 from torch import nn
 
-from trainer.post_pretraining_prompt_suite import sample_token_ids
+from trainer.eval_generation import DEFAULT_GENERATION_BATCH_SIZE, GenerationRequest, sample_token_ids_batched
 
 from .schema import ChatMessage
 from .template import GPT2ChatTemplate, TiktokenGPT2Encoder
@@ -182,15 +182,21 @@ def _summary(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
 
 def _run(model: nn.Module, *, precision: str, max_seq_len: int, cases: Sequence[BehaviorV2Case], temperature: float, top_p: float, top_k: int, seeds: Sequence[int]) -> list[dict[str, object]]:
     import tiktoken
-    encoding = tiktoken.get_encoding("gpt2"); encoder = TiktokenGPT2Encoder(); template = GPT2ChatTemplate(maximum_context_tokens=max_seq_len); rows = []
+    encoding = tiktoken.get_encoding("gpt2"); encoder = TiktokenGPT2Encoder(); template = GPT2ChatTemplate(maximum_context_tokens=max_seq_len)
+    work = []
     for case_index, case in enumerate(cases):
         prompt_ids = template.encode_generation_prompt(case.messages, encoder)
         for sample_index, seed in enumerate(seeds, 1):
             sample_seed = seed + case_index * 1000
-            generated = sample_token_ids(model, prompt_ids, max_new_tokens=min(case.max_new_tokens, max_seq_len - len(prompt_ids)), max_seq_len=max_seq_len, eos_token_id=template.eos_token_id, temperature=temperature, top_p=top_p, top_k=top_k, seed=sample_seed, precision=precision)
-            terminated = bool(generated and generated[-1] == template.eos_token_id); body = generated[:-1] if terminated else generated
-            verdict = verify_behavior_v2_response(case, text=encoding.decode(body), response_token_ids=body, terminated_with_eos=terminated)
-            rows.append({"case_id": case.case_id, "semantic_id": case.semantic_id, "family": case.family, "level": case.level, "partition": case.partition, "sample": sample_index, "seed": sample_seed, "prompt": case.messages[-1].content, "answer": case.answer, **verdict})
+            request = GenerationRequest(tuple(prompt_ids), min(case.max_new_tokens, max_seq_len - len(prompt_ids)), sample_seed)
+            work.append((case, sample_index, sample_seed, request))
+    view = "greedy" if temperature == 0.0 else "sampled"
+    generated_rows = sample_token_ids_batched(model, [item[3] for item in work], max_seq_len=max_seq_len, eos_token_id=template.eos_token_id, temperature=temperature, top_p=top_p, top_k=top_k, precision=precision, batch_size=DEFAULT_GENERATION_BATCH_SIZE, progress_label=f"behavior-v2/{view}")
+    rows = []
+    for (case, sample_index, sample_seed, _), generated in zip(work, generated_rows, strict=True):
+        terminated = bool(generated and generated[-1] == template.eos_token_id); body = generated[:-1] if terminated else generated
+        verdict = verify_behavior_v2_response(case, text=encoding.decode(body), response_token_ids=body, terminated_with_eos=terminated)
+        rows.append({"case_id": case.case_id, "semantic_id": case.semantic_id, "family": case.family, "level": case.level, "partition": case.partition, "sample": sample_index, "seed": sample_seed, "prompt": case.messages[-1].content, "answer": case.answer, **verdict})
     return rows
 
 
@@ -198,7 +204,7 @@ def evaluate_behavior_v2(model: nn.Module, *, precision: str, max_seq_len: int, 
     cases = _select(partition, max_cases)
     greedy = _run(model, precision=precision, max_seq_len=max_seq_len, cases=cases, temperature=0.0, top_p=1.0, top_k=0, seeds=(17,))
     sampled_rows = _run(model, precision=precision, max_seq_len=max_seq_len, cases=cases, temperature=1.0, top_p=1.0, top_k=0, seeds=SAMPLED_ROBUSTNESS_SEEDS) if sampled else []
-    return {"schema": "small-llm-sft-behavior-v2", "suite_identity": {"semantic_tasks": len(BEHAVIOR_V2_TASKS), "cases": len(BEHAVIOR_V2_CASES), "diagnostic_cases": 480, "qualification_cases": 240, "families": list(FAMILIES), "levels": list(LEVELS)}, "selection": {"partition": partition, "cases": len(cases)}, "greedy": {"sampling": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(greedy), "cases": greedy}, "sampled_robustness": {"sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "seeds": list(SAMPLED_ROBUSTNESS_SEEDS)}, "summary": _summary(sampled_rows) if sampled_rows else {"cases": 0}, "cases": sampled_rows}}
+    return {"schema": "small-llm-sft-behavior-v2", "suite_identity": {"semantic_tasks": len(BEHAVIOR_V2_TASKS), "cases": len(BEHAVIOR_V2_CASES), "diagnostic_cases": 480, "qualification_cases": 240, "families": list(FAMILIES), "levels": list(LEVELS)}, "selection": {"partition": partition, "cases": len(cases)}, "execution": {"length_bucketed": True, "max_batch_size": DEFAULT_GENERATION_BATCH_SIZE}, "greedy": {"sampling": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(greedy), "cases": greedy}, "sampled_robustness": {"sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "seeds": list(SAMPLED_ROBUSTNESS_SEEDS)}, "summary": _summary(sampled_rows) if sampled_rows else {"cases": 0}, "cases": sampled_rows}}
 
 
 def _binom_p(k: int, n: int) -> float:
