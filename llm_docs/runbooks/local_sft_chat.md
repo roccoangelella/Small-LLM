@@ -63,6 +63,14 @@ Completed 100M / 2B SFT default:
 python chat.py --model_params 100M --num_tokens 2B --sft
 ```
 
+Completed 100M / 10B SFT default:
+
+```bash
+python chat.py --model_params 100M --num_tokens 10B --sft
+```
+
+The 100M / 10B SFT profile resolves `100m-10b-sft-s0-2b10pct-data-001`. It uses the normal GPT-2 tokenizer and the same completed-checkpoint verification path as the other SFT profiles. The corresponding 100M / 10B pretrained profile is intentionally not registered in `chat.py`.
+
 A different completed SFT run in the same profile can be selected explicitly without changing the registered default. For example, the 10% S0 experiment is:
 
 ```bash
@@ -152,8 +160,8 @@ For SFT profiles, the CLI downloads the verified Hugging Face `latest` checkpoin
 
 1. valid checkpoint/local manifests;
 2. SFT pipeline identity with `stage=sft_s0`;
-3. a WSD trainer schedule;
-4. `consumed_tokens == warmup_tokens + stable_tokens + decay_tokens`;
+3. a supported WSD or WSqD trainer schedule;
+4. exact completion of the schedule horizon: `warmup_tokens + stable_tokens + decay_tokens` for WSD, or `cooldown_start_tokens + decay_tokens` for WSqD;
 5. `semantic_vocab_size=50_257`.
 
 For R-SFT profiles, the same verified post-training checkpoint path is used, but the loader additionally requires the atomic `r_sft_r0` format, the exact `<think>`, `</think>`, `<answer>` reasoning-token contract, and `semantic_vocab_size=50_260`.
