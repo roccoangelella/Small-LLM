@@ -10,7 +10,9 @@ The current model family is a dense hybrid:
 
 ## Current stage
 
-The approximately-20M-parameter model has completed the 100M- and 500M-token scaling points. The active pretraining experiment is the fresh approximately-2B-token point, using the same model geometry with the qualified mixed-FLA GDN-2 CUDA backend from update 1. SFT qualification on the completed 500M parent is authorized in parallel.
+The 20M scaling series through 2B target tokens is complete, as are the 100M/2B and 100M/10B pretraining points. The current 100M/10B pretrained endpoint is `step-00076294` at 10,000,007,168 consumed target tokens.
+
+Active work is now post-pretraining: the 100M/10B S0 SFT trajectory is using the frozen same-data recipe recorded in the project decisions, and ADR 0144 defines two short post-completion 100M/10B pretraining probes that hold LR at `1e-5` and `2e-5` to test whether the tail plateau came from terminal decay rather than model/data saturation.
 
 Current state and next gates live in:
 
@@ -23,7 +25,9 @@ Current state and next gates live in:
 dataset/      consolidated deterministic corpus/profile/verification/eval tooling
 model/        geometry-scalable GDN-2 hybrid decoder
 trainer/      optimization, checkpointing, evaluation, and generation
-kaggle/       current T4 launch and publication entry points
+kaggle/       T4 launch, SFT, diagnostic, evaluation, and publication entry points
+beam/         alternate Beam provider adapter and reproduction procedures
+modal/        Modal provider adapter and reproduction procedures
 tests/        offline correctness and repository-contract tests
 journals/     informal study notes
 llm_docs/     authoritative project memory
@@ -33,7 +37,7 @@ The old decoded-text/Gemini curation pipeline, per-budget dataset qualification 
 
 ## Main commands
 
-Install the complete supported project runtime, including model execution, Hugging Face transport, W&B, post-training utilities, and the Beam SDK:
+Install the complete supported project runtime:
 
 ```bash
 uv sync
@@ -47,25 +51,29 @@ Inspect the frozen finite-dataset profiles:
 python -m dataset.qualification profiles
 ```
 
-Launch or exactly resume the active 20M-model/2B-token Kaggle run:
+Inspect the stable Kaggle launcher surfaces:
 
 ```bash
-python kaggle/launch.py train --model 20M --tokens 2B
+python kaggle/launch.py --help
+python kaggle/launch_sft.py --help
+python kaggle/launch_r_sft.py --help
 ```
 
-Build/verify/publish a fixed finite dataset through the same profile registry:
+Inspect the current 100M/10B post-completion pretraining probes without allocating a GPU:
 
 ```bash
-python kaggle/launch.py publish --model 20M --tokens 2B
+python kaggle/src/probes_100m_10b.py --dry-run
 ```
 
-Build and run the frozen evaluation suite:
+Build the frozen evaluation corpus and inspect the active evaluation-v2 entrypoints:
 
 ```bash
 small-llm-eval-data build --output-dir /data/eval_core_v1
-small-llm-eval fast --eval-dir /data/eval_core_v1 --output-json artifacts/eval-fast.json
-small-llm-eval full --eval-dir /data/eval_core_v1 --output-json artifacts/eval-full.json
+small-llm-eval --help
+small-llm-sft-eval --help
 ```
+
+Full pretraining evaluation v2 uses the separately pinned `lm-evaluation-harness==0.4.12` dependency from `requirements-eval.txt`; evaluation dependencies are intentionally kept outside the training lock.
 
 Run the offline repository tests:
 

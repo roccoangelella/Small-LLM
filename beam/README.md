@@ -2,6 +2,8 @@
 
 `beam/launch.py` is the Beam counterpart of `modal/launch.py`. It keeps the same Small-LLM scientific and checkpoint contract while binding execution to Beam Functions, GPUs, secrets, and distributed Volumes.
 
+The Beam adapter remains an alternate provider surface, but the original 100M/10B pretraining trajectory is complete at `step-00076294` / 10,000,007,168 consumed target tokens. The 100M/10B procedures below are therefore reproduction/provider-qualification material, not an active instruction to launch another full trajectory. Current project state lives in [`../llm_docs/current/status.md`](../llm_docs/current/status.md).
+
 Beam is a Python SDK plus CLI and is included by the project's canonical `uv sync` environment. Run the launcher from the repository root so Beam syncs the complete checkout.
 
 ## Setup
@@ -26,9 +28,9 @@ beam volume create small-llm-cache
 beam machine list
 ```
 
-The adapter deliberately allows only the Beam serverless lane recorded by the current project decision: `RTX5090`, `RTX4090`, and `A10G`. `RTX5090` is the default. `H100` is intentionally rejected by the Beam launcher so Beam credits cannot accidentally spill into an on-demand H100; use the existing Modal lane when H100 is the intended comparison.
+The adapter deliberately allows only the Beam serverless lane recorded by the project decisions: `RTX5090`, `RTX4090`, and `A10G`. `RTX5090` is the default. `H100` is intentionally rejected by the Beam launcher so Beam credits cannot accidentally spill into an on-demand H100; use the Modal lane when H100 is the intended comparison.
 
-## Dry run and authorized full launch
+## 100M/10B reproduction and provider qualification
 
 The Beam adapter can be resolved without allocating a GPU:
 
@@ -36,24 +38,19 @@ The Beam adapter can be resolved without allocating a GPU:
 uv run python beam/vps_train.py --model 100M --tokens 10B --gpu RTX5090 --dry-run
 ```
 
-ADR 0071 closes the behavioral launch gate and authorizes the full trajectory.
-The completed dataset is fed from the VPS-populated Beam Volume, so launch the
-real trajectory through the VPS wrapper:
+ADR 0071 authorized the full trajectory when this run was active. Rerun the real command only when intentionally reproducing the Beam trajectory or requalifying the provider contract:
 
 ```bash
 uv run python beam/vps_train.py --model 100M --tokens 10B --gpu RTX5090
 ```
 
-Do not pass `--max-steps-this-session`: the approximately-5B Kaggle evaluation
-runs concurrently and does not pause the Beam trajectory. Capture the rolling
-HF checkpoint at step 38,000 before step 38,500 replaces the live pointer; see
-[`../llm_docs/runbooks/100m_10b_beam.md`](../llm_docs/runbooks/100m_10b_beam.md).
+The old concurrent approximately-5B Kaggle evaluation and the rolling step-38,000 capture were lifecycle-specific controls for the original run; they are no longer current launch requirements. Their exact historical procedure remains in [`../llm_docs/runbooks/100m_10b_beam.md`](../llm_docs/runbooks/100m_10b_beam.md).
 
 A fresh Beam trajectory probes real forward/backward execution at microbatch `8, 12, 16`. OOM, non-finite, and >90%-reserved-memory candidates are rejected; the fastest safe candidate is frozen. The optimizer block remains exactly 64 sequences.
 
-Under ADR 0065, the first authorized real RTX5090 allocation is the compatibility qualification and continues into training when the startup probe succeeds. No separate paid GPU smoke is required solely for Beam compatibility.
+For a fresh Beam-provider reproduction or qualification, ADR 0065 makes the first real RTX5090 allocation the compatibility qualification and allows it to continue into training when the startup probe succeeds. No separate paid GPU smoke is required solely for Beam compatibility.
 
-## 10B CPU-first allocation order
+## 10B CPU-first allocation order (reproduction contract)
 
 The incremental path is:
 
@@ -107,6 +104,6 @@ The frozen profile name `modal-2b-b64` is retained for dataset identity compatib
 
 ## Runtime
 
-The Beam adapter has two GPU image lanes. RTX5090 uses CUDA 12.8.1 plus the official PyTorch 2.10 `cu128` wheel because Blackwell first gains CUDA toolkit support in CUDA 12.8. RTX4090/A10G use the CUDA 12.4.1 host family plus PyTorch 2.10 `cu126`. Both keep `fla-core==0.5.2`. Triton caches are keyed by compute capability, so Blackwell, Ada, and Ampere compile/cache independently. The first paid RTX5090 segment is still a live compatibility qualification for FLA/Triton; the image choice does not assume the kernel will pass.
+The Beam adapter has two GPU image lanes. RTX5090 uses CUDA 12.8.1 plus the official PyTorch 2.10 `cu128` wheel because Blackwell first gains CUDA toolkit support in CUDA 12.8. RTX4090/A10G use the CUDA 12.4.1 host family plus PyTorch 2.10 `cu126`. Both keep `fla-core==0.5.2`. Triton caches are keyed by compute capability, so Blackwell, Ada, and Ampere compile/cache independently. Any future paid RTX5090 use remains a live compatibility qualification for FLA/Triton; the image choice does not assume the kernel will pass.
 
-The scientific contract remains FP16 autocast with FP32 master parameters, GDN-2 hybrid, context 2048, block 64, hybrid Muon+AdamW, manifest-derived WSD, seed 17, checkpoint/evaluation cadence 250, and exact data-cursor resume.
+The reproduced original Beam 10B contract remains FP16 autocast with FP32 master parameters, GDN-2 hybrid, context 2048, block 64, hybrid Muon+AdamW, manifest-derived WSD, seed 17, checkpoint/evaluation cadence 250, and exact data-cursor resume.

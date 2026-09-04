@@ -1,140 +1,43 @@
 ---
 status: current
-last_reviewed: 2026-08-31
+last_reviewed: 2026-09-04
 ---
 
 # Current roadmap
 
-## Completed scaling gates
+## Current position
 
-The fresh 20M/2B data-scaling run is complete at `step-00061066` / 2,001,000,448 consumed targets. The 100M/2B Modal run is complete at final `step-00015267` / 2,001,000,448 consumed targets. The frozen `eval_core_v1` comparison against the 20M/500M endpoint is recorded in [`../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md`](../evidence/scaling/20m_500m_20m_2b_100m_2b_full_eval_2026-08-13.md).
+- The 20M scaling series through 2B is complete.
+- 100M/2B pretraining is complete at 2,001,000,448 consumed target tokens.
+- 100M/10B deep-decay pretraining is complete at `step-00076294` / 10,000,007,168 consumed target tokens.
+- Evaluation v2 is active under ADRs 0140 and 0141.
+- The 100M/10B S0 SFT trajectory `100m-10b-sft-s0-2b10pct-data-001` has been restarted after a Kaggle T4 session-time interruption; that interruption is infrastructure evidence, not a model-quality result.
+- ADR 0144 defines the current post-completion pretraining diagnostic: one launcher, two constant-LR holds (`1e-5`, `2e-5`), 3,000 updates per branch, preferred source `step-00071750`, strict current-best fallback from the same dedicated best-model repository, and no rolling-latest fallback.
 
-The intrinsic scaling result is clear: 20M still gains from 500M→2B, but unevenly; 100M/2B improves all retained clusters and all context-position buckets relative to 20M/2B. Treat 20M as capacity-constrained by the 2B endpoint unless later evidence overturns that interpretation.
+## Immediate priorities
 
-## Active scaling trajectory — deep-decay step-15,500 continuation through 10B
+1. Complete or exactly resume the 100M/10B SFT trajectory under its existing checkpoint/data contract.
+2. Run evaluation-v2 SFT qualification after completion and compare the SFT model with the 100M/10B parent using the primary Behavior v2 suite, frozen `eval_core_v1`, masked-loss diagnostics, and the defined sampled-robustness view.
+3. Run the ADR-0144 `hold-1e-5` and `hold-2e-5` pretraining probes from the same source/data continuation and compare their validation trajectories. The purpose is to test whether the apparent 10B tail plateau is explained by terminal LR decay rather than by model/data saturation.
+4. Re-evaluate completed pretrained checkpoints with evaluation v2 where needed so subsequent scale decisions use one protocol.
+5. Keep completed 100M/10B provider/run procedures as reproduction and recovery references, not as active launch authorization.
 
-ADR 0114 supersedes ADR 0099's Kaggle execution choice while retaining ADR
-0095's complete scientific schedule. ADR 0095 had already superseded ADR 0094,
-ADR 0093, ADR 0092, and the original long flat-`3e-4` WSD trajectory. The main
-continuation keeps the separate run ID
-`100m-10b-deep-decay-from-step15500` and executes through
-`modal run --detach modal/launch.py --action deep-decay --model 100M --tokens
-10B` on one exact Modal H100.
+## Next decision gate
 
-Preserve the step-15,500 model ancestry, optimizer, scaler, RNG, data cursor,
-exact 10B corpus order, frozen 16-block validation prefix, global 64-sequence
-optimizer block, FP16, GDN-2, and hybrid Muon+AdamW. Modal resumes the newest
-manifest-verified checkpoint in its own continuation namespace, currently
-Bucket `step-00070250`; only an empty continuation namespace may fall back to
-the exact original step 15,500. One H100 rewrites only execution slicing to
-microbatch 16, giving four ordered accumulations per unchanged optimizer
-update. For the prior two-T4 state, byte-identical rank-zero CUDA RNG bytes
-become the single live device state while the original two-rank tree remains
-in the hidden provider-migration backup.
+Do not authorize another long pretraining trajectory solely because an execution path is available. The next scaling decision should use, at minimum:
 
-The accepted schedule is:
+- the 100M/10B endpoint relative to 100M/2B under evaluation v2;
+- the two low-LR probe trajectories from ADR 0144;
+- the completed 100M/10B SFT qualification.
 
-```text
-source step:                 15,500
-source targets:              2,031,616,000
-source LR:                   3.0e-4
-
-phase 1:                     cosine settle
-settle span:                 300,023,808 targets / 2,289 updates
-settle end step:             17,789
-settle end targets:          2,331,639,808
-settle end LR:               1.0e-4
-
-phase 2:                     calibrated power-law base
-formula:                     1.0e-4 * (2,331,639,808 / committed_targets)^p
-p:                           ~1.6270515945
-cooldown start step:         73,242
-cooldown start targets:      9,599,975,424
-LR at cooldown start:        1.0e-5
-
-phase 3:                     linear terminal cooldown
-cooldown span:               400,031,744 targets / 3,052 updates
-cooldown start LR:           1.0e-5
-final LR:                    5.0e-6
-final step:                  76,294
-final targets:               10,000,007,168
-```
-
-The calibrated phase-2 exponent is chosen from the exact `1e-4 -> 1e-5` endpoint requirement rather than from a generic inverse-square-root default. This is materially steeper than the approximately `0.5` power used by standard WSqD-like continuation schedules and is intentionally project-specific evidence-driven experimentation. Approximate phase-2 landmarks are `8.26e-5` at step 20,000, `5.75e-5` at step 25,000, `4.27e-5` at step 30,000, `2.68e-5` at step 40,000, `1.86e-5` at step 50,000, `1.38e-5` at step 60,000, and `1.08e-5` at step 70,000.
-
-The launcher must fail closed if neither a manifest-verified deep-decay
-continuation checkpoint nor the exact original step-15,500 source is available.
-It CPU-stages and verifies the checkpoint-aligned dataset window before H100
-allocation and keeps local/W&B/HF checkpoint namespaces separate from the
-original run and all superseded continuation branches. Modal publishes the live
-continuation to HF every 250 successful updates and at a segment boundary. The
-previous app stopped after creating a valid local step 61,750 because the old
-model-repository transport hit quota; this was a durability-backend failure, not
-a training failure. ADR 0132 moved rolling state to the mutable Bucket. The
-resumed Modal segment reached W&B step 70,291 and durably published
-`step-00070250`, so exact recovery starts at block 70,250 and intentionally
-replays the 41 later non-durable updates. The dedicated best-model repository
-currently selects step 68,250 at validation loss `2.824985434883274`.
-
-A Kaggle failover launched from stale committed restore code read only the
-legacy shared model-repository pointer at step 61,500 and replayed through at
-least step 61,574. Stop that duplicate process. The repaired Kaggle CPU gate
-compares Bucket and legacy pointers, must select and verify Bucket step 70,250,
-rewrites only the authorized execution topology, and reads back Bucket latest
-before allocating T4s. See
-[`../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](../evidence/scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md).
-
-Canonical procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
-
-## Active diagnostics — earlier post-15,500 branches
-
-ADR 0091's `100m-10b-decay-probe-step15500` branch remains useful schedule evidence. The ADR-0093 `100m-10b-aggressive-wsqd-from-step15500` branch showed validation loss falling during its fast settle and then rising after transition to the gentler long phase. ADR 0094 is also historical schedule evidence but is no longer the authorized main trajectory.
-
-Do not promote any diagnostic/older continuation checkpoint into the new 10B run and do not reheat a cooled model. The active continuation always starts from the original uncooled step-15,500 checkpoint unless it is resuming its own manifest-verified Kaggle deep-decay namespace.
-
-## Completed engineering lane — 100M / 10B data path
-
-The deterministic corpus is complete and verified in HF and Beam. Preserve these invariants during any 10B-corpus consumption:
-
-- pinned ClimbMix source, tokenizer, cluster policy, and exact mixture;
-- approximately-1-GiB immutable HF dataset shards;
-- upload + independent remote hash verification before durable cursor/READY publication;
-- frozen 16-block validation prefix;
-- CPU staging establishes the checkpoint-aligned current+successor lead window before GPU work;
-- the active Modal worker consumes exact block order and fails closed rather than skipping or reordering;
-- Modal keeps the frozen 64-sequence global optimizer block on one exact H100, with execution microbatch 16 and four ordered slices;
-- rolling exact-resume `latest` checkpoints remain in the HF checkpoint Storage Bucket, strict validation-loss `best` remains in a dedicated recreate-on-improvement HF model repository, and dataset shards remain in the HF dataset Storage Bucket.
-- the same split is the default native-pretraining transport for Modal, Beam, and Kaggle deep-decay; those providers read Bucket latest first and use legacy model-repository state only for verified CPU-side migration.
-
-The original 76,294-update / 10,000,007,168-target ADR-0057 WSD contract remains historical/reproducible, but it is no longer authorized as the main continuation schedule under ADR 0099/0095.
-
-Historical Beam full-run procedure: [`../runbooks/100m_10b_beam.md`](../runbooks/100m_10b_beam.md). Historical Kaggle deep-decay procedure: [`../runbooks/100m_10b_deep_decay_kaggle.md`](../runbooks/100m_10b_deep_decay_kaggle.md). Active deep-decay procedure: [`../runbooks/100m_10b_deep_decay_modal.md`](../runbooks/100m_10b_deep_decay_modal.md).
-
-## Post-training lane
-
-The 100M/2B R-SFT R0 12,306-row trajectory is complete at `step-00000361` under run ID `100m-2b-rsft-r0-12306-001`; it is the current accepted R-SFT chat artifact. The earlier atomic pilot, 10-epoch repeat probe, and textual pilot are historical experiment identities only and their Hugging Face run namespaces have been deleted.
-
-The immediate post-training work is evaluation/behavioral inspection of this completed checkpoint, not another same-corpus retrain. Use the registered `chat.py --model_params 100M --num_tokens 2B --r-sft` path or an explicit matching `--run-id`. Any qualification result should be recorded as new evidence without mutating the completed trajectory.
-
-The larger R-SFT corpus is complete under ADR 0106 and promoted to the standard Kaggle training input under ADR 0108. It contains 16,716 rows at SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405` (7,683 unchanged Superior rows, 8,403 unique simplified Superior rows, 630 Gemini anchors), with 70 collision exclusions. The verified 90/10 atomic bundle has 417 train blocks and 13,420,823 train targets. ADR 0111 permits explicit exact production repeats via `--num-epochs`; two epochs are 834 steps and default to `100m-2b-rsft-r0-16716-e2-001`, while one epoch retains `100m-2b-rsft-r0-16716-001`. Never resume `100m-2b-rsft-r0-12306-001` with this corpus. The intermediate 12,306-row corpus file is retired from the current tree, while its trained checkpoint remains the accepted chat/eval model until replacement training is qualified.
-
-The first 20M/500M S0 behavioral failure remains historical evidence and does not override the now-completed 100M/2B S0→R-SFT trajectory.
-
-## Open decisions
-
-- How does the completed 12,306-row R-SFT R0 checkpoint behave under direct chat and the next frozen reasoning qualification suite, especially on atomic `<think>`/`<answer>` protocol use and generalization beyond the training templates?
-- Does the deep-decay 10B continuation keep validation loss falling after step 17,789, or does the much steeper long-phase power law under-train later fresh data?
-- How does the completed step-15,500 400M cooldown probe compare with the completed 100M/2B endpoint under frozen `eval_core_v1`?
-- Which pre-terminal-cooldown checkpoint should be retained as the continuation anchor if training is later extended beyond 10B?
-- What controlled SFT recipe follows the failed S0 qualification?
-- Which external standardized zero-shot tasks enter the first public scorecard?
+After those results are available, choose explicitly between more data at fixed 100M scale, a geometry/architecture change, or shifting additional effort toward post-training. Record that choice in a new ADR. No 50B- or 100B-token pretraining trajectory is authorized by this roadmap.
 
 ## Frozen boundaries still in force
 
-- New finite scaling trajectories start from fresh initialization unless a later ADR says otherwise; ADRs 0091, 0099, and 0114 are explicit continuation/diagnostic exceptions.
-- Context remains 2,048 for these comparisons.
+- Context remains 2,048 for the current comparison family.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
-- The ADR-0114 Modal lane may change only execution slicing/topology while preserving the exact 64-sequence optimizer update and checkpointed scientific state.
-- New dataset durability uses HF Storage Buckets, not Google Drive.
-- Stable model artifacts use the `models/...` namespace; live exact-resume checkpoints use `run/...`.
-- Canonical qualitative comparison settings come from ADR 0025, not software sampling defaults.
+- New dataset durability uses Hugging Face Storage Buckets, not Google Drive.
+- Live exact-resume checkpoints and strict validation-loss best artifacts remain separate according to ADR 0132.
+- Canonical sampled qualitative decoding is `temperature=1`, `top_p=1`, `top_k=0`.
+- Pretraining EOS termination is not a metric.
+- Teacher-forced confidence and masked SFT losses remain diagnostics rather than headline capability scores.

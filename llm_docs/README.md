@@ -39,17 +39,22 @@ This directory is the repository's system of record and uses progressive disclos
 
 ## Current operational entry points
 
+- [`runbooks/modal_training_launcher.md`](runbooks/modal_training_launcher.md) — current Modal provider launcher contract.
+- [`runbooks/unified_kaggle_launcher.md`](runbooks/unified_kaggle_launcher.md) — stable Kaggle pretraining/data launcher surface.
+- [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md) — frozen eval-core construction/verification.
+- [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md) — qualitative base-model evaluation procedure.
+- [`runbooks/sft_s0_runbook.md`](runbooks/sft_s0_runbook.md) — S0 preparation/training/evaluation procedure.
+- [`runbooks/rsft_r0_atomic_production.md`](runbooks/rsft_r0_atomic_production.md) — atomic R-SFT production procedure.
+
+## Completed 100M/10B pretraining reproduction procedures
+
+The 100M/10B pretrained endpoint is complete at `step-00076294` / 10,000,007,168 target tokens. These runbooks remain useful for exact reproduction, provider recovery, and historical incident analysis; they are not current authorization to start another full 10B trajectory:
+
 - [`runbooks/100m_10b_deep_decay_modal.md`](runbooks/100m_10b_deep_decay_modal.md)
 - [`runbooks/100m_10b_beam.md`](runbooks/100m_10b_beam.md)
 - [`runbooks/100m_10b_incremental_modal.md`](runbooks/100m_10b_incremental_modal.md)
-- [`runbooks/modal_training_launcher.md`](runbooks/modal_training_launcher.md)
-- [`runbooks/unified_kaggle_launcher.md`](runbooks/unified_kaggle_launcher.md)
-- [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md)
-- [`runbooks/post_pretraining_prompt_suite.md`](runbooks/post_pretraining_prompt_suite.md)
-- [`runbooks/sft_s0_runbook.md`](runbooks/sft_s0_runbook.md)
-- [`runbooks/rsft_r0_atomic_production.md`](runbooks/rsft_r0_atomic_production.md)
 
-Completed scaling-stage reproduction procedures remain indexed from [`runbooks/README.md`](runbooks/README.md).
+Other completed scaling-stage reproduction procedures remain indexed from [`runbooks/README.md`](runbooks/README.md).
 
 ## Memory-writing contract
 
