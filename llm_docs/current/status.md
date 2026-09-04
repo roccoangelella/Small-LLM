@@ -13,6 +13,7 @@ Last reviewed: 2026-09-04
 - ADR 0146 makes `kaggle/probes_100m_10b.py` the stable operator entrypoint and normalizes repository, `kaggle/src`, `beam/`, and cached `runtime` module paths before delegating to the ADR-0144 implementation. This fixes the post-`src/`-move runtime error that incorrectly expected `kaggle/beam/runtime.py`.
 - ADR 0147 keeps all evaluation-v2 benchmark cases and scoring contracts unchanged while batching L20 conditional-likelihood requests, Base Prompt v2 generation, and SFT Behavior v2 generation. L20 is length-bucketed with a 16-request / 8,192-padded-token cap; generated views use per-request RNG generators and a 16-request batch cap. Coarse progress reporting is now mandatory for these long phases.
 - ADR 0148 registers the completed `100m-10b-sft-s0-2b10pct-data-001` trajectory as the `(100M, 10B)` SFT default in `chat.py`; `python chat.py --model_params 100M --num_tokens 10B --sft` now uses the existing fail-closed SFT checkpoint loader, while the `(100M, 10B)` pretrained chat profile remains unregistered.
+- ADR 0149 corrects the Base Prompt v2 construction bug: the active full set now contains 120 unique prompt texts and IDs, with exactly 20 unique scored prompts in each of the five scored families and 20 unique qualitative prompts. Older recycled-template Base Prompt v2 aggregates are historical defective evidence and must not be interpreted as a 100-unique-prompt statistic.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
@@ -90,7 +91,7 @@ SFT Behavior v2 is the primary instruction-following evaluation:
 - greedy primary plus sampled robustness over seeds 17/18/19;
 - paired parent/SFT wins, losses, ties and exact McNemar statistics.
 
-Behavior v2 generation is now length-bucketed and evaluated in batches of up to 16 independent requests while preserving each case/seed identity and restoring the original output order. Base Prompt v2 uses the same evaluation-only batching helper. This is an execution optimization only; task counts, prompt texts, decoding parameters, native generation budgets, scoring and paired statistics are unchanged.
+Behavior v2 generation is length-bucketed and evaluated in batches of up to 16 independent requests while preserving each case/seed identity and restoring the original output order. Base Prompt v2 uses the same evaluation-only batching helper. ADR 0149 changes the Base Prompt v2 prompt definitions only to remove recycled cases; its decoding parameters, native generation budgets and batching semantics are unchanged.
 
 ## R-SFT
 
@@ -113,8 +114,11 @@ Canonical full pretraining qualification now consists of:
 1. frozen `eval_core_v1`;
 2. six-task L20-Edu-style zero-shot conditional-likelihood evaluation using
    `lm-evaluation-harness==0.4.12`;
-3. an expanded 120-prompt base-model suite with 100 mechanically scored cases
-   and 20 readable qualitative continuations.
+3. the corrected Base Prompt v2 set `base-prompt-v2-unique-120-2026-09-04`, with
+   100 unique mechanically scored cases (20 per scored family) and 20 unique
+   readable qualitative continuations.
+
+The active Base Prompt v2 constructor fails closed if any case ID or prompt text is duplicated or if the 100/20 and per-family counts drift. Results produced by the earlier recycled-template implementation must not be treated as directly comparable 100-unique-prompt aggregates. This correction does not affect `eval_core_v1` or L20 results.
 
 The six external tasks are ARC-Challenge, ARC-Easy, HellaSwag, LAMBADA OpenAI,
 PIQA and WinoGrande. Full qualification should use all available benchmark examples.
