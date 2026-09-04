@@ -274,3 +274,8 @@ artifacts/**/batches/
 /artifacts/rsft-superior-stage2-scaling/
 /artifacts/rsft-r0-pilot-630/
 /artifacts/rsft-superior-instruction-r0/
+
+# Local agent tooling state
+/.agents/
+/.Agents/
+/.pi/
