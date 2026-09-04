@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 EXPECTED_PARENT_RUN_ID = "100m-10b-deep-decay-from-step15500"
 EXPECTED_PARENT_POINTER = "latest"
 
@@ -78,4 +82,4 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 
-__all__ = ["EXPECTED_PARENT_POINTER", "EXPECTED_PARENT_RUN_ID", "main"]
+__all__ = ["EXPECTED_PARENT_POINTER", "EXPECTED_PARENT_RUN_ID", "REPO", "main"]
