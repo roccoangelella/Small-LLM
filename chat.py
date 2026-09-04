@@ -1,11 +1,12 @@
 # Usage:
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
 #   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
+#   python chat.py --model_params 100M --num_tokens 10B --sft        # completed 100M/10B SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --sft --run-id RUN_ID     # explicit SFT experiment
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft --run-id RUN_ID  # explicit R-SFT experiment
 # --model_params: model parameter profile (for example 20M or 100M)
-# --num_tokens: parent pretraining token profile (for example 500M or 2B)
+# --num_tokens: parent pretraining token profile (for example 500M, 2B, or 10B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
 TEMPERATURE = 1.0
@@ -45,6 +46,7 @@ _SFT_CHAT_RUNS = {
     (20_000_000, 500_000_000): ("20m-500m-sft-s0-001", _SOURCE_SFT),
     (20_000_000, 2_000_000_000): ("20m-2b-sft-s0-001", _SOURCE_SFT),
     (100_000_000, 2_000_000_000): ("100m-2b-sft-s0-10pct-peak3000-001", _SOURCE_SFT),
+    (100_000_000, 10_000_000_000): ("100m-10b-sft-s0-2b10pct-data-001", _SOURCE_SFT),
 }
 _R_SFT_CHAT_RUNS: dict[tuple[int, int], tuple[str, str]] = {
     (100_000_000, 2_000_000_000): (
