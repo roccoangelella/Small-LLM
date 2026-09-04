@@ -7,6 +7,11 @@ implementation still derives repository paths relative to its old location.
 Normalize those execution-only paths here before delegating so the shared
 provider-neutral runtime resolves from ``beam/runtime.py`` and the dual-T4
 wrapper resolves from ``kaggle/src``.
+
+The scientific implementation can bootstrap a private Hugging Face Hub runtime
+by re-executing ``Path(__file__)``. Point its execution file back at this public
+wrapper so that bootstrap restart preserves the same path normalization instead
+of accidentally jumping into the lower-level ``kaggle/src`` module.
 """
 from __future__ import annotations
 
@@ -42,6 +47,11 @@ def _normalize_deep_decay_paths(impl) -> None:
     deep_impl.ROOT = ROOT
     deep_impl.KAGGLE = SRC
     deep_impl.BEAM = BEAM
+
+    # Keep private-HF bootstrap re-exec on the stable public entrypoint. The
+    # implementation's _ensure_probe_hf_runtime() executes Path(__file__), so
+    # leaving __file__ pointed at kaggle/src would discard this normalization.
+    impl.__file__ = str(Path(__file__).resolve())
 
     # A prior Kaggle import may already have cached ``runtime`` from
     # kaggle/src/runtime.py. The deep-decay helper needs beam/runtime.py.
