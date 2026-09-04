@@ -12,6 +12,7 @@ Last reviewed: 2026-09-04
 - ADR 0145 synchronizes active README lifecycle wording with this status file and requires completed-run procedures to be labeled as reproduction/history rather than current launch authorization.
 - ADR 0146 makes `kaggle/probes_100m_10b.py` the stable operator entrypoint and normalizes repository, `kaggle/src`, `beam/`, and cached `runtime` module paths before delegating to the ADR-0144 implementation. This fixes the post-`src/`-move runtime error that incorrectly expected `kaggle/beam/runtime.py`.
 - ADR 0147 keeps all evaluation-v2 benchmark cases and scoring contracts unchanged while batching L20 conditional-likelihood requests, Base Prompt v2 generation, and SFT Behavior v2 generation. L20 is length-bucketed with a 16-request / 8,192-padded-token cap; generated views use per-request RNG generators and a 16-request batch cap. Coarse progress reporting is now mandatory for these long phases.
+- ADR 0148 registers the completed `100m-10b-sft-s0-2b10pct-data-001` trajectory as the `(100M, 10B)` SFT default in `chat.py`; `python chat.py --model_params 100M --num_tokens 10B --sft` now uses the existing fail-closed SFT checkpoint loader, while the `(100M, 10B)` pretrained chat profile remains unregistered.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
@@ -53,10 +54,21 @@ worktree/launch configuration. The same-data S0 recipe decision is recorded in
 the project ADRs.
 
 The first Kaggle execution of `100m-10b-sft-s0-2b10pct-data-001` stopped because
-the available T4 session time was exhausted. Treat the resulting W&B `failed`
-state as an infrastructure interruption, not as an SFT-quality failure. The SFT
-job was restarted on 2026-09-04; its new W&B continuation/logs may appear only
-after the restarted process reaches W&B initialization/logging.
+the available T4 session time was exhausted. That W&B `failed` state was an
+infrastructure interruption, not an SFT-quality failure. The restarted job
+completed on 2026-09-04. W&B reports the run as `finished` at global step 6,219,
+with 200,099,738 consumed loss-bearing SFT targets and final validation loss
+1.4850977542185604.
+
+The completed trajectory is now registered for local chat under ADR 0148:
+
+```bash
+python chat.py --model_params 100M --num_tokens 10B --sft
+```
+
+This path uses the normal GPT-2 tokenizer, the existing SFT chat template, and
+the existing verified-completed-checkpoint gate. No 100M/10B pretrained chat
+profile is registered.
 
 ### Active SFT qualification
 
