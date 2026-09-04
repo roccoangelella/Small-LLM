@@ -10,6 +10,7 @@ Last reviewed: 2026-09-04
 - ADR 0143 removes IRE project state (`.ire/`) from the repository and ignores the directory going forward; `llm_docs/` is the canonical project-memory system.
 - ADR 0144 consolidates current 100M/10B post-completion pretraining diagnostics in `kaggle/src/probes_100m_10b.py`; the active branches hold LR at `1e-5` and `2e-5` for 3,000 updates from the preferred step-71,750 source, with a strict same-repository current-best fallback when that artifact is unavailable.
 - ADR 0145 synchronizes active README lifecycle wording with this status file and requires completed-run procedures to be labeled as reproduction/history rather than current launch authorization.
+- ADR 0146 makes `kaggle/probes_100m_10b.py` the stable operator entrypoint and normalizes repository, `kaggle/src`, `beam/`, and cached `runtime` module paths before delegating to the ADR-0144 implementation. This fixes the post-`src/`-move runtime error that incorrectly expected `kaggle/beam/runtime.py`.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
