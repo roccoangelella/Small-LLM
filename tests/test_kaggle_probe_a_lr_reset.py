@@ -1,131 +1,51 @@
-"Static contracts for the disposable Kaggle Probe A LR-reset launcher."
+"""Static contracts for the canonical 100M/10B Kaggle probe launcher."""
 from __future__ import annotations
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-ENTRYPOINT = ROOT / "kaggle" / "probe_a_lr_reset_10b.py"
-IMPL = ROOT / "kaggle" / "probe_a_lr_reset_10b_impl.py"
+PROBES = ROOT / "kaggle" / "src" / "probes_100m_10b.py"
 
 
-def test_probe_a_entrypoint_compiles() -> None:
-    compile(ENTRYPOINT.read_text(encoding="utf-8"), str(ENTRYPOINT), "exec")
+def test_100m_10b_probes_file_compiles() -> None:
+    compile(PROBES.read_text(encoding="utf-8"), str(PROBES), "exec")
 
 
-def test_probe_a_impl_compiles() -> None:
-    compile(IMPL.read_text(encoding="utf-8"), str(IMPL), "exec")
+def test_100m_10b_probes_are_consolidated() -> None:
+    text = PROBES.read_text(encoding="utf-8")
+    assert "single home for short, W&B-visible 100M/10B pretraining probes" in text
+    assert "PROBE_NAME = \"100m-10b-probes\"" in text
+    assert "hold-1e-5" in text
+    assert "hold-2e-5" in text
+    assert "legacy-reset-1e-4" in text
 
 
-def test_probe_a_entrypoint_reexecs_itself_for_hf_runtime() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "probe_a_lr_reset_10b_impl" in text
-    assert "_ensure_probe_hf_bucket_runtime" in text
-    assert "[kaggle-probe-a]" in text
-    assert "str(Path(__file__).resolve())" in text
-    assert "deep_decay._ensure_host_hf_bucket_runtime = _noop_hf_runtime_restart" in text
-
-
-def test_probe_a_entrypoint_forces_100m_hf_identity() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "PROBE_BASE_HF_REPO_ID" in text
-    assert "roccoangelella/small-llm-100m-qualification" in text
-    assert "_force_probe_hf_identity" in text
-    assert '"SMALL_LLM_HF_REPO_ID": PROBE_BASE_HF_REPO_ID' in text
-    assert '"SMALL_LLM_HF_CHECKPOINT_BUCKET_ID"' in text
-    assert '"SMALL_LLM_HF_DATASET_BUCKET_ID"' in text
-    assert "probe_a_hf_identity_override" in text
-    assert "_force_probe_hf_identity()" in text
-
-
-def test_probe_a_entrypoint_pins_fixed_best_source_step() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert 'PROBE_SOURCE_CHECKPOINT_ID = "step-00071750"' in text
-    assert 'PROBE_SOURCE_KIND = "fixed_best_model_checkpoint"' in text
-    assert "_restore_fixed_best_checkpoint" in text
+def test_100m_10b_probes_prefer_71750_then_current_best() -> None:
+    text = PROBES.read_text(encoding="utf-8")
+    assert 'PREFERRED_SOURCE_CHECKPOINT_ID = "step-00071750"' in text
     assert "best_model.json" in text
-    assert "snapshot_download" in text
-    assert "models/{impl._impl.RUN_ID}/{PROBE_SOURCE_CHECKPOINT_ID}" in text
-    assert "_patch_impl_for_fixed_source" in text
-    assert "fixed dedicated best-model checkpoint restore" in text
-    assert "base_hf_repo_id" in text
+    assert "current_best_fallback" in text
+    assert "rolling_latest_fallback\": False" in text
+    assert "_restore_source_checkpoint" in text
 
 
-def test_probe_a_reconstructs_missing_best_checkpoint_local_manifest() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "_ensure_best_source_local_manifest" in text
-    assert "_POST_SAVE_METADATA" in text
-    assert "trainer_state.pkl" in text
-    assert "checkpoint.json" in text
-    assert "sha256_path" in text
-    assert "probe_a_rebuilt_local_manifest" in text
-    assert "local_manifest_rebuilt" in text
-    assert "verify_local_manifest(staging)" in text
-    assert "verify_local_manifest(target)" in text
-
-
-def test_probe_a_materializes_hf_cache_symlinks_before_verification() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "_materialize_best_source_checkpoint" in text
-    assert "shutil.copytree(source, staging, symlinks=False)" in text
-    assert "materialized_from_hf_cache" in text
-    assert "still contains a symlink after materialization" in text
-    assert "verify_local_manifest(source)" not in text
-    assert "_ensure_best_source_local_manifest(source)" not in text
-    assert "_ensure_best_source_local_manifest(staging)" in text
-
-
-def test_probe_a_canonicalizes_constant_branch_checkpoint_config() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "_patch_impl_probe_config_canonicalization" in text
-    assert "original_probe_config = impl._probe_config" in text
-    assert "from trainer.config import TrainerConfig" in text
-    assert "TrainerConfig(**raw).as_dict()" in text
-    assert "probe_a_canonicalized_branch_config" in text
-    assert "dropped_constant_schedule_keys" in text
-    assert "impl._probe_config = canonical_probe_config" in text
-    assert "_patch_impl_probe_config_canonicalization(impl)" in text
-
-
-def test_probe_a_entrypoint_allows_new_fixed_step_wandb_runs() -> None:
-    text = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "WANDB_RESUME=allow" in text
-    assert 'impl._replace_option(command, "--wandb-resume", "allow")' in text
-    assert "original_assert" in text
-    assert "must use --wandb-resume allow" in text
-
-
-def test_probe_a_impl_has_two_distinct_wandb_only_branches() -> None:
-    text = IMPL.read_text(encoding="utf-8")
-    assert "reset-low" in text
-    assert "reset-mid" in text
-    assert "100m-10b-probe-a-{branch.slug}-from-step{source_step}" in text
-    assert "wandb_run_id_template" in text
-    assert "--wandb-run-id" in text
-    assert "--wandb-run-name" in text
-    assert "--wandb-dir" in text
-    assert "--wandb-mode" in text
-    assert '"online"' in text
-
-
-def test_probe_a_impl_isolates_wandb_identity_per_branch() -> None:
-    text = IMPL.read_text(encoding="utf-8")
-    assert "WANDB_IDENTITY_ENV" in text
-    assert '"WANDB_RUN_ID"' in text
-    assert '"WANDB_ID"' in text
-    assert '"WANDB_NAME"' in text
-    assert '"WANDB_RESUME"' in text
-    assert "WANDB_RUN_ID={run_id}" in text
-    assert "WANDB_ID={run_id}" in text
-    assert "WANDB_RESUME=must" in text
-    assert "WANDB_RUN_GROUP={PROBE_NAME}" in text
-    assert "_with_branch_wandb_environment" in text
-    assert "_assert_branch_wandb_identity" in text
-
-
-def test_probe_a_impl_disables_hf_publication() -> None:
-    text = IMPL.read_text(encoding="utf-8")
-    assert "_publish_latest_to_bucket" not in text
-    assert "_prepare(runtime_base)" not in text
+def test_100m_10b_probes_disable_hf_publication() -> None:
+    text = PROBES.read_text(encoding="utf-8")
     assert '"--remote-publish-every-steps", "0"' in text
-    assert '"--best-model-repo"' in text
-    assert "HF publication flags are forbidden for Probe A" in text
+    assert "HF publication flags are forbidden" in text
+    assert "_publish_latest_to_bucket" not in text
+
+
+def test_100m_10b_active_probes_are_low_lr_constant_holds() -> None:
+    text = PROBES.read_text(encoding="utf-8")
+    assert 'ProbeBranch("hold-1e-5", "Hold 1e-5", 1e-5, "hold-1e-5")' in text
+    assert 'ProbeBranch("hold-2e-5", "Hold 2e-5", 2e-5, "hold-2e-5")' in text
+    assert '"schedule": "constant"' in text
+    assert "DEFAULT_PROBE_STEPS = 3_000" in text
+
+
+def test_100m_10b_probe_run_ids_encode_actual_source() -> None:
+    text = PROBES.read_text(encoding="utf-8")
+    assert "from-step{source_step}" in text
+    assert "100m-10b-probe-a-reset-low-from-step71750" in text
+    assert "wandb_run_id_template" in text
