@@ -265,9 +265,6 @@ artifacts/**/batches/
 !/artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.final.jsonl
 !/artifacts/rsft-superior-instruction-r0-adaptation/manual-curation.expanded-v2.jsonl
 
-# IRE
-.ire/cache/
-
 # R-SFT generated/historical dataset artifacts.
 # Keep only the active frozen 16,716-row base and the published 1% corpus in git.
 /artifacts/rsft-1pct-work/
@@ -275,7 +272,8 @@ artifacts/**/batches/
 /artifacts/rsft-r0-pilot-630/
 /artifacts/rsft-superior-instruction-r0/
 
-# Local agent tooling state
+# Local agent/research tooling state
 /.agents/
 /.Agents/
 /.pi/
+/.ire/
