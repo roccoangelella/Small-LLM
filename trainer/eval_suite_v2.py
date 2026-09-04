@@ -1,11 +1,9 @@
 """Active evaluation-v2 CLI for pretrained Small-LLM checkpoints.
 
-This module keeps the frozen eval_core_v1 intrinsic measurement and wires the
-new ADR-0140 evaluation layers into the normal pretrained evaluation entrypoint:
-L20-style conditional likelihood and the 100-scored/20-qualitative base prompt
-suite.  The legacy prompt runner remains available in trainer.eval_suite for
-historical replays, but this CLI does not emit the retired fixed-length
-qualitative benchmark.
+The raw checkpoint run emits three evidence layers: frozen eval_core_v1,
+L20-style conditional likelihood, and Base Prompt v2 generations. Base Prompt
+objective answers are not string-scored in this GPU process; they are judged
+later by ``trainer.base_prompt_judge`` through the project's GemRouter endpoint.
 """
 from __future__ import annotations
 
@@ -15,7 +13,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from dataset.eval_core import CONTEXT_LENGTH, canonical_json_bytes, verify_eval_core
 from trainer.eval_suite import evaluate_split
@@ -30,12 +28,15 @@ from trainer.pretraining_eval_v2 import (
     run_l20_conditional_likelihood,
 )
 
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 
 
 def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run pretrained checkpoint evaluation v2: eval_core_v1, L20 conditional likelihood, and base prompt v2."
+        description=(
+            "Run pretrained checkpoint evaluation v2: eval_core_v1, L20 "
+            "conditional likelihood, and raw Base Prompt v2 generations."
+        )
     )
     parser.add_argument("suite", choices=("fast", "full"))
     parser.add_argument("--eval-dir", type=Path, required=True)
@@ -57,17 +58,22 @@ def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--skip-l20",
         action="store_true",
-        help="debug only; production evaluation v2 includes the L20 conditional-likelihood layer",
+        help=(
+            "debug only; production evaluation v2 includes the L20 "
+            "conditional-likelihood layer"
+        ),
     )
     parser.add_argument(
         "--skip-base-prompts-v2",
         action="store_true",
-        help="debug only; production evaluation v2 includes the 100 scored + 20 qualitative base prompt suite",
+        help=(
+            "debug only; production evaluation v2 includes the 100 objective "
+            "+ 20 qualitative Base Prompt generation layer"
+        ),
     )
 
     # Retired prompt-runner flags are accepted for command compatibility, but
-    # deliberately ignored by evaluation v2. The v2 prompt layer has fixed
-    # greedy and sampled contracts from ADR 0140.
+    # deliberately ignored by evaluation v2.
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--top-k", type=int, default=50)
@@ -91,23 +97,20 @@ def _arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def _metric_mean(section: object) -> float | None:
-    if not isinstance(section, dict):
+    if not isinstance(section, Mapping):
         return None
     value = section.get("mean_6")
     return float(value) if isinstance(value, (int, float)) else None
 
 
-def _prompt_accuracy(prompt_suite: object, view: str) -> float | None:
-    if not isinstance(prompt_suite, dict):
+def _prompt_judge_status(prompt_suite: object) -> str | None:
+    if not isinstance(prompt_suite, Mapping):
         return None
-    selected = prompt_suite.get(view)
-    if not isinstance(selected, dict):
+    contract = prompt_suite.get("scoring_contract")
+    if not isinstance(contract, Mapping):
         return None
-    summary = selected.get("summary")
-    if not isinstance(summary, dict):
-        return None
-    value = summary.get("accuracy")
-    return float(value) if isinstance(value, (int, float)) else None
+    value = contract.get("status")
+    return str(value) if value is not None else None
 
 
 def _read_me_first(*, l20_enabled: bool, prompt_v2_enabled: bool) -> dict[str, object]:
@@ -116,10 +119,12 @@ def _read_me_first(*, l20_enabled: bool, prompt_v2_enabled: bool) -> dict[str, o
         "how_to_read": [
             "metrics is the frozen in-domain eval_core_v1 next-token benchmark.",
             "l20_conditional_likelihood is the external six-task base-model capability layer; higher mean_6 is better.",
-            "base_prompt_suite_v2.greedy is the deterministic human-readable prompt view with 100 scored cases and 20 qualitative continuations.",
-            "base_prompt_suite_v2.sampled uses the project-standard sampled contract: temperature=1, top_p=1, top_k=0.",
+            "base_prompt_suite_v2 contains raw prompt/reference/continuation evidence; this file does not string-match answers.",
+            "Judge Base Prompt objective cases afterward with trainer.base_prompt_judge and the project GemRouter endpoint.",
+            "The 20 Base Prompt qualitative continuations remain unscored readable evidence.",
+            "base_prompt_suite_v2.sampled uses temperature=1, top_p=1, top_k=0.",
             "EOS termination is intentionally not a pretraining metric.",
-            "Teacher-forced confidence diagnostics are intentionally not part of this headline JSON; run them separately when debugging token probabilities.",
+            "Teacher-forced confidence diagnostics are intentionally outside this headline JSON.",
         ],
         "metric_direction": {
             "eval_core_v1.loss": "lower_is_better",
@@ -127,14 +132,21 @@ def _read_me_first(*, l20_enabled: bool, prompt_v2_enabled: bool) -> dict[str, o
             "eval_core_v1.bits_per_byte": "lower_is_better",
             "eval_core_v1.top_k_accuracy": "higher_is_better",
             "l20_conditional_likelihood.mean_6": "higher_is_better",
-            "base_prompt_suite_v2.greedy.summary.accuracy": "higher_is_better",
+            "GemRouter Base Prompt judgment accuracy": "higher_is_better",
         },
         "enabled_layers": {
             "eval_core_v1": True,
             "l20_conditional_likelihood": l20_enabled,
             "base_prompt_suite_v2": prompt_v2_enabled,
         },
-        "retired_protocol": "The old global fixed-length qualitative cap is not emitted by this v2 entrypoint.",
+        "base_prompt_scoring": {
+            "in_this_file": False,
+            "postprocessor": "python -m trainer.base_prompt_judge",
+        },
+        "retired_protocol": (
+            "The old global fixed-length qualitative cap and local substring/regex "
+            "Base Prompt scoring are not emitted by this v2 entrypoint."
+        ),
     }
 
 
@@ -190,17 +202,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=args.batch_size,
             bootstrap_samples=args.bootstrap_samples,
         )
-        l20 = None if args.skip_l20 else run_l20_conditional_likelihood(
-            model,
-            model_max_seq_len=model_config.max_seq_len,
-            precision=precision,
-            suite=args.suite,
+        l20 = (
+            None
+            if args.skip_l20
+            else run_l20_conditional_likelihood(
+                model,
+                model_max_seq_len=model_config.max_seq_len,
+                precision=precision,
+                suite=args.suite,
+            )
         )
-        prompt_suite = None if (args.skip_base_prompts_v2 or args.skip_prompts) else run_base_prompt_suite_v2(
-            model,
-            model_max_seq_len=model_config.max_seq_len,
-            precision=precision,
-            suite=args.suite,
+        prompt_suite = (
+            None
+            if (args.skip_base_prompts_v2 or args.skip_prompts)
+            else run_base_prompt_suite_v2(
+                model,
+                model_max_seq_len=model_config.max_seq_len,
+                precision=precision,
+                suite=args.suite,
+            )
         )
 
         headline_summary = {
@@ -208,17 +228,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "loss": metrics.get("loss"),
                 "perplexity": metrics.get("perplexity"),
                 "bits_per_byte": metrics.get("bits_per_byte"),
-                "top_1_accuracy": metrics.get("top_k_accuracy", {}).get("1")
-                if isinstance(metrics.get("top_k_accuracy"), dict)
-                else None,
+                "top_1_accuracy": (
+                    metrics.get("top_k_accuracy", {}).get("1")
+                    if isinstance(metrics.get("top_k_accuracy"), dict)
+                    else None
+                ),
                 "cluster_macro_loss": metrics.get("cluster_macro_loss"),
-                "cluster_mixture_weighted_loss": metrics.get("cluster_mixture_weighted_loss"),
+                "cluster_mixture_weighted_loss": metrics.get(
+                    "cluster_mixture_weighted_loss"
+                ),
                 "worst_cluster_loss": metrics.get("worst_cluster_loss"),
             },
             "l20_conditional_likelihood_mean_6": _metric_mean(l20),
-            "base_prompt_v2_greedy_accuracy": _prompt_accuracy(prompt_suite, "greedy"),
-            "base_prompt_v2_sampled_accuracy": _prompt_accuracy(prompt_suite, "sampled"),
-            "interpretation": "Use eval_core_v1 for in-domain LM fit, L20 mean_6 for external base capability, and prompt v2 cases for readable generation evidence.",
+            "base_prompt_v2_judging_status": _prompt_judge_status(prompt_suite),
+            "interpretation": (
+                "Use eval_core_v1 for in-domain LM fit, L20 mean_6 for external "
+                "base capability, and the separate GemRouter judgment artifact "
+                "for Base Prompt semantic accuracy."
+            ),
         }
 
         result_without_hash: dict[str, object] = {
@@ -245,9 +272,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             "eval_core_v1": metrics,
             "l20_conditional_likelihood": l20,
             "base_prompt_suite_v2": prompt_suite,
+            "base_prompt_postprocessing": {
+                "required_for_accuracy": prompt_suite is not None,
+                "tool": "trainer.base_prompt_judge",
+                "example": (
+                    "python -m trainer.base_prompt_judge --input <evaluation.json> "
+                    "--output <base-prompt-judgments.json>"
+                ),
+                "credentials": ["GEMR_API_KEY", "LLM_ENDPOINT"],
+            },
             "sampling_contracts": {
-                "base_prompt_v2_greedy": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "seed": 17},
-                "base_prompt_v2_sampled": {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "seed": 17},
+                "base_prompt_v2_greedy": {
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "top_k": 0,
+                    "seed": 17,
+                },
+                "base_prompt_v2_sampled": {
+                    "temperature": 1.0,
+                    "top_p": 1.0,
+                    "top_k": 0,
+                    "seed": 17,
+                },
             },
             "compatibility_notes": {
                 "accepted_legacy_prompt_flags": [
