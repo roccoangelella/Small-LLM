@@ -25,6 +25,13 @@ def test_public_probe_entrypoint_normalizes_moved_runtime_paths() -> None:
     assert 'BEAM / "runtime.py"' in text
 
 
+def test_public_probe_entrypoint_survives_private_hf_reexec() -> None:
+    entrypoint_text = ENTRYPOINT.read_text(encoding="utf-8")
+    implementation_text = PROBES.read_text(encoding="utf-8")
+    assert 'impl.__file__ = str(Path(__file__).resolve())' in entrypoint_text
+    assert '[sys.executable, str(Path(__file__).resolve()), *list(argv)]' in implementation_text
+
+
 def test_100m_10b_probes_are_consolidated() -> None:
     text = PROBES.read_text(encoding="utf-8")
     assert "single home for short, W&B-visible 100M/10B pretraining probes" in text
