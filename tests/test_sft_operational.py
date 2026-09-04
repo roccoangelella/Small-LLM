@@ -29,7 +29,7 @@ from tests.trainer_fixtures import TinyLM
 
 
 def _load_sft_runtime():
-    runtime_path = Path(__file__).resolve().parents[1] / "kaggle" / "sft_runtime.py"
+    runtime_path = Path(__file__).resolve().parents[1] / "kaggle" / "src" / "sft_runtime.py"
     spec = importlib.util.spec_from_file_location("small_llm_sft_runtime_test", runtime_path)
     if spec is None or spec.loader is None:  # pragma: no cover
         raise RuntimeError(f"cannot load SFT runtime from {runtime_path}")

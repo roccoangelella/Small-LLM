@@ -15,6 +15,7 @@ from trainer.post_pretraining_prompt_suite import (
     _checkpoint_prefix,
     _generation_budget,
     _normalize_model_config,
+    _parse_args,
     _selected_cases,
     sample_token_ids,
 )
@@ -86,6 +87,21 @@ class PostPretrainingPromptSuiteTests(unittest.TestCase):
         self.assertEqual(_generation_budget(story, None), 128)
         self.assertEqual(_generation_budget(story, 32), 32)
         self.assertEqual(_generation_budget(sentiment, 64), 48)
+
+
+    def test_default_sampled_prompt_protocol_matches_adr_0136(self) -> None:
+        args = _parse_args([
+            "--repo-id",
+            "owner/repo",
+            "--output-json",
+            "out.json",
+        ])
+        self.assertEqual(args.temperature, 1.0)
+        self.assertEqual(args.top_p, 1.0)
+        self.assertEqual(args.top_k, 0)
+        self.assertEqual(args.seed, 17)
+        self.assertEqual(args.samples_per_prompt, 1)
+        self.assertIsNone(args.max_new_tokens)
 
     def test_greedy_generation_is_deterministic(self) -> None:
         model = _ToyModel()

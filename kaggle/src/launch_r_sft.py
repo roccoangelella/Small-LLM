@@ -11,8 +11,8 @@ The canonical completed S0-versus-production-R-SFT qualification is:
 
   python kaggle/launch_r_sft.py eval --model 100M --tokens 2B --suite full
 
-It preserves the post-SFT eval-core, instruction-behavior, greedy-32 and wider
-sampled regressions, then adds held-out R-SFT loss, novel mechanically scored
+It preserves the post-SFT eval-core, instruction-behavior, greedy-32 and standard
+sampled-native regressions, then adds held-out R-SFT loss, novel mechanically scored
 reasoning probes, repeated reasoning sampling and atomic protocol telemetry.
 
 A prebuilt verified bundle can still be supplied explicitly with ``--dataset-dir``.

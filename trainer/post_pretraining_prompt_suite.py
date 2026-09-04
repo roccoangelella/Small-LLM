@@ -479,9 +479,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("auto", "fp32", "fp16", "bf16"),
         default="auto",
     )
-    parser.add_argument("--temperature", type=float, default=0.8)
-    parser.add_argument("--top-p", type=float, default=0.95)
-    parser.add_argument("--top-k", type=int, default=50)
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top-p", type=float, default=1.0)
+    parser.add_argument("--top-k", type=int, default=0)
     parser.add_argument("--seed", type=int, default=17)
     parser.add_argument("--samples-per-prompt", type=int, default=1)
     parser.add_argument("--questions-only", action="store_true")

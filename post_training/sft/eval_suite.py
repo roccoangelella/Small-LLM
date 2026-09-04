@@ -343,6 +343,25 @@ def _deltas(parent: Mapping[str, object], tuned: Mapping[str, object]) -> dict[s
     if isinstance(p_calibration, Mapping) and isinstance(t_calibration, Mapping):
         calibration_delta = _delta_number(p_calibration.get("ece"), t_calibration.get("ece"))
 
+    legacy_behavior_deltas = {
+        **{
+            name: _delta_number(p_summary.get(name), t_summary.get(name))
+            for name in (
+                "pass_rate",
+                "eos_termination_rate",
+                "runaway_rate",
+                "empty_rate",
+                "role_leak_rate",
+                "mean_response_tokens",
+                "mean_trigram_repetition",
+            )
+        },
+        "per_category": _behavior_category_deltas(
+            p_behavior.get("per_category"),
+            t_behavior.get("per_category"),
+        ),
+    }
+
     return {
         "eval_core_v1": {
             **{
@@ -376,24 +395,8 @@ def _deltas(parent: Mapping[str, object], tuned: Mapping[str, object]) -> dict[s
             parent.get("sft_validation"), tuned.get("sft_validation")
         ),
         "sft_test": _masked_loss_deltas(parent.get("sft_test"), tuned.get("sft_test")),
-        "instruction_behavior_v1_legacy": {
-            **{
-                name: _delta_number(p_summary.get(name), t_summary.get(name))
-                for name in (
-                    "pass_rate",
-                    "eos_termination_rate",
-                    "runaway_rate",
-                    "empty_rate",
-                    "role_leak_rate",
-                    "mean_response_tokens",
-                    "mean_trigram_repetition",
-                )
-            },
-            "per_category": _behavior_category_deltas(
-                p_behavior.get("per_category"),
-                t_behavior.get("per_category"),
-            ),
-        },
+        "instruction_behavior": legacy_behavior_deltas,
+        "instruction_behavior_v1_legacy": legacy_behavior_deltas,
         "instruction_behavior_v2": {
             "greedy_pass_rate": _delta_number(
                 _behavior_v2_pass_rate(parent.get("instruction_behavior_v2")),

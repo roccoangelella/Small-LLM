@@ -23,6 +23,7 @@ from dataset.eval_core import (
     sha256_file,
 )
 from trainer.eval_suite import evaluate_split
+from trainer import eval_suite as complete_eval_suite
 
 
 class _PerfectNextTokenModel(nn.Module):
@@ -137,6 +138,25 @@ class EvalSuiteTests(unittest.TestCase):
             self.assertTrue(math.isfinite(metrics["loss"]))
             self.assertGreater(metrics["bits_per_byte"], 0.0)
             self.assertEqual(metrics["bootstrap_95"]["samples"], 10)
+
+    def test_complete_eval_defaults_to_adr_0136_sampled_protocol(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = complete_eval_suite._arguments([
+                "fast",
+                "--eval-dir",
+                str(root),
+                "--output-json",
+                str(root / "out.json"),
+                "--repo-id",
+                "owner/repo",
+            ])
+        self.assertEqual(args.temperature, 1.0)
+        self.assertEqual(args.top_p, 1.0)
+        self.assertEqual(args.top_k, 0)
+        self.assertEqual(args.seed, 17)
+        self.assertEqual(args.samples_per_prompt, 1)
+        self.assertIsNone(args.max_new_tokens)
 
 
 if __name__ == "__main__":

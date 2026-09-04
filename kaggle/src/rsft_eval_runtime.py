@@ -97,7 +97,7 @@ def evaluation_plan(
         "reasoning_samples": reasoning_samples,
         "reasoning_max_new_tokens": reasoning_max_new_tokens,
         "historical_greedy": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "max_new_tokens": 32},
-        "historical_wider": {"temperature": 1.0, "top_p": 0.9, "top_k": 20},
+        "standard_sampled_native": {"temperature": 1.0, "top_p": 1.0, "top_k": 0},
         "reasoning_sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 0},
         "prompt_wrapper_robustness": {
             "temperature": 0.0,
