@@ -23,6 +23,7 @@ L20_TASKS = ("arc_challenge", "arc_easy", "hellaswag", "lambada_openai", "piqa",
 L20_MAX_BATCH_SIZE = 16
 L20_MAX_BATCH_TOKENS = 8_192
 BASE_PROMPT_BATCH_SIZE = 16
+BASE_PROMPT_SET_ID = "base-prompt-v2-unique-120-2026-09-04"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,35 +38,186 @@ class BasePromptCase:
 
 
 def _base_items() -> list[tuple[str, str, str, str]]:
-    facts = [("capital_france", "Question: What is the capital of France?\nAnswer:", "Paris"), ("largest_planet", "Question: What is the largest planet?\nAnswer:", "Jupiter"), ("red_planet", "Question: Which planet is called the Red Planet?\nAnswer:", "Mars"), ("hamlet", "Question: Who wrote Hamlet?\nAnswer:", "Shakespeare"), ("freezing", "Question: At what Celsius temperature does water freeze?\nAnswer:", "0")]
+    families: dict[str, tuple[tuple[str, str, str], ...]] = {
+        "factual": (
+            ("capital_france", "Question: What is the capital of France?\nAnswer:", "Paris"),
+            ("largest_planet", "Question: What is the largest planet in the Solar System?\nAnswer:", "Jupiter"),
+            ("red_planet", "Question: Which planet is commonly called the Red Planet?\nAnswer:", "Mars"),
+            ("hamlet_author", "Question: Who wrote the play Hamlet?\nAnswer:", "Shakespeare"),
+            ("water_freezing", "Question: At what Celsius temperature does pure water freeze at standard pressure?\nAnswer:", "0"),
+            ("largest_ocean", "Question: What is the largest ocean on Earth?\nAnswer:", "Pacific Ocean"),
+            ("brazil_language", "Question: What is the main language spoken in Brazil?\nAnswer:", "Portuguese"),
+            ("japan_currency", "Question: What is the currency of Japan?\nAnswer:", "yen"),
+            ("blood_pump", "Question: Which organ pumps blood around the human body?\nAnswer:", "heart"),
+            ("water_formula", "Question: What is the chemical formula for water?\nAnswer:", "H2O"),
+            ("continents", "Question: How many continents are commonly recognized?\nAnswer:", "7"),
+            ("nineteen_eighty_four_author", "Question: Who wrote the novel 1984?\nAnswer:", "George Orwell"),
+            ("capital_italy", "Question: What is the capital of Italy?\nAnswer:", "Rome"),
+            ("tallest_land_animal", "Question: What is the tallest living land animal?\nAnswer:", "giraffe"),
+            ("plants_absorb", "Question: Which gas do plants absorb from the atmosphere during photosynthesis?\nAnswer:", "carbon dioxide"),
+            ("earth_star", "Question: What is the name of the star that Earth orbits?\nAnswer:", "Sun"),
+            ("largest_mammal", "Question: What is the largest living mammal?\nAnswer:", "blue whale"),
+            ("capital_spain", "Question: What is the capital of Spain?\nAnswer:", "Madrid"),
+            ("hardest_natural_substance", "Question: What is the hardest naturally occurring substance?\nAnswer:", "diamond"),
+            ("earth_moon", "Question: What is the name of Earth's natural satellite?\nAnswer:", "Moon"),
+        ),
+        "arithmetic": (
+            ("mul_7_8", "Question: What is 7 multiplied by 8?\nAnswer:", "56"),
+            ("add_15_27", "Question: What is 15 plus 27?\nAnswer:", "42"),
+            ("sub_93_38", "Question: What is 93 minus 38?\nAnswer:", "55"),
+            ("div_84_7", "Question: What is 84 divided by 7?\nAnswer:", "12"),
+            ("mul_12_9", "Question: What is 12 multiplied by 9?\nAnswer:", "108"),
+            ("add_46_35", "Question: What is 46 plus 35?\nAnswer:", "81"),
+            ("sub_120_47", "Question: What is 120 minus 47?\nAnswer:", "73"),
+            ("div_144_12", "Question: What is 144 divided by 12?\nAnswer:", "12"),
+            ("mul_14_6", "Question: What is 14 multiplied by 6?\nAnswer:", "84"),
+            ("add_128_64", "Question: What is 128 plus 64?\nAnswer:", "192"),
+            ("sub_1000_275", "Question: What is 1000 minus 275?\nAnswer:", "725"),
+            ("div_225_15", "Question: What is 225 divided by 15?\nAnswer:", "15"),
+            ("mul_17_5", "Question: What is 17 multiplied by 5?\nAnswer:", "85"),
+            ("add_303_99", "Question: What is 303 plus 99?\nAnswer:", "402"),
+            ("sub_71_29", "Question: What is 71 minus 29?\nAnswer:", "42"),
+            ("div_96_8", "Question: What is 96 divided by 8?\nAnswer:", "12"),
+            ("mul_25_16", "Question: What is 25 multiplied by 16?\nAnswer:", "400"),
+            ("add_234_567", "Question: What is 234 plus 567?\nAnswer:", "801"),
+            ("sub_500_123", "Question: What is 500 minus 123?\nAnswer:", "377"),
+            ("div_360_9", "Question: What is 360 divided by 9?\nAnswer:", "40"),
+        ),
+        "extraction": (
+            ("third_fruit", "List: apple | pear | mango | grape\nThird item:", "mango"),
+            ("order_number", "Order number: 4187; status: shipped.\nOrder number:", "4187"),
+            ("invoice_id", "Invoice INV-2048 is overdue.\nInvoice ID:", "INV-2048"),
+            ("city", "City=Lisbon; Country=Portugal.\nCity:", "Lisbon"),
+            ("meeting_date", "Meeting date: 2026-09-14 at noon.\nDate:", "2026-09-14"),
+            ("tracking_code", "Package tracking code ZX-7319; carrier: NorthPost.\nTracking code:", "ZX-7319"),
+            ("second_color", "Colors in order: amber, teal, violet, silver.\nSecond color:", "teal"),
+            ("username", "Account: username=river_fox; role=editor.\nUsername:", "river_fox"),
+            ("temperature", "Sensor report: humidity 41%; temperature 23 C; pressure 1014 hPa.\nTemperature:", "23 C"),
+            ("product_code", "Product code P-8821, quantity 6, warehouse B.\nProduct code:", "P-8821"),
+            ("surname", "Passenger: Elena Rossi; seat 14A.\nSurname:", "Rossi"),
+            ("third_city", "Route: Oslo -> Copenhagen -> Berlin -> Prague.\nThird city:", "Berlin"),
+            ("ticket_id", "Support ticket TKT-5902 is marked resolved.\nTicket ID:", "TKT-5902"),
+            ("version", "Release notes for version 3.7.2 were published today.\nVersion:", "3.7.2"),
+            ("room", "Reservation: guest Malik Chen, room 512, two nights.\nRoom number:", "512"),
+            ("isbn", "Book record: title=North Wind; ISBN=978-1-4028-9462-6.\nISBN:", "978-1-4028-9462-6"),
+            ("first_planet", "Planets listed: Mercury, Venus, Earth, Mars.\nFirst planet:", "Mercury"),
+            ("email_domain", "Contact email: maya@example.org.\nEmail domain:", "example.org"),
+            ("batch_code", "Factory log: batch BQ-44; line 3; status passed.\nBatch code:", "BQ-44"),
+            ("latitude", "Coordinates: latitude 41.9028, longitude 12.4964.\nLatitude:", "41.9028"),
+        ),
+        "classification": (
+            ("sentiment_positive", "Text: I loved every minute of the film.\nLabel as positive or negative sentiment:", "positive"),
+            ("sentiment_negative", "Text: The plot was tedious and predictable.\nLabel as positive or negative sentiment:", "negative"),
+            ("cat_animal", "Item: cat\nClassify as animal or object:", "animal"),
+            ("chair_object", "Item: chair\nClassify as animal or object:", "object"),
+            ("fourteen_even", "Number: 14\nClassify as even or odd:", "even"),
+            ("twenty_one_odd", "Number: 21\nClassify as even or odd:", "odd"),
+            ("apple_fruit", "Food: apple\nClassify as fruit or vegetable:", "fruit"),
+            ("carrot_vegetable", "Food: carrot\nClassify as fruit or vegetable:", "vegetable"),
+            ("eagle_bird", "Animal: eagle\nClassify as bird or mammal:", "bird"),
+            ("dolphin_mammal", "Animal: dolphin\nClassify as bird or mammal:", "mammal"),
+            ("water_liquid", "Substance at room temperature: water\nClassify as solid, liquid, or gas:", "liquid"),
+            ("oxygen_gas", "Substance at room temperature: oxygen\nClassify as solid, liquid, or gas:", "gas"),
+            ("granite_solid", "Substance at room temperature: granite\nClassify as solid, liquid, or gas:", "solid"),
+            ("question_interrogative", "Sentence: Where did you leave the keys?\nClassify as statement or question:", "question"),
+            ("statement_declarative", "Sentence: The train arrives at six.\nClassify as statement or question:", "statement"),
+            ("python_programming", "Term: Python\nClassify as programming language or planet:", "programming language"),
+            ("saturn_planet", "Term: Saturn\nClassify as programming language or planet:", "planet"),
+            ("triangle_polygon", "Shape: triangle\nClassify as polygon or circle:", "polygon"),
+            ("circle_circle", "Shape: circle\nClassify as polygon or circle:", "circle"),
+            ("email_digital", "Message type: email\nClassify as digital or physical mail:", "digital"),
+        ),
+        "transformation": (
+            ("upper_blue", "Transform to uppercase: blue\nResult:", "BLUE"),
+            ("lower_shout", "Transform to lowercase: SHOUT\nResult:", "shout"),
+            ("title_hello_world", "Transform to title case: hello world\nResult:", "Hello World"),
+            ("reverse_cat", "Reverse the characters in: cat\nResult:", "tac"),
+            ("plural_dog", "Write the regular plural of: dog\nResult:", "dogs"),
+            ("upper_lisbon", "Transform to uppercase: Lisbon\nResult:", "LISBON"),
+            ("lower_mixed", "Transform to lowercase: MIXED\nResult:", "mixed"),
+            ("title_small_model", "Transform to title case: small model\nResult:", "Small Model"),
+            ("reverse_train", "Reverse the characters in: train\nResult:", "niart"),
+            ("plural_book", "Write the regular plural of: book\nResult:", "books"),
+            ("upper_orange", "Transform to uppercase: orange\nResult:", "ORANGE"),
+            ("lower_quiet", "Transform to lowercase: QUIET\nResult:", "quiet"),
+            ("title_red_fox", "Transform to title case: red fox\nResult:", "Red Fox"),
+            ("reverse_planet", "Reverse the characters in: planet\nResult:", "tenalp"),
+            ("plural_car", "Write the regular plural of: car\nResult:", "cars"),
+            ("upper_delta", "Transform to uppercase: delta\nResult:", "DELTA"),
+            ("lower_window", "Transform to lowercase: WINDOW\nResult:", "window"),
+            ("title_open_door", "Transform to title case: open door\nResult:", "Open Door"),
+            ("reverse_music", "Reverse the characters in: music\nResult:", "cisum"),
+            ("plural_tree", "Write the regular plural of: tree\nResult:", "trees"),
+        ),
+    }
     items: list[tuple[str, str, str, str]] = []
-    for i in range(20):
-        n, p, a = facts[i % len(facts)]; items.append((f"factual_{i:02d}_{n}", "factual", p, a))
-    pairs = [(7,8), (15,27), (18,5), (6,7), (11,12)]
-    for i in range(20):
-        a, b = pairs[i % len(pairs)]
-        if i % 2 == 0:
-            prompt, ans = f"Question: What is {a} multiplied by {b}?\nAnswer:", str(a*b)
-        else:
-            prompt, ans = f"Question: What is {a} plus {b}?\nAnswer:", str(a+b)
-        items.append((f"arithmetic_{i:02d}", "arithmetic", prompt, ans))
-    extracts = [("third", "List: apple | pear | mango | grape\nThird item:", "mango"), ("order", "Order number: 4187; status: shipped.\nOrder number:", "4187"), ("invoice", "invoice INV-2048 is overdue.\nInvoice ID:", "INV-2048"), ("city", "City=Lisbon; Country=Portugal.\nCity:", "Lisbon"), ("date", "Meeting date: 2026-09-14 at noon.\nDate:", "2026-09-14")]
-    for i in range(20):
-        n, p, a = extracts[i % len(extracts)]; items.append((f"extraction_{i:02d}_{n}", "extraction", p, a))
-    classes = [("Text: I loved every minute of the film.\nSentiment:", "positive"), ("Text: The plot was tedious and predictable.\nSentiment:", "negative"), ("cat\nClass: animal or object?", "animal"), ("chair\nClass: animal or object?", "object"), ("14\nClass: even or odd?", "even")]
-    for i in range(20):
-        p, a = classes[i % len(classes)]; items.append((f"classification_{i:02d}", "classification", p, a))
-    transforms = [("blue -> uppercase:", "BLUE"), ("SHOUT -> lowercase:", "shout"), ("hello world -> title case:", "Hello World"), ("cat -> reversed:", "tac"), ("dog -> plural:", "dogs")]
-    for i in range(20):
-        p, a = transforms[i % len(transforms)]; items.append((f"transformation_{i:02d}", "transformation", p, a))
+    for family, rows in families.items():
+        if len(rows) != 20:
+            raise RuntimeError(f"Base Prompt v2 family {family!r} must contain exactly 20 cases")
+        for index, (slug, prompt, answer) in enumerate(rows):
+            items.append((f"{family}_{index:02d}_{slug}", family, prompt, answer))
     return items
 
 
+def _validate_base_prompt_cases(cases: Sequence[BasePromptCase]) -> None:
+    if len(cases) != 120:
+        raise RuntimeError(f"Base Prompt v2 must contain exactly 120 cases, got {len(cases)}")
+    names = [case.name for case in cases]
+    prompts = [case.prompt for case in cases]
+    if len(set(names)) != len(names):
+        raise RuntimeError("Base Prompt v2 contains duplicate case IDs")
+    if len(set(prompts)) != len(prompts):
+        raise RuntimeError("Base Prompt v2 contains duplicate prompt text")
+
+    scored = [case for case in cases if not case.qualitative]
+    qualitative = [case for case in cases if case.qualitative]
+    if len(scored) != 100 or len(qualitative) != 20:
+        raise RuntimeError("Base Prompt v2 must contain 100 scored and 20 qualitative cases")
+    expected_families = {"factual", "arithmetic", "extraction", "classification", "transformation"}
+    for family in expected_families:
+        count = sum(case.family == family for case in scored)
+        if count != 20:
+            raise RuntimeError(f"Base Prompt v2 scored family {family!r} must contain 20 cases, got {count}")
+    if any(case.family not in expected_families for case in scored):
+        raise RuntimeError("Base Prompt v2 contains an unexpected scored family")
+    if any(case.answer is None or case.regex is None for case in scored):
+        raise RuntimeError("every scored Base Prompt v2 case must define answer and regex")
+
+
 def base_prompt_cases_v2() -> tuple[BasePromptCase, ...]:
-    scored = [BasePromptCase(name, fam, prompt, 48, answer, re.escape(answer)) for name, fam, prompt, answer in _base_items()]
-    qualitative_prompts = ["The rain had stopped before dawn, leaving the streets covered in ", "Water can exist as a solid, liquid, or gas. The transition to vapor occurs when ", "The Roman Republic was a period of ancient Roman civilization that began after ", "Alice: Did you close the window?\nBen: I thought you had closed it.\nAlice:", "France | Paris\nItaly | Rome\nGermany |"]
-    qualitative = [BasePromptCase(f"qualitative_{i:02d}", "qualitative", qualitative_prompts[i % len(qualitative_prompts)], 128, qualitative=True) for i in range(20)]
-    return tuple(scored + qualitative)
+    scored = [
+        BasePromptCase(name, family, prompt, 48, answer, re.escape(answer))
+        for name, family, prompt, answer in _base_items()
+    ]
+    qualitative_prompts = (
+        "The rain had stopped before dawn, leaving the streets covered in ",
+        "Water can exist as a solid, liquid, or gas. The transition to vapor occurs when ",
+        "The Roman Republic was a period of ancient Roman civilization that began after ",
+        "Alice: Did you close the window?\nBen: I thought you had closed it.\nAlice:",
+        "France | Paris\nItaly | Rome\nGermany |",
+        "The old radio crackled once, and then a distant voice said, ",
+        "Photosynthesis allows green plants to convert light energy into ",
+        "At the edge of the forest, the path split in two. Mira chose the left path because ",
+        "Doctor: How long have you had the cough?\nPatient: About three days.\nDoctor:",
+        "Mercury | planet\nSirius | star\nAndromeda |",
+        "The instructions were simple: first rinse the rice, then add water, and finally ",
+        "Computer memory stores information that a processor can access. In general, faster memory ",
+        "Leo opened the envelope and found no letter inside, only ",
+        "Teacher: Why does ice float on water?\nStudent:",
+        "2, 4, 8, 16, ",
+        "The museum closed at six, but one gallery light remained on because ",
+        "Sound travels through air as variations in ",
+        "Nora checked the departure board again. Her train was delayed, so she ",
+        "oak | tree\nsalmon | fish\nsparrow |",
+        "The experiment compared two identical plants, except one received sunlight and the other ",
+    )
+    qualitative = [
+        BasePromptCase(f"qualitative_{index:02d}", "qualitative", prompt, 128, qualitative=True)
+        for index, prompt in enumerate(qualitative_prompts)
+    ]
+    cases = tuple(scored + qualitative)
+    _validate_base_prompt_cases(cases)
+    return cases
 
 
 BASE_PROMPT_CASES_V2 = base_prompt_cases_v2()
@@ -114,7 +266,7 @@ def _summary(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
 def run_base_prompt_suite_v2(model: nn.Module, *, model_max_seq_len: int, precision: str, suite: str) -> dict[str, object]:
     greedy = _run_prompt_view(model, model_max_seq_len=model_max_seq_len, precision=precision, suite=suite, temperature=0.0, top_p=1.0, top_k=0, seed=17)
     sampled = _run_prompt_view(model, model_max_seq_len=model_max_seq_len, precision=precision, suite=suite, temperature=1.0, top_p=1.0, top_k=0, seed=17)
-    return {"schema": "small-llm-pretraining-base-prompts-v2", "suite_identity": {"full_scored_cases": 100, "full_qualitative_cases": 20, "budget": "native per prompt"}, "execution": {"length_bucketed": True, "max_batch_size": BASE_PROMPT_BATCH_SIZE}, "greedy": {"sampling": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(greedy), "cases": greedy}, "sampled": {"sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(sampled), "cases": sampled}}
+    return {"schema": "small-llm-pretraining-base-prompts-v2", "suite_identity": {"prompt_set_id": BASE_PROMPT_SET_ID, "full_scored_cases": 100, "full_qualitative_cases": 20, "full_unique_prompts": 120, "budget": "native per prompt"}, "execution": {"length_bucketed": True, "max_batch_size": BASE_PROMPT_BATCH_SIZE}, "greedy": {"sampling": {"temperature": 0.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(greedy), "cases": greedy}, "sampled": {"sampling": {"temperature": 1.0, "top_p": 1.0, "top_k": 0, "seed": 17}, "summary": _summary(sampled), "cases": sampled}}
 
 
 class SmallLLMHarnessLM(_HarnessBase):
@@ -227,4 +379,4 @@ def run_l20_conditional_likelihood(model: nn.Module, *, model_max_seq_len: int, 
     return {"schema": "small-llm-l20-conditional-likelihood-v1", "harness": "lm-evaluation-harness==0.4.12", "tasks": list(L20_TASKS), "limit_per_task": 100 if suite == "fast" else None, "mean_6": mean(values) if len(values) == 6 else math.nan, "task_results": rows, "request_policy": {"loglikelihood": True, "rolling_loglikelihood": False, "generation": False}, "execution": {"length_bucketed": True, "max_batch_size": L20_MAX_BATCH_SIZE, "max_batch_tokens": L20_MAX_BATCH_TOKENS, "world_size": adapter.world_size}}
 
 
-__all__ = ["BASE_PROMPT_CASES_V2", "BasePromptCase", "L20_TASKS", "run_base_prompt_suite_v2", "run_l20_conditional_likelihood", "SmallLLMHarnessLM"]
+__all__ = ["BASE_PROMPT_CASES_V2", "BASE_PROMPT_SET_ID", "BasePromptCase", "L20_TASKS", "run_base_prompt_suite_v2", "run_l20_conditional_likelihood", "SmallLLMHarnessLM"]
