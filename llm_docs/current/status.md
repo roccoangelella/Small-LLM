@@ -1,6 +1,6 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-03
+Last reviewed: 2026-09-04
 
 ## Repository and protocol state
 
@@ -45,6 +45,12 @@ teacher-forced SFT fit is not enough to establish instruction following.
 The 100M/10B SFT pipeline is wired and pinned to the current qualified
 worktree/launch configuration. The same-data S0 recipe decision is recorded in
 the project ADRs.
+
+The first Kaggle execution of `100m-10b-sft-s0-2b10pct-data-001` stopped because
+the available T4 session time was exhausted. Treat the resulting W&B `failed`
+state as an infrastructure interruption, not as an SFT-quality failure. The SFT
+job was restarted on 2026-09-04; its new W&B continuation/logs may appear only
+after the restarted process reaches W&B initialization/logging.
 
 ### Active SFT qualification
 
