@@ -11,6 +11,7 @@ Last reviewed: 2026-09-04
 - ADR 0144 consolidates current 100M/10B post-completion pretraining diagnostics in `kaggle/src/probes_100m_10b.py`; the active branches hold LR at `1e-5` and `2e-5` for 3,000 updates from the preferred step-71,750 source, with a strict same-repository current-best fallback when that artifact is unavailable.
 - ADR 0145 synchronizes active README lifecycle wording with this status file and requires completed-run procedures to be labeled as reproduction/history rather than current launch authorization.
 - ADR 0146 makes `kaggle/probes_100m_10b.py` the stable operator entrypoint and normalizes repository, `kaggle/src`, `beam/`, and cached `runtime` module paths before delegating to the ADR-0144 implementation. This fixes the post-`src/`-move runtime error that incorrectly expected `kaggle/beam/runtime.py`.
+- ADR 0147 keeps all evaluation-v2 benchmark cases and scoring contracts unchanged while batching L20 conditional-likelihood requests, Base Prompt v2 generation, and SFT Behavior v2 generation. L20 is length-bucketed with a 16-request / 8,192-padded-token cap; generated views use per-request RNG generators and a 16-request batch cap. Coarse progress reporting is now mandatory for these long phases.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
@@ -77,6 +78,8 @@ SFT Behavior v2 is the primary instruction-following evaluation:
 - greedy primary plus sampled robustness over seeds 17/18/19;
 - paired parent/SFT wins, losses, ties and exact McNemar statistics.
 
+Behavior v2 generation is now length-bucketed and evaluated in batches of up to 16 independent requests while preserving each case/seed identity and restoring the original output order. Base Prompt v2 uses the same evaluation-only batching helper. This is an execution optimization only; task counts, prompt texts, decoding parameters, native generation budgets, scoring and paired statistics are unchanged.
+
 ## R-SFT
 
 The production R-SFT path remains atomic-protocol based and retains its
@@ -104,6 +107,10 @@ Canonical full pretraining qualification now consists of:
 The six external tasks are ARC-Challenge, ARC-Easy, HellaSwag, LAMBADA OpenAI,
 PIQA and WinoGrande. Full qualification should use all available benchmark examples.
 Fast mode may limit the external tasks and is diagnostic only.
+
+L20 execution no longer performs one model forward per answer candidate. Requests are encoded exactly as before, sorted into similar-length batches, capped at 16 requests and 8,192 padded input tokens, scored together, and restored to harness order. The evaluator prints coarse request-completion progress. The benchmark sample count and metric contract are unchanged.
+
+The current optimization intentionally does not use `torch.nn.DataParallel`; dual-T4 evaluation remains a future DDP/`torchrun` qualification task consistent with the repository's established dual-GPU architecture.
 
 ## Evaluation dependency boundary
 
