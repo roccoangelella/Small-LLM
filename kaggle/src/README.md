@@ -10,6 +10,6 @@ Logical groups:
 - evaluation/qualification: `qualify_dual_t4*.py`, `rsft_eval_runtime.py`
 - publication and infrastructure: `build_and_push_100m.py`, `sft_publish.py`, `wandb_preflight.py`, `triton_cache.py`
 
-`probes_100m_10b.py` is the single public home for short 100M/10B pretraining probes. New probes should be added there rather than as new one-off launch files.
+`src/probes_100m_10b.py` is the single scientific implementation home for short 100M/10B pretraining probes. New probes should be added there rather than as new one-off launch files. Kaggle operators must launch the family through `python kaggle/probes_100m_10b.py ...`, whose stable wrapper preserves the required repository/runtime paths across the private Hugging Face Hub bootstrap restart.
 
 A deeper package split should be done only together with import rewrites and smoke tests.
