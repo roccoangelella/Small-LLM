@@ -13,7 +13,8 @@ Last reviewed: 2026-09-04
 - ADR 0146 makes `kaggle/probes_100m_10b.py` the stable operator entrypoint and normalizes repository, `kaggle/src`, `beam/`, and cached `runtime` module paths before delegating to the ADR-0144 implementation. This fixes the post-`src/`-move runtime error that incorrectly expected `kaggle/beam/runtime.py`.
 - ADR 0147 keeps all evaluation-v2 benchmark cases and scoring contracts unchanged while batching L20 conditional-likelihood requests, Base Prompt v2 generation, and SFT Behavior v2 generation. L20 is length-bucketed with a 16-request / 8,192-padded-token cap; generated views use per-request RNG generators and a 16-request batch cap. Coarse progress reporting is now mandatory for these long phases.
 - ADR 0148 registers the completed `100m-10b-sft-s0-2b10pct-data-001` trajectory as the `(100M, 10B)` SFT default in `chat.py`; `python chat.py --model_params 100M --num_tokens 10B --sft` now uses the existing fail-closed SFT checkpoint loader, while the `(100M, 10B)` pretrained chat profile remains unregistered.
-- ADR 0149 corrects the Base Prompt v2 construction bug: the active full set now contains 120 unique prompt texts and IDs, with exactly 20 unique scored prompts in each of the five scored families and 20 unique qualitative prompts. Older recycled-template Base Prompt v2 aggregates are historical defective evidence and must not be interpreted as a 100-unique-prompt statistic.
+- ADR 0149 corrects the Base Prompt v2 construction bug: the active full set now contains 120 unique prompt texts and IDs, with exactly 20 unique objective prompts in each of the five objective families and 20 unique qualitative prompts. Older recycled-template Base Prompt v2 aggregates are historical defective evidence and must not be interpreted as a 100-unique-prompt statistic.
+- ADR 0150 removes local substring/regex scoring from Base Prompt v2. The GPU evaluator now emits raw prompt/reference/continuation evidence with pending judge status; `trainer.base_prompt_judge` scores the 100 objective cases afterward through the same GemRouter endpoint used by R-SFT. Greedy and sampled views are judged semantically; the 20 qualitative cases remain unscored.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
@@ -93,6 +94,8 @@ SFT Behavior v2 is the primary instruction-following evaluation:
 
 Behavior v2 generation is length-bucketed and evaluated in batches of up to 16 independent requests while preserving each case/seed identity and restoring the original output order. Base Prompt v2 uses the same evaluation-only batching helper. ADR 0149 changes the Base Prompt v2 prompt definitions only to remove recycled cases; its decoding parameters, native generation budgets and batching semantics are unchanged.
 
+Under ADR 0150, Base Prompt sections in parent/SFT scorecards are raw unjudged evidence. Their local accuracy fields are therefore absent or null rather than string-matched. `trainer.base_prompt_judge` accepts the full parent-versus-SFT qualification JSON and emits separate semantic judgments for parent and SFT using one judge contract. SFT Behavior v2 scoring is unchanged.
+
 ## R-SFT
 
 The production R-SFT path remains atomic-protocol based and retains its
@@ -115,10 +118,12 @@ Canonical full pretraining qualification now consists of:
 2. six-task L20-Edu-style zero-shot conditional-likelihood evaluation using
    `lm-evaluation-harness==0.4.12`;
 3. the corrected Base Prompt v2 set `base-prompt-v2-unique-120-2026-09-04`, with
-   100 unique mechanically scored cases (20 per scored family) and 20 unique
-   readable qualitative continuations.
+   100 unique objective cases (20 per objective family) and 20 unique readable
+   qualitative continuations.
 
-The active Base Prompt v2 constructor fails closed if any case ID or prompt text is duplicated or if the 100/20 and per-family counts drift. Results produced by the earlier recycled-template implementation must not be treated as directly comparable 100-unique-prompt aggregates. This correction does not affect `eval_core_v1` or L20 results.
+The active Base Prompt v2 constructor fails closed if any case ID or prompt text is duplicated or if the 100/20 and per-family counts drift. The GPU evaluator does not assign local pass/fail verdicts to the 100 objective cases. It records `reference_answer`, raw continuation, token evidence, and `judge_status=pending`; the separate GemRouter postprocessor produces semantic correctness and per-family/overall accuracy. Results produced by either the earlier recycled-template implementation or the old substring/regex scorer are not canonical Base Prompt semantic-judge scores. This correction does not affect `eval_core_v1` or L20 results.
+
+GemRouter Base Prompt judgment uses the R-SFT endpoint/auth contract (`GEMR_API_KEY`, `LLM_ENDPOINT`), requests `gemini-3.7-flash` by default at temperature 0, requires the Gemini-only/no-fallback health state, batches up to 20 cases by default, retries malformed/provider failures, and records source/judge provenance. Base Prompt scores are comparable only when prompt-set ID, judge model, and judge prompt ID/hash match.
 
 The six external tasks are ARC-Challenge, ARC-Easy, HellaSwag, LAMBADA OpenAI,
 PIQA and WinoGrande. Full qualification should use all available benchmark examples.
