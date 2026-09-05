@@ -89,7 +89,11 @@ Done that, we multiply the $Q$ matrix (every token's query) by the "total" matri
  
 The convenience is straightforward: instead of having a huge $n \times n$ matrix, we first make a $d \times d$ matrix ($d = \text{QKV matrices embedding vector shapes}$) out of $S = K^\top V$, then an $L \times d$ matrix by $Q S$.
 
-A further efficiency step appears: we don't need to recompute KV for every token: we just keep a running total of the KV matrix that gets updated every time a new token is processed. The name "memory" makes even more sense now. However, this initial memory updating process has no obsolete information deletion process nor useful memories protection, or deciding how long information should survive: conflicting information about the same phenomenon may live together in the same space and we'd have no way to delete che old one. Stacking more and more information makes retrieval quality increasingly worse.
+A further efficiency step appears: we don't need to recompute KV for every token: we just keep a running total of the KV matrix that gets updated every time a new token is processed. The name "memory" makes even more sense now.
+
+**Plain-English distinction:** standard attention makes the current query explicitly compare itself with every previous key, then mixes the corresponding values. Linear attention instead has every new $(k_t, v_t)$ update the accumulated memory $S$ once; the current query $q_t$ then reads that single memory once. So $Q$ no longer scans all previous $K$ individually: the past key-value information has already been compressed into $S$.
+
+However, this initial memory updating process has no obsolete information deletion process nor useful memories protection, or deciding how long information should survive: conflicting information about the same phenomenon may live together in the same space and we'd have no way to delete che old one. Stacking more and more information makes retrieval quality increasingly worse.
 #### 6.1 DeltaNets
 To overcome this problem, DeltaNets were introduced: we compute the "memory value" (I named it in this way), denoted $\hat{v}_t$, equal to $\hat{v}_t = S_{t-1}^\top k_t$. This determines **what the current memory associates with the new token's key**. Then, we compute the **error** as $e_t = v_t - \hat{v}_t$. That error is framed as the "useful information" that is not yet contained in our memory, therefore we update the memory by $\beta_t k_t e_t^\top$, treating $e_t$ like a "useful value". Here $\beta_t$ is a sort of learning rate, tuning the update's size.
 
