@@ -116,7 +116,7 @@ S_t = \widetilde{S}_{t-1} - \beta_t k_t k_t^\top \widetilde{S}_{t-1} + \beta_t k
 where:
 
 ```math
-\widetilde{S}_{t-1} = \operatorname{Diag}(\alpha_t) S_{t-1}
+\widetilde{S}_{t-1} = \mathrm{Diag}(\alpha_t) S_{t-1}
 ```
 
 which is precisely equivalent to:
