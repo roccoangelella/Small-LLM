@@ -111,6 +111,20 @@ python chat.py --model-params 100M --num-tokens 2B --pretrained
 
 `--num_tokens` identifies the parent pretraining-token profile. Generation length is controlled by `MAX_NEW_TOKENS` near the top of `chat.py`.
 
+## Persistent local model cache
+
+`chat.py` stores downloaded checkpoints under the repository-root cache:
+
+```text
+chat_models/<stage>/<run_id>/
+```
+
+The first launch downloads and verifies the selected artifact, then writes small cache metadata beside the checkpoint. Later launches of the same stage/run reuse that local checkpoint and run the normal manifest, schedule-completion, vocabulary, and stage/tokenizer checks before loading it. A cached entry that fails those checks is treated as invalid and replaced by one clean download.
+
+`chat_models/` is ignored by Git because it contains local runtime weights rather than source artifacts.
+
+The startup line reports `cache=downloaded` on the first successful fetch or `cache=hit` when the verified local copy was reused, together with the exact cache path.
+
 ## Tokenizer selection
 
 `--pre-trained` and `--sft` use the unchanged GPT-2 tokenizer and require:
@@ -150,17 +164,19 @@ The extended encoder treats each configured marker as one atomic token, but dele
 
 ## Sampling settings
 
-Edit the first lines of `chat.py` directly:
+The current local-chat defaults are:
 
 ```python
-TEMPERATURE = 0.8
+TEMPERATURE = 1.0
 TOP_K = 50
-TOP_P = 0.95
-MAX_NEW_TOKENS = 256
+TOP_P = 1.0
+MAX_NEW_TOKENS = 128
 SEED = 17
 ```
 
-`TEMPERATURE = 0` switches the existing sampler to greedy decoding. `TOP_K = 0` disables top-k filtering and `TOP_P = 1.0` disables nucleus filtering.
+After the model loads, `chat.py` prints the effective generation settings as JSON, including temperature, top-p, top-k, maximum new tokens, base seed and per-turn seed policy, model context length, EOS token ID, and active precision.
+
+Edit the constants near the top of `chat.py` to change local qualitative-chat decoding. `TEMPERATURE = 0` switches the existing sampler to greedy decoding. `TOP_K = 0` disables top-k filtering and `TOP_P = 1.0` disables nucleus filtering.
 
 ## Artifact and completion gates
 

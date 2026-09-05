@@ -23,10 +23,11 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 import sys
-import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Mapping, Sequence
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,6 +41,8 @@ _STAGE_SFT = "sft"
 _STAGE_R_SFT = "r-sft"
 _GPT2_SEMANTIC_VOCAB_SIZE = 50_257
 _R_SFT_CANONICAL_MARKERS = ("<think>", "</think>", "<answer>")
+_CHAT_MODEL_CACHE_DIR = Path(__file__).resolve().parent / "chat_models"
+_CHAT_MODEL_CACHE_METADATA = "cache.json"
 
 _PRETRAINED_CHAT_RUNS = {
     (100_000_000, 2_000_000_000): ("100m-2b-data-001", _SOURCE_STABLE_MODEL),
@@ -410,12 +413,126 @@ def _load_completed_checkpoint(
     return model, config, consumed, reasoning_spec
 
 
+def _safe_cache_component(value: str, *, label: str) -> str:
+    if not value or value in {".", ".."} or "/" in value or "\\" in value:
+        raise RuntimeError(f"invalid {label} for local chat cache: {value!r}")
+    return value
+
+
+def _chat_model_cache_dir(*, run_id: str, stage: str) -> Path:
+    return (
+        _CHAT_MODEL_CACHE_DIR
+        / _safe_cache_component(stage, label="stage")
+        / _safe_cache_component(run_id, label="run_id")
+    )
+
+
+def _remove_managed_cache(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _read_cached_checkpoint(
+    cache_root: Path,
+    *,
+    repo_id: str,
+    run_id: str,
+    source: str,
+    stage: str,
+) -> tuple[Path, dict[str, object]] | None:
+    metadata_path = cache_root / _CHAT_MODEL_CACHE_METADATA
+    if not metadata_path.is_file():
+        return None
+    try:
+        metadata = _read_json(metadata_path, label="chat model cache metadata")
+    except RuntimeError:
+        return None
+    expected_identity = {
+        "version": 1,
+        "repo_id": repo_id,
+        "run_id": run_id,
+        "source": source,
+        "stage": stage,
+    }
+    if any(metadata.get(key) != value for key, value in expected_identity.items()):
+        return None
+    raw_info = metadata.get("download_info")
+    if not isinstance(raw_info, Mapping):
+        return None
+    info = dict(raw_info)
+    checkpoint_id = info.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str):
+        return None
+    try:
+        checkpoint_id = _safe_cache_component(checkpoint_id, label="checkpoint_id")
+    except RuntimeError:
+        return None
+    checkpoint_root = cache_root / checkpoint_id
+    if not checkpoint_root.is_dir():
+        return None
+    return checkpoint_root, info
+
+
+def _write_cached_checkpoint_metadata(
+    cache_root: Path,
+    *,
+    repo_id: str,
+    run_id: str,
+    source: str,
+    stage: str,
+    info: Mapping[str, object],
+) -> None:
+    payload = {
+        "version": 1,
+        "repo_id": repo_id,
+        "run_id": run_id,
+        "source": source,
+        "stage": stage,
+        "download_info": dict(info),
+    }
+    metadata_path = cache_root / _CHAT_MODEL_CACHE_METADATA
+    metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, device: object):
     token = os.environ.get("HF_TOKEN")
-    temporary = tempfile.TemporaryDirectory(prefix="small-llm-chat-")
+    cache_root = _chat_model_cache_dir(run_id=run_id, stage=stage)
+    cached = _read_cached_checkpoint(
+        cache_root,
+        repo_id=repo_id,
+        run_id=run_id,
+        source=source,
+        stage=stage,
+    )
+    if cached is not None:
+        checkpoint_root, cached_info = cached
+        try:
+            model, config, consumed, reasoning_spec = _load_completed_checkpoint(
+                checkpoint_root,
+                device=device,
+                stage=stage,
+            )
+        except Exception:
+            _remove_managed_cache(cache_root)
+        else:
+            return (
+                model,
+                config,
+                consumed,
+                reasoning_spec,
+                {**cached_info, "cache_status": "hit"},
+                cache_root,
+            )
+
+    _remove_managed_cache(cache_root)
+    cache_root.mkdir(parents=True, exist_ok=True)
     try:
         if source in {_SOURCE_SFT, _SOURCE_R_SFT}:
-            from trainer.post_pretraining_prompt_suite import download_verified_checkpoint
+            from trainer.post_pretraining_prompt_suite import (
+                download_verified_checkpoint,
+            )
 
             checkpoint_root, info = download_verified_checkpoint(
                 repo_id=repo_id,
@@ -423,7 +540,7 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                 token=token,
                 revision=None,
                 pointer_name="latest",
-                destination=Path(temporary.name),
+                destination=cache_root,
             )
         elif source == _SOURCE_STABLE_MODEL:
             from trainer.model_artifact import download_verified_model_artifact
@@ -433,7 +550,7 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                 run_id=run_id,
                 token=token,
                 revision=None,
-                destination=Path(temporary.name),
+                destination=cache_root,
             )
         elif source == _SOURCE_STORAGE_BUCKET:
             try:
@@ -447,9 +564,11 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                     token=token,
                     revision=None,
                     pointer_name="latest",
-                    destination=Path(temporary.name),
+                    destination=cache_root,
                 )
             except Exception as bucket_error:
+                _remove_managed_cache(cache_root)
+                cache_root.mkdir(parents=True, exist_ok=True)
                 try:
                     from trainer.model_artifact import download_verified_model_artifact
 
@@ -458,7 +577,7 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                         run_id=run_id,
                         token=token,
                         revision=None,
-                        destination=Path(temporary.name),
+                        destination=cache_root,
                     )
                 except Exception:
                     raise bucket_error
@@ -470,10 +589,25 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
             device=device,
             stage=stage,
         )
+        _write_cached_checkpoint_metadata(
+            cache_root,
+            repo_id=repo_id,
+            run_id=run_id,
+            source=source,
+            stage=stage,
+            info=info,
+        )
     except Exception:
-        temporary.cleanup()
+        _remove_managed_cache(cache_root)
         raise
-    return model, config, consumed, reasoning_spec, info, temporary
+    return (
+        model,
+        config,
+        consumed,
+        reasoning_spec,
+        {**info, "cache_status": "downloaded"},
+        cache_root,
+    )
 
 
 def _fit_generation_prompt(history, *, template, encoding, max_prompt_tokens: int):
@@ -593,6 +727,20 @@ def _build_chat_encoding(*, stage: str, reasoning_spec=None, base_encoding: obje
     return base_encoding
 
 
+def _generation_settings(config, *, device) -> dict[str, object]:
+    return {
+        "temperature": TEMPERATURE,
+        "top_p": TOP_P,
+        "top_k": TOP_K,
+        "max_new_tokens": MAX_NEW_TOKENS,
+        "base_seed": SEED,
+        "seed_policy": "base_seed + zero_based_turn_index",
+        "max_seq_len": config.max_seq_len,
+        "eos_token_id": 50_256,
+        "precision": "fp16" if getattr(device, "type", None) == "cuda" else "fp32",
+    }
+
+
 def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
     from post_training.sft.schema import ChatMessage
     from post_training.sft.template import GPT2ChatTemplate
@@ -603,7 +751,7 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
         maximum_context_tokens=config.max_seq_len,
         maximum_assistant_tokens=min(MAX_NEW_TOKENS, 512),
     )
-    precision = "fp16" if getattr(device, "type", None) == "cuda" else "fp32"
+    precision = str(_generation_settings(config, device=device)["precision"])
     max_prompt_tokens = config.max_seq_len - MAX_NEW_TOKENS
     if max_prompt_tokens <= 0:
         raise RuntimeError("MAX_NEW_TOKENS must be smaller than the model context length")
@@ -680,7 +828,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     try:
-        model, config, consumed, reasoning_spec, info, temporary = _download_model(
+        model, config, consumed, reasoning_spec, info, cache_root = _download_model(
             repo_id=repo_id,
             run_id=run_id,
             source=source,
@@ -692,20 +840,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"could not load a completed {args.stage} chat artifact for {run_id} from {repo_id}: {error}"
         ) from error
 
-    try:
-        print(
-            f"Loaded {run_id} stage={args.stage} checkpoint={info.get('checkpoint_id')} "
-            f"loss_targets={consumed:,} device={device}."
-        )
-        _chat(
-            model,
-            config,
-            device=device,
-            stage=args.stage,
-            reasoning_spec=reasoning_spec,
-        )
-    finally:
-        temporary.cleanup()
+    print(
+        f"Loaded {run_id} stage={args.stage} checkpoint={info.get('checkpoint_id')} "
+        f"loss_targets={consumed:,} device={device} cache={info.get('cache_status')} "
+        f"cache_path={cache_root}."
+    )
+    print("Generation settings:")
+    print(json.dumps(_generation_settings(config, device=device), indent=2, sort_keys=True))
+    _chat(
+        model,
+        config,
+        device=device,
+        stage=args.stage,
+        reasoning_spec=reasoning_spec,
+    )
     return 0
 
 

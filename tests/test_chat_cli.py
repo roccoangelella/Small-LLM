@@ -256,10 +256,14 @@ def test_accepted_rsft_protocol_is_atomic_and_canonical() -> None:
     assert chat._R_SFT_CANONICAL_MARKERS == ("<think>", "</think>", "<answer>")
 
 
-def test_download_model_storage_bucket_uses_bucket_downloader(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded = {}
+def test_download_model_storage_bucket_persists_and_reuses_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    recorded = {"bucket_calls": 0}
 
     def fake_download_bucket(*, repo_id, run_id, token, revision, pointer_name, destination):
+        recorded["bucket_calls"] += 1
         recorded["bucket"] = {
             "repo_id": repo_id,
             "run_id": run_id,
@@ -268,13 +272,14 @@ def test_download_model_storage_bucket_uses_bucket_downloader(monkeypatch: pytes
             "pointer_name": pointer_name,
             "destination": destination,
         }
-        return destination / "step-00076294", {"checkpoint_id": "step-00076294"}
+        checkpoint_root = destination / "step-00076294"
+        checkpoint_root.mkdir(parents=True)
+        return checkpoint_root, {"checkpoint_id": "step-00076294"}
 
-    fake_load_called = {}
+    loaded_roots = []
 
     def fake_load(checkpoint_root, *, device, stage):
-        fake_load_called["root"] = checkpoint_root
-        fake_load_called["stage"] = stage
+        loaded_roots.append(checkpoint_root)
         return "model", "config", 10_000_007_168, None
 
     monkeypatch.setattr(
@@ -282,29 +287,54 @@ def test_download_model_storage_bucket_uses_bucket_downloader(monkeypatch: pytes
         fake_download_bucket,
     )
     monkeypatch.setattr(chat, "_load_completed_checkpoint", fake_load)
+    monkeypatch.setattr(chat, "_CHAT_MODEL_CACHE_DIR", tmp_path / "chat_models")
     monkeypatch.setenv("HF_TOKEN", "test-token")
 
-    model, config, consumed, reasoning_spec, info, temp_dir = chat._download_model(
+    first = chat._download_model(
         repo_id="owner/repo",
         run_id="100m-10b-deep-decay-from-step15500",
         source=chat._SOURCE_STORAGE_BUCKET,
         stage=chat._STAGE_PRETRAINED,
         device="cpu",
     )
-    try:
-        assert model == "model"
-        assert config == "config"
-        assert consumed == 10_000_007_168
-        assert reasoning_spec is None
-        assert info["checkpoint_id"] == "step-00076294"
-        assert recorded["bucket"]["run_id"] == "100m-10b-deep-decay-from-step15500"
-        assert recorded["bucket"]["pointer_name"] == "latest"
-        assert recorded["bucket"]["token"] == "test-token"
-    finally:
-        temp_dir.cleanup()
+    model, config, consumed, reasoning_spec, info, cache_root = first
+    assert model == "model"
+    assert config == "config"
+    assert consumed == 10_000_007_168
+    assert reasoning_spec is None
+    assert info["checkpoint_id"] == "step-00076294"
+    assert info["cache_status"] == "downloaded"
+    assert recorded["bucket"]["run_id"] == "100m-10b-deep-decay-from-step15500"
+    assert recorded["bucket"]["pointer_name"] == "latest"
+    assert recorded["bucket"]["token"] == "test-token"
+    assert cache_root == (
+        tmp_path
+        / "chat_models"
+        / chat._STAGE_PRETRAINED
+        / "100m-10b-deep-decay-from-step15500"
+    )
+    assert (cache_root / chat._CHAT_MODEL_CACHE_METADATA).is_file()
+
+    second = chat._download_model(
+        repo_id="owner/repo",
+        run_id="100m-10b-deep-decay-from-step15500",
+        source=chat._SOURCE_STORAGE_BUCKET,
+        stage=chat._STAGE_PRETRAINED,
+        device="cpu",
+    )
+    assert second[4]["cache_status"] == "hit"
+    assert second[5] == cache_root
+    assert recorded["bucket_calls"] == 1
+    assert loaded_roots == [
+        cache_root / "step-00076294",
+        cache_root / "step-00076294",
+    ]
 
 
-def test_download_model_storage_bucket_falls_back_to_model_artifact(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_download_model_storage_bucket_falls_back_to_model_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
     def fake_download_bucket(**kwargs):
         raise RuntimeError("bucket not found")
 
@@ -318,7 +348,9 @@ def test_download_model_storage_bucket_falls_back_to_model_artifact(monkeypatch:
             "revision": revision,
             "destination": destination,
         }
-        return destination / "step-00076294", {"checkpoint_id": "step-00076294"}
+        checkpoint_root = destination / "step-00076294"
+        checkpoint_root.mkdir(parents=True)
+        return checkpoint_root, {"checkpoint_id": "step-00076294"}
 
     def fake_load(checkpoint_root, *, device, stage):
         return "model", "config", 10_000_007_168, None
@@ -332,16 +364,37 @@ def test_download_model_storage_bucket_falls_back_to_model_artifact(monkeypatch:
         fake_download_artifact,
     )
     monkeypatch.setattr(chat, "_load_completed_checkpoint", fake_load)
+    monkeypatch.setattr(chat, "_CHAT_MODEL_CACHE_DIR", tmp_path / "chat_models")
 
-    model, config, consumed, reasoning_spec, info, temp_dir = chat._download_model(
+    _model, _config, _consumed, _reasoning_spec, info, cache_root = chat._download_model(
         repo_id="owner/repo",
         run_id="100m-10b-deep-decay-from-step15500",
         source=chat._SOURCE_STORAGE_BUCKET,
         stage=chat._STAGE_PRETRAINED,
         device="cpu",
     )
-    try:
-        assert recorded["artifact"]["run_id"] == "100m-10b-deep-decay-from-step15500"
-        assert info["checkpoint_id"] == "step-00076294"
-    finally:
-        temp_dir.cleanup()
+    assert recorded["artifact"]["run_id"] == "100m-10b-deep-decay-from-step15500"
+    assert info["checkpoint_id"] == "step-00076294"
+    assert info["cache_status"] == "downloaded"
+    assert cache_root.is_dir()
+
+
+def test_generation_settings_report_effective_chat_sampler() -> None:
+    class Config:
+        max_seq_len = 1024
+
+    class Device:
+        type = "cuda"
+
+    settings = chat._generation_settings(Config(), device=Device())
+    assert settings == {
+        "temperature": chat.TEMPERATURE,
+        "top_p": chat.TOP_P,
+        "top_k": chat.TOP_K,
+        "max_new_tokens": chat.MAX_NEW_TOKENS,
+        "base_seed": chat.SEED,
+        "seed_policy": "base_seed + zero_based_turn_index",
+        "max_seq_len": 1024,
+        "eos_token_id": 50_256,
+        "precision": "fp16",
+    }
