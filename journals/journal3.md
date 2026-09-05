@@ -46,11 +46,15 @@ Let's briefly investigate how MOEs work.
 
 An ordinary decoder block is:
 
-$$x \to \text{Self-Attention} \to \text{FFN} \to y$$
+$$
+x \to \text{Self-Attention} \to \text{FFN} \to y
+$$
 
 A typical MoE block is:
 
-$$x \to \text{Self-Attention} \to \text{Router} \to \text{Selected FFN experts} \to y$$
+$$
+x \to \text{Self-Attention} \to \text{Router} \to \text{Selected FFN experts} \to y
+$$
 
 This means that we first process the whole input via self attention, pass the info to the router, and the router will choose among the experts to which passing the info to produce the next token. That repeats over and over for every token. 
 Straightforward definition:
@@ -74,7 +78,9 @@ Instead, **Linear Attention** does the opposite: we first multiply $K^\top V$, w
 Linear attention keeps the basic goal of attention: each token gathers information from other tokens, but changes how the attention weights are computed so that we never build the large $n \times n$ attention matrix resulting from $Q K^\top$ product.
 
 With no softmax we could easily write:
-$$\sum_{j} (q_i^\top k_j) v_j = q_i^\top \left( \sum_{j} k_j v_j^\top \right)$$
+$$
+\sum_{j} (q_i^\top k_j) v_j = q_i^\top \left( \sum_{j} k_j v_j^\top \right)
+$$
 But softmax isn't linear and can't be fitted into both the two formulas. Moreover, running softmax on $K^\top V$ would normalize across embedding dimension and not across number of tokens. Therefore, Linear Attention needs a new way to represent similarity between tokens queries and keys without the need of using softmax function: some map functions (there is a lot of possible ones) do this for us, just allowing us to represent the attention weights by moving the summation symbol forward to the KV part, allowing us first to compute the total KV matrix, and then multiply it by $Q$, and
 
 — i forgot that attention uses outer product, not dot product, therefore the product between each token's $k_t v_t^\top$ is a matrix, and when we sum those matrices we get the final $K^\top V$ matrix.
@@ -89,7 +95,9 @@ To overcome this problem, DeltaNets were introduced: we compute the "memory valu
 
 #### 6.2 Gated DeltaNets
 We supercharge deltanets with memory erasure as well, by updating the memory as:
-$$S_t = \alpha_t S_{t-1} + \beta_t k_t (v_t - \alpha_t \hat{v}_t)^\top$$
+$$
+S_t = \alpha_t S_{t-1} + \beta_t k_t (v_t - \alpha_t \hat{v}_t)^\top
+$$
 As we can see we introduce the forgetting (or decay rate) denoted $\alpha_t$, that scales the entire previous memory. We also "forget" $\hat{v}_t$: equivalent to simply replacing $S_{t-1} k_t$ with $\alpha_t S_{t-1} k_t$ in the $\hat{v}_t$ formula.
 
 #### 6.3 Kimi Delta Attention
@@ -97,15 +105,21 @@ It replaces Gated DeltaNet's $\alpha_t$ scalar with a diagonalized $\alpha_t$ ve
 
 Importantly, the final writing of KDA is:
 
-$$S_t = \widetilde{S}_{t-1} - \beta_t k_t k_t^\top \widetilde{S}_{t-1} + \beta_t k_t v_t^\top$$
+$$
+S_t = \widetilde{S}_{t-1} - \beta_t k_t k_t^\top \widetilde{S}_{t-1} + \beta_t k_t v_t^\top
+$$
 
 where:
 
-$$\widetilde{S}_{t-1} = \operatorname{Diag}(\alpha_t) S_{t-1}$$
+$$
+\widetilde{S}_{t-1} = \operatorname{Diag}(\alpha_t) S_{t-1}
+$$
 
 which is precisely equivalent to:
 
-$$S_t = \widetilde{S}_{t-1} + \beta_t k_t (v_t - \hat{v}_t)^\top$$
+$$
+S_t = \widetilde{S}_{t-1} + \beta_t k_t (v_t - \hat{v}_t)^\top
+$$
 
 which is the way we always wrote it down. Much easier to digest.
 
@@ -121,7 +135,9 @@ This paper (**may 2026! SOTA Stuff!**) splits the task using two different vecto
 
 Its short update is:
 
-$$S_t = \bar{S}_t + k_t (z_t - r_t)^\top$$
+$$
+S_t = \bar{S}_t + k_t (z_t - r_t)^\top
+$$
 
 Here, $r_t = \bar{S}_t^\top e_t$, with $e_t$ being the "erase key" $e_t = b_t \odot k_t$ (remember $\bar{S}_t = D_t S_{t-1}$), deciding the old value to be removed from memory, and $z_t = w_t \odot v_t$, tuning the amount of new info to be written in memory. Then, the model computes $z_t - r_t$: 
 - $+z_t$ inserts new content 

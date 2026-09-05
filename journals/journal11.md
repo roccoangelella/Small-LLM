@@ -37,7 +37,7 @@ This gives us much more control than simply downloading a huge reasoning dataset
 
 The biggest change of mind was about **what reasoning we actually want to teach**.
 
-My first thought was that reasoning datasets usually contain loads of arithmetic and word problems, but then i started questioning wether it makes any sense to spend the limited capacity of a 100M model trying to make it calculate. Exact multiplication, percentages, algebra and calculus feel like something that a calculator/tool should simply do better. What i'd rather have inside the model is the logic required to understand *what needs to be calculated*, and basic numerical awareness such as knowing that 7 < 12, -3 > -7, what a range means, which quantity is larger, etc.
+My first thought was that reasoning datasets usually contain loads of arithmetic and word problems, but then i started questioning wether it makes any sense to spend the limited capacity of a 100M model trying to make it calculate. Exact multiplication, percentages, algebra and calculus feel like something that a calculator/tool should simply do better. What i'd rather have inside the model is the logic required to understand *what needs to be calculated*, and basic numerical awareness such as knowing that $7 < 12$, $-3 > -7$, what a range means, which quantity is larger, etc.
 
 Recent papers seem to support this distinction much more than i expected. They explicitly separate mathematical reasoning from arithmetic computation, while logical primitives like deduction, induction, abduction, quantifiers and relational reasoning show meaningful transfer. Small models can actually learn arithmetic better than i thought, so "LLMs can't do maths" is clearly too strong, but that doesn't mean it's the best use of our tiny model's capacity.
 
@@ -49,7 +49,7 @@ Therefore **R0 will be logic-first**, with the following skill taxonomy:
 - **CSP**: satisfying multiple constraints and eliminating impossible options.
 - **IND**: induction, deriving a compact rule from observations.
 - **ABD**: abduction, choosing the explanation that best fits the supplied evidence.
-- **MAG**: numerical magnitude awareness: <, >, =, sign, ranges, min/max and approximate magnitude.
+- **MAG**: numerical magnitude awareness: $<$, $>$, $=$, sign, ranges, min/max and approximate magnitude.
 
 No calculus. No goal of turning the model into a calculator. Exact computation will come later through tool-use SFT + tool-aided RLVR. The model should learn the procedure and logic, the tool should execute the exact maths.
 

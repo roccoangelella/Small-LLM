@@ -4,7 +4,9 @@ This technique rotates query and key vectors according to their position in the 
 
 At position $m$, RoPE applies a rotation matrix:
 
-$$R(m\theta) = \begin{bmatrix} \cos(m\theta) & -\sin(m\theta) \\ \sin(m\theta) & \cos(m\theta) \end{bmatrix}$$
+$$
+R(m\theta) = \begin{bmatrix} \cos(m\theta) & -\sin(m\theta) \\ \sin(m\theta) & \cos(m\theta) \end{bmatrix}
+$$
 
 The rotated query is $q_m^{\text{RoPE}} = R(m\theta) q$. The key at position $n$ is rotated similarly: $k_n^{\text{RoPE}} = R(n\theta) k$.
 
@@ -15,7 +17,9 @@ Worth noticing that ROPE only affects attention layers that don't need memory (t
 
 Finally, **RMSNorm**: a normalization layer that replaces the classic LayerNorm. Instead of dividing by st. deviation + epsilon we simply scale the vector by the root mean square of its elements:
 
-$$\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^2 + \epsilon}} \odot \gamma$$
+$$
+\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^2 + \epsilon}} \odot \gamma
+$$
 
 It yields better stability, suits better with PreNorm, and is widely the standard.
 

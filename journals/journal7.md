@@ -7,9 +7,9 @@ What the hell is perplexity? I always asked it myself! It's just the exponential
 
 When we had loss 7.91, our model was uncertain about 2739.35 tokens. Plain and simple. Considering that the model has to pick among roughly 50k tokens, that's still something.
 
-I noticed we're using only 32% of GPU during this run. Might be useful to try microbatch=2,3,4,5... in next runs.
+I noticed we're using only 32% of GPU during this run. Might be useful to try microbatch $= 2, 3, 4, 5, \ldots$ in next runs.
 
-100 updates: perplexity=769!
+100 updates: perplexity $= 769$!
 
 ---
 Training ended, and it behaves surprisingly well! I mean, it speaks! It speaks nonsense, but that's still something! The next trials will simply see us enlarging the dataset and the model, iterating until a solid speaking ability comes out. We'll probably consider as "good" a perplexity level close to 20. We ended with rouhgly 420.
