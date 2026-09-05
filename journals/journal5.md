@@ -26,13 +26,13 @@ AdamW handles the remaining parameters, including embeddings, normalization scal
 
 Therefore, the division is based primarily on each parameter’s mathematical role, not simply on which layer it belongs to.
 The sota for fixing the learning rate of this architecture is:
-$$
+```math
 \text{AdamW LR} = \text{scheduled LR}
-$$
+```
 
-$$
+```math
 \text{Muon LR} = \text{scheduled LR} \times \text{Muon multiplier}
-$$
+```
 - **SOAP** (Shampoo with Adam in Preconditioner's eigenbasis): it combines ideas from Shampoo and Adam optimizers. It keeps a moving average of gradients for every weight, denoted $G$, kept "stored" in two different ways, $L = G G^\top$ and $R = G^\top G$. $L$ describes the relationship among rows, and $R$ among columns, highlighting which combinations of rows and columns tend to move together. 
 
 SOAP performs **eigendecomposition**: given a square matrix $A$, we rewrite it as $A = Q \Lambda Q^{-1}$. $Q$ is the matrix whose columns are eigenvectors of $A$, and $\Lambda$ is the diagonal matrix of eigenvalues. For a symmetric matrix ($L, R$ are symmetric), $A = Q \Lambda Q^\top$. Therefore we get $L = Q_L \Lambda_L Q_L^\top$ and $R = Q_R \Lambda_R Q_R^\top$. By definition, $Q_L$ and $Q_R$ will contain the most useful directions!
