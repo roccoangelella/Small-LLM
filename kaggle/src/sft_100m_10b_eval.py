@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import sys
 
 import sft_runtime as base
 import sft_scaled_runtime
@@ -54,8 +53,12 @@ def evaluate(
         if output
         else profile.run_root / f"post-sft-{suite}-qualification.json"
     )
+    # This command is executed under ``uv run``.  Use the environment-resolved
+    # ``python`` executable rather than the notebook's absolute sys.executable;
+    # otherwise an explicit /usr/bin/python3 bypasses uv's resolved dependencies
+    # (notably huggingface-hub>=1.5 required by the HF bucket transport).
     cmd = [
-        sys.executable,
+        "python",
         str(KAGGLE_SRC_DIR / "sft_100m_10b_eval_runner.py"),
         "--dataset-dir", str(bundle),
         "--eval-dir", str(selected_eval_dir),
