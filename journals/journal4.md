@@ -18,13 +18,13 @@ Worth noticing that ROPE only affects attention layers that don't need memory (t
 Finally, **RMSNorm**: a normalization layer that replaces the classic LayerNorm. Instead of dividing by st. deviation + epsilon we simply scale the vector by the root mean square of its elements:
 
 ```math
-\operatorname{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^2 + \epsilon}} \odot \gamma
+\mathrm{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d} \sum_{i=1}^{d} x_i^2 + \epsilon}} \odot \gamma
 ```
 
 It yields better stability, suits better with PreNorm, and is widely the standard.
 
 ### Activation Functions
-Relu is old stuff. So does Gelu, appearently. Modern Decorders use **Gated FFN**. Before diving in, it's worth describing the **SiLU function**: it multiplies the input by the sigmoid of the input itself. $\operatorname{SiLU}(x) = x \cdot \sigma(x)$. The cool thing about this function is that it provides three clear regions of the activation: roughly zero, roughly 1/2 of the input signal, or roughly the signal itself, allowing a much deeper representivity than simple Relu (0 or identity function).
+Relu is old stuff. So does Gelu, appearently. Modern Decorders use **Gated FFN**. Before diving in, it's worth describing the **SiLU function**: it multiplies the input by the sigmoid of the input itself. $\mathrm{SiLU}(x) = x \cdot \sigma(x)$. The cool thing about this function is that it provides three clear regions of the activation: roughly zero, roughly 1/2 of the input signal, or roughly the signal itself, allowing a much deeper representivity than simple Relu (0 or identity function).
 
 Now, the "real architectures":
 1. GLU: Gated Linear Units: each neuron of the FFN has two weight vectors, not one. The first one, denoted $W_{\text{gate}}$, and the second, $W_{\text{up}}$. We project the input using both, and get $g$ and $u$, both being two vectors shaped equally to the current FFN layer. The output of GLU is then given by $h = \sigma(g) \odot u$. By imposing the sigmoid on $g$, we have the network deciding the amount of info should be passed, and we multiply it by $u$ to make that info pass. Basically, we make a sigmoid use the gate information to decide how much to learn and how much to forget. Then we treat $u$ as the "real info".
