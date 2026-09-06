@@ -20,15 +20,19 @@ from trainer.optimizer_telemetry import InstrumentedHybridMuonAdamW
 
 
 def _is_expert_matrix(name: str, parameter: nn.Parameter) -> bool:
+    expert_path = ".ffn.experts." in name or name.startswith("ffn.experts.")
     return (
         parameter.ndim == 2
-        and ".ffn.experts." in name
+        and expert_path
         and name.endswith((".gate.weight", ".up.weight", ".down.weight"))
     )
 
 
 def _is_router_matrix(name: str, parameter: nn.Parameter) -> bool:
-    return parameter.ndim == 2 and name.endswith(".ffn.router.projection.weight")
+    return parameter.ndim == 2 and (
+        name == "ffn.router.projection.weight"
+        or name.endswith(".ffn.router.projection.weight")
+    )
 
 
 def classify_moe_parameters(model: nn.Module) -> _ClassifiedParameters:
