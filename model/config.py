@@ -149,6 +149,24 @@ class ModelConfig:
         values.update(overrides)
         return cls(**values)  # type: ignore[arg-type]
 
+    @classmethod
+    def expanded(cls, **overrides: object) -> ModelConfig:
+        """Return the frozen approximately-200M width-scaled geometry."""
+
+        values: dict[str, object] = {
+            "d_model": 768,
+            "n_layers": 20,
+            "d_ff": 2_048,
+            "n_heads": 12,
+            "head_dim": 64,
+            "gdn_num_key_heads": 12,
+            "gdn_num_value_heads": 12,
+            "gdn_key_dim": 64,
+            "gdn_value_dim": 64,
+        }
+        values.update(overrides)
+        return cls(**values)  # type: ignore[arg-type]
+
 
 def smoke_config(**overrides: object) -> ModelConfig:
     """Functional spelling of :meth:`ModelConfig.smoke`."""
@@ -160,3 +178,9 @@ def substantive_config(**overrides: object) -> ModelConfig:
     """Functional spelling of :meth:`ModelConfig.substantive`."""
 
     return ModelConfig.substantive(**overrides)
+
+
+def expanded_config(**overrides: object) -> ModelConfig:
+    """Functional spelling of :meth:`ModelConfig.expanded`."""
+
+    return ModelConfig.expanded(**overrides)
