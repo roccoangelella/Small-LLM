@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from dataset.incremental_cache import IncrementalRollingShardCache
-from dataset.incremental_frontier import SHARD_FRONTIER_FILENAME
+from dataset.incremental_frontier import FrontierShard, SHARD_FRONTIER_FILENAME
 
 
 class FakeStore:
@@ -61,6 +61,54 @@ def _row(index: int, payload: bytes) -> dict[str, object]:
 
 
 class IncrementalCacheTests(unittest.TestCase):
+    def test_acknowledge_rejects_unsafe_filename_before_deletion(self) -> None:
+        run_id = "dataset-001"
+        contract = {
+            "run_id": run_id,
+            "contract_sha256": "c" * 64,
+            "planned_train_blocks": 1,
+        }
+        frontier = {
+            "version": 1,
+            "run_id": run_id,
+            "contract_sha256": contract["contract_sha256"],
+            "ready_train_shards": [],
+            "frozen_validation_shards": [],
+            "producer_complete": True,
+        }
+        store = FakeStore(frontier)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = Path(tmp) / "outside.bin"
+            outside.write_bytes(b"sentinel")
+            cache = IncrementalRollingShardCache(
+                root=root,
+                run_id=run_id,
+                contract=contract,
+                store=store,
+                prefetch_shards=1,
+                poll_seconds=0.001,
+            )
+            cache._cached_train = [
+                FrontierShard(
+                    "../outside.bin",
+                    "train",
+                    1,
+                    hashlib.sha256(b"x").hexdigest(),
+                    0,
+                    0,
+                    1,
+                )
+            ]
+            try:
+                with self.assertRaisesRegex(RuntimeError, "unsafe"):
+                    cache.acknowledge(0)
+            finally:
+                cache.close()
+
+            self.assertTrue(outside.exists())
+
     def test_successor_prefetch_is_promoted_without_duplicate_download(self) -> None:
         run_id = "dataset-001"
         contract = {

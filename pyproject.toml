@@ -51,8 +51,11 @@ small-llm-sft-eval = "post_training.sft.eval_suite:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = ["moe_pilot"]
+
 [tool.setuptools.packages.find]
-include = ["dataset*", "model*", "trainer*", "post_training*"]
+include = ["dataset*", "model*", "trainer*", "post_training*", "MOE_model*"]
 exclude = ["tests*"]
 
 [tool.uv]

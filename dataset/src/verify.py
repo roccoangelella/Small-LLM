@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from dataset import config
+from dataset.src.remote import _safe_relative_path as safe_path
 
+from .remote import safe_download_target
 from .storage import read_json, sha256_file
 
 
@@ -113,7 +115,11 @@ def _verify_stream_cache(
         if not isinstance(filename, str) or not filename:
             problems.append("shard entry has invalid filename")
             continue
-        path = output_dir / filename
+        try:
+            path = safe_download_target(output_dir, safe_path(filename))
+        except (RuntimeError, ValueError) as error:
+            problems.append(f"unsafe shard filename {filename!r}: {error}")
+            continue
         if not path.is_file():
             problems.append(f"missing local shard {path}")
             continue

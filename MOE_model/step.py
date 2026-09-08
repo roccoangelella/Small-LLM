@@ -9,10 +9,12 @@ from torch.nn import functional as F
 
 from trainer.precision import autocast_context
 from trainer.step import (
+    _backoff_scaler_after_nonfinite_gradient,
     _clear_optimizer_step_statistics,
     _fp16_overflow_retry_limit,
     _microbatch_to_device,
     _optimizer_gradient_norms,
+    _profile_region,
     _optimizer_step_statistics,
     _ordered_batch_tensors,
 )
@@ -66,6 +68,7 @@ def _finalize_telemetry(engine: object, accumulator: list[dict[str, object]]) ->
             raise RuntimeError("MoE telemetry recorded an empty layer")
         global_counts.add_(counts)
         fractions = counts.float() / float(token_count)
+        router = engine.model.blocks[layer_id].ffn.router
         dead = int((counts == 0).sum().item())
         dead_slots += dead
         layer_payload[f"layer_{layer_id:02d}"] = {
@@ -78,6 +81,10 @@ def _finalize_telemetry(engine: object, accumulator: list[dict[str, object]]) ->
                 item["selected_probability_sum"].item() / token_count
             ),
             "router_entropy_mean": float(item["entropy_sum"].item() / token_count),
+            "load_entropy": float(-(fractions * fractions.clamp_min(1e-12).log()).sum()),
+            "token_exposure": router.token_exposure.detach().cpu().tolist(),
+            "expert_updates": router.expert_updates.detach().cpu().tolist(),
+            "selection_bias_next_update": router.selection_bias.detach().cpu().tolist(),
         }
 
     total_assignments = int(global_counts.sum().item())
@@ -144,7 +151,7 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
                 device=engine.device,
             )
             position_fraction = float(micro_inputs.numel()) / float(total_positions)
-            with autocast_context(engine.config.precision, engine.device):
+            with _profile_region(engine, "forward_ce"), autocast_context(engine.config.precision, engine.device):
                 logits, aux = engine.model.forward_with_aux(micro_inputs)
                 if logits.ndim != 3 or logits.shape[:2] != micro_labels.shape:
                     raise RuntimeError("MoE logits do not match training labels")
@@ -159,12 +166,14 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
                 )
 
             if not bool(torch.isfinite(ce_sum)) or not bool(torch.isfinite(aux.z_loss)):
+                engine.scheduler.cancel_step()
                 engine.optimizer.zero_grad(set_to_none=True)
                 raise FloatingPointError("non-finite MoE CE or router z-loss")
             total_ce += ce_sum.detach().float()
             total_z += aux.z_loss.detach().float() * position_fraction
             _accumulate_telemetry(telemetry, aux.layers)
-            engine.scaler.scale(objective).backward()
+            with _profile_region(engine, "backward"):
+                engine.scaler.scale(objective).backward()
 
         engine.scaler.unscale_(engine.optimizer)
         role_gradient_norms = _optimizer_gradient_norms(engine.optimizer)
@@ -172,6 +181,8 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
             engine.model.parameters(), engine.config.max_grad_norm
         )
         finite_gradient = bool(torch.isfinite(gradient_norm))
+        if not finite_gradient:
+            engine.scheduler.cancel_step()
         if not finite_gradient and not engine.scaler.is_enabled():
             raise FloatingPointError("non-finite MoE gradient norm")
         grad_value = float(gradient_norm.detach())
@@ -180,13 +191,26 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
         )
 
         scale_before = float(engine.scaler.get_scale())
+        if not finite_gradient:
+            _clear_optimizer_step_statistics(engine.optimizer)
+            scaler_scale = _backoff_scaler_after_nonfinite_gradient(engine.scaler)
+            retries += 1
+            engine.overflow_events += 1
+            engine.optimizer.zero_grad(set_to_none=True)
+            if retries > overflow_retry_limit:
+                raise FloatingPointError(
+                    "FP16 MoE gradient norm remained non-finite; block is unacknowledged"
+                )
+            continue
         _clear_optimizer_step_statistics(engine.optimizer)
-        engine.scaler.step(engine.optimizer)
-        engine.scaler.update()
+        with _profile_region(engine, "optimizer"):
+            engine.scaler.step(engine.optimizer)
+            engine.scaler.update()
         scaler_scale = float(engine.scaler.get_scale())
         if engine.scaler.is_enabled() and (
             not finite_gradient or scaler_scale < scale_before
         ):
+            engine.scheduler.cancel_step()
             retries += 1
             engine.overflow_events += 1
             if retries > overflow_retry_limit:
@@ -203,6 +227,8 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
         engine.consumed_tokens = next_tokens
         engine.global_step += 1
         engine.scheduler.commit(engine.consumed_tokens)
+        for block, item in zip(engine.model.blocks, telemetry, strict=True):
+            block.ffn.router.commit_load(item["counts"])
         moe_payload = _finalize_telemetry(engine, telemetry)
         break
 

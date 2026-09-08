@@ -45,6 +45,7 @@ class DroplessTop1MoE(nn.Module):
             config.d_model,
             config.num_experts,
             init_std=config.router_init_std,
+            balancing_step_size=config.balancing_step_size,
         )
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor, LayerMoETelemetry]:
@@ -67,7 +68,7 @@ class DroplessTop1MoE(nn.Module):
                 0, token_indices
             ).to(dtype=expert_outputs.dtype).unsqueeze(-1)
             combined = combined.index_copy(
-                0, token_indices, expert_outputs * gates
+                0, token_indices, (expert_outputs * gates).to(dtype=combined.dtype)
             )
         telemetry = LayerMoETelemetry(
             expert_counts=route.expert_counts.detach(),

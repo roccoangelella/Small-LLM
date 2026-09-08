@@ -100,6 +100,11 @@ class TokenLRScheduler:
         self._set_lr(value)
         return value
 
+    def cancel_step(self) -> None:
+        """Restore the committed LR after a rejected candidate update."""
+
+        self._set_lr(self.last_lr)
+
     def commit(self, committed_tokens: int) -> float:
         if committed_tokens <= self.committed_tokens:
             raise ValueError("committed token count must advance")

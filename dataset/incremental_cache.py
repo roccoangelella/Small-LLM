@@ -16,6 +16,8 @@ from dataset.incremental_frontier import (
     _frontier_shards,
     _train_index_for_block,
 )
+from dataset.src.remote import safe_download_target
+from dataset.src.remote import _safe_relative_path as safe_path
 
 
 class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
@@ -158,7 +160,10 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         # Evict only after the successor is locally verified whenever one exists.
         # This keeps the steady-state disk invariant at current+next and avoids
         # a transient zero-train-shard cache if the boundary transfer is slow.
-        path = self.root / shard.filename
+        try:
+            path = safe_download_target(self.root, safe_path(shard.filename))
+        except (RuntimeError, ValueError) as error:
+            raise RuntimeError(f"incremental cache has an unsafe shard path: {shard.filename}") from error
         if path.is_file() and not path.is_symlink():
             path.unlink()
 

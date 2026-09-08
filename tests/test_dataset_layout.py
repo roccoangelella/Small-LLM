@@ -12,6 +12,7 @@ import tomllib
 import unittest
 
 from dataset import config
+from setuptools import find_packages
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -183,6 +184,11 @@ class DatasetLayoutTests(unittest.TestCase):
         payload = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
         includes = payload["tool"]["setuptools"]["packages"]["find"]["include"]
         self.assertIn("dataset*", includes)
+        self.assertIn("MOE_model*", includes)
+        packages = find_packages(
+            where=str(ROOT), include=includes, exclude=["tests*"]
+        )
+        self.assertIn("MOE_model", packages)
 
     def test_direct_kaggle_launcher_resolves_dataset_package_outside_repo_cwd(self) -> None:
         environment = os.environ.copy()

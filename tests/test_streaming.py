@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -210,6 +211,44 @@ class StreamCacheEndToEndTest(unittest.TestCase):
             manifest["schema_version"] = 1
             (output / config.MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
             self.assertFalse(verify(output).passed)
+
+    def test_verify_rejects_shard_filename_outside_dataset_root(self) -> None:
+        payload = b"\x01\x00\x02\x00"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "dataset"
+            root.mkdir()
+            outside = Path(tmp) / "outside.bin"
+            outside.write_bytes(payload)
+            manifest = {
+                "schema_version": 2,
+                "sequence_format": "context_plus_one",
+                "context_length": 1,
+                "stored_tokens_per_sequence": 2,
+                "complete": True,
+                "accepted_source_tokens": 2,
+                "scheduler": {"total_emitted_source_tokens": 2},
+                "shards": [
+                    {
+                        "filename": "../outside.bin",
+                        "split": "train",
+                        "byte_size": len(payload),
+                        "checksum": hashlib.sha256(payload).hexdigest(),
+                        "first_block_id": 0,
+                        "last_block_id": 0,
+                        "sequence_count": 1,
+                        "shard_cluster_source_tokens": {"0": 2},
+                    }
+                ],
+            }
+            (root / config.MANIFEST_FILENAME).write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+
+            report = verify(root, full_scan=True)
+            self.assertTrue(outside.exists())
+
+        self.assertFalse(report.passed)
+        self.assertTrue(any("unsafe shard filename" in problem for problem in report.problems))
 
     def test_producer_checkpoint_and_from_state_resume(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

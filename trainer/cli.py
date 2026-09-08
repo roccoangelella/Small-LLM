@@ -7,6 +7,7 @@ import math
 import os
 import sys
 import time
+from contextlib import nullcontext
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -90,9 +91,20 @@ def _is_primary_process() -> bool:
         return True
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    model_config, trainer_config, engine, session, coordinator = setup(args)
+def main(
+    argv: list[str] | None = None, *, setup_fn=None, validation_reader_fn=None,
+    parse_args_fn=None,
+) -> int:
+    args = (parse_args_fn or parse_args)(argv)
+    model_config, trainer_config, engine, session, coordinator = (setup_fn or setup)(args)
+    observer = None
+    if getattr(args, "experiment_dir", None) is not None:
+        from .observation import RunObservation
+
+        observer = RunObservation(
+            args, engine, model_config, trainer_config,
+            validation_reader_fn or validation_reader,
+        )
     is_primary_process = _is_primary_process()
     remote = configure_remote_publication(args) if is_primary_process else None
     best_remote_metric = _existing_remote_best_metric(remote)
@@ -165,15 +177,18 @@ def main(argv: list[str] | None = None) -> int:
     saved_paths: dict[str, Path] = {}
     remotely_published: set[str] = set()
     completed = 0
+    last_validation_step = None
 
     def run_validation() -> dict[str, object]:
+        nonlocal last_validation_step
         started = time.perf_counter()
-        reader = validation_reader(args, model_config)
+        reader = (validation_reader_fn or validation_reader)(args, model_config)
         result = engine.evaluate(
             reader.iter_from_start(args.validation_blocks),
             maximum_batches=args.validation_blocks,
         )
         elapsed = time.perf_counter() - started
+        last_validation_step = engine.global_step
         print(
             json.dumps(
                 {"validation": result, "elapsed_seconds": elapsed},
@@ -199,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
             path = Path(args.checkpoint_dir) / checkpoint_id
             saved.add(checkpoint_id)
             saved_paths[checkpoint_id] = path
+            if observer is not None:
+                observer.checkpoint(checkpoint_id, elapsed_seconds=0., byte_size=None)
             return path
         started = time.perf_counter()
         checkpoint = session.save_checkpoint(
@@ -232,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                 elapsed_seconds=elapsed,
                 byte_size=event["byte_size"],
             )
+        if observer is not None:
+            observer.checkpoint(checkpoint_id, elapsed_seconds=elapsed, byte_size=byte_size)
         return path
 
     def publish_best_model_if_improved(checkpoint_id: str) -> None:
@@ -328,36 +347,42 @@ def main(argv: list[str] | None = None) -> int:
         remotely_published.add(checkpoint_id)
 
     try:
+        checkpoint_steps = set(getattr(args, "checkpoint_at_steps", ()))
+        if engine.global_step in checkpoint_steps:
+            if args.validation_blocks:
+                validation = run_validation()
+            ensure_local_checkpoint(f"step-{engine.global_step:08d}")
         for _ in range(args.steps):
             try:
-                metrics = session.step()
+                with observer.profile(engine.global_step + 1) if observer else nullcontext():
+                    metrics = session.step()
             except StopIteration:
                 break
             completed += 1
+            if observer is not None:
+                observer.training(metrics)
             print(json.dumps(metrics.as_dict(), sort_keys=True), flush=True)
             if telemetry is not None:
                 telemetry.log_training(metrics)
             if (
                 args.validation_blocks
-                and trainer_config.evaluation_every_steps
-                and engine.global_step % trainer_config.evaluation_every_steps == 0
+                and (engine.global_step in checkpoint_steps
+                     or (trainer_config.evaluation_every_steps
+                         and engine.global_step % trainer_config.evaluation_every_steps == 0))
             ):
                 validation = run_validation()
             checkpoint_id = f"step-{engine.global_step:08d}"
             if (
-                trainer_config.checkpoint_every_steps
-                and engine.global_step % trainer_config.checkpoint_every_steps == 0
+                engine.global_step in checkpoint_steps
+                or (trainer_config.checkpoint_every_steps
+                    and engine.global_step % trainer_config.checkpoint_every_steps == 0)
             ):
                 ensure_local_checkpoint(checkpoint_id)
             publish_best_model_if_improved(checkpoint_id)
             if remote is not None and engine.global_step % remote.every_steps == 0:
                 publish_remote_checkpoint(checkpoint_id, final=False)
 
-        if args.validation_blocks and (
-            validation is None
-            or trainer_config.evaluation_every_steps == 0
-            or engine.global_step % trainer_config.evaluation_every_steps != 0
-        ):
+        if args.validation_blocks and last_validation_step != engine.global_step:
             validation = run_validation()
         checkpoint_id = f"step-{engine.global_step:08d}"
         ensure_local_checkpoint(checkpoint_id)
@@ -367,6 +392,11 @@ def main(argv: list[str] | None = None) -> int:
         if torch.cuda.is_available():
             torch.cuda.synchronize()
     except BaseException:
+        if observer is not None:
+            try:
+                observer.finish(failed=True)
+            except Exception as observation_error:
+                sys.stderr.write(f"Observation finalization also failed: {observation_error}\n")
         if telemetry is not None:
             try:
                 telemetry.finish(exit_code=1)
@@ -379,6 +409,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if telemetry is not None:
         telemetry.finish(exit_code=0)
+    if observer is not None:
+        observer.finish(failed=False)
     return 0
 
 

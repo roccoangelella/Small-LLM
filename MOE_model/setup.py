@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from dataset.src.joint_checkpoint import CheckpointCoordinator
 from trainer.cli_setup import _rolling_cache
 from trainer.config import TrainerConfig
@@ -26,6 +28,11 @@ def setup(args: object):
     if args.gdn_chunk_size is not None:
         dense_overrides["gdn_chunk_size"] = args.gdn_chunk_size
     model_config = factory(**dense_overrides)
+    model_config = replace(
+        model_config,
+        load_balancing=getattr(args, "load_balancing", "none"),
+        balancing_step_size=getattr(args, "balancing_step_size", 0.0),
+    )
 
     model = MoESmallLLM(model_config)
     initialize_moe_model(model, args.initialization)

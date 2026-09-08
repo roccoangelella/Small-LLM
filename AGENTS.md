@@ -30,7 +30,8 @@ current status -> accepted ADR -> current reference/runbook -> evidence -> resea
 
 ## Working rules
 
-- Keep the GDN-2 hybrid as the main architecture during the current 20M-model data-scaling stage.
+- Keep the GDN-2 hybrid as the main architecture; model/data scale follows the accepted decisions for the branch.
+- On the MoE branch, keep the frozen 100M/2B GDN-2 hybrid recipe for the paired MoE pilot (ADR 0168).
 - Do not authorize a larger model, new mixer, or architecture baseline without an explicit user decision.
 - Keep dataset, tokenizer, model, checkpoint, and evaluation identities deterministic and fail closed on drift.
 - Do not duplicate the qualitative prompt list; `trainer.post_pretraining_prompt_suite.PROMPT_CASES` is the source of truth.
