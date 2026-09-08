@@ -50,7 +50,13 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
-- [`0153-select-100m-100b-as-next-pretraining-scale-target.md`](0153-select-100m-100b-as-next-pretraining-scale-target.md)
+- [`0160-select-200m-100b-as-next-pretraining-run.md`](0160-select-200m-100b-as-next-pretraining-run.md)
+- [`0161-broaden-200m-100b-lr-anchor-range-slightly.md`](0161-broaden-200m-100b-lr-anchor-range-slightly.md)
+- [`0162-scale-100m-10b-lr-phase-anchors-proportionally-to-200m-100b.md`](0162-scale-100m-10b-lr-phase-anchors-proportionally-to-200m-100b.md)
+- [`0163-freeze-200m-100b-lr-anchors.md`](0163-freeze-200m-100b-lr-anchors.md)
+- [`0164-restrict-200m-100b-to-modal-and-beam.md`](0164-restrict-200m-100b-to-modal-and-beam.md)
+- [`0165-freeze-200m-architecture-and-inherit-hybrid-optimizer.md`](0165-freeze-200m-architecture-and-inherit-hybrid-optimizer.md)
+- [`0166-share-modal-beam-profile-and-rolling-data-code.md`](0166-share-modal-beam-profile-and-rolling-data-code.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
@@ -114,6 +120,8 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 ## Superseded ADRs
 
+- [`0159-select-200m-50b-next-run-and-continue-100b-corpus.md`](0159-select-200m-50b-next-run-and-continue-100b-corpus.md) — superseded by ADR 0160 (use the complete 100B corpus for the next 200M run).
+- [`0153-select-100m-100b-as-next-pretraining-scale-target.md`](0153-select-100m-100b-as-next-pretraining-scale-target.md) — superseded by ADR 0159 and transitively ADR 0160 (scale the next run to 200M/100B).
 - [`0055-unify-modal-checkpoints-on-hf-model-repository.md`](0055-unify-modal-checkpoints-on-hf-model-repository.md) — superseded by ADR 0132 (rolling checkpoints in mutable HF Storage Bucket, strict val-loss best in dedicated model repo).
 - [`0116-promote-expanded-e3-rsft-as-current-default-r0.md`](0116-promote-expanded-e3-rsft-as-current-default-r0.md) — superseded by ADR 0117 (e3 full qualification showed benchmark regression).
 - [`0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md`](0099-run-deep-decay-100m-10b-on-kaggle-dual-t4.md) — superseded by ADR 0114 (Modal H100 execution with microbatch-16 slicing).

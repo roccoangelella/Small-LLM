@@ -35,3 +35,31 @@ def test_modal_microbatch_candidates_cover_h100_capacity_range() -> None:
 
 def test_modal_default_gpu_is_h100() -> None:
     assert PROFILES["DEFAULT_GPU"] == "H100"
+
+
+def test_compact_profile_selection_matches_legacy_split_flags() -> None:
+    compact = PROFILES["resolve_profile_selection"](
+        profile="200m-100b",
+        model=None,
+        tokens=None,
+    )
+    legacy = PROFILES["resolve_profile_selection"](
+        profile=None,
+        model="200M",
+        tokens="100B",
+    )
+
+    assert compact == legacy == ("200M", "100B")
+
+
+def test_compact_profile_selection_rejects_mixed_syntax() -> None:
+    try:
+        PROFILES["resolve_profile_selection"](
+            profile="200M-100B",
+            model="200M",
+            tokens="100B",
+        )
+    except ValueError as error:
+        assert "either --profile or --model/--tokens" in str(error)
+    else:
+        raise AssertionError("mixed compact and split profile syntax was accepted")

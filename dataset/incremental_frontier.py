@@ -13,7 +13,6 @@ import json
 import math
 import os
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol
@@ -593,103 +592,14 @@ def stage_incremental_window(
     return {"status": "ready", "dataset_dir": str(destination), **marker}
 
 
-class IncrementalRollingShardCache:
-    """Dynamic current+next cache backed by a monotonic remote READY frontier."""
+def __getattr__(name: str) -> object:
+    """Keep the former cache import path as a lazy compatibility alias."""
 
-    def __init__(
-        self,
-        *,
-        root: Path,
-        run_id: str,
-        contract: Mapping[str, object],
-        store: FrontierStore,
-        prefetch_shards: int = 1,
-        poll_seconds: float = 5.0,
-    ) -> None:
-        if prefetch_shards < 1:
-            raise ValueError("incremental prefetch_shards must be at least one")
-        self.root = ensure_safe_directory(root)
-        self.run_id = run_id
-        self.contract = dict(contract)
-        self.store = store
-        self.prefetch_shards = prefetch_shards
-        self.poll_seconds = poll_seconds
-        self.planned_block_count = int(contract["planned_train_blocks"])
-        self._lock = __import__("threading").Lock()
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="dataset-frontier-prefetch")
-        self._futures: dict[int, Future[Path]] = {}
-        self._last_frontier: dict[str, object] | None = None
+    if name == "IncrementalRollingShardCache":
+        from dataset.incremental_cache import IncrementalRollingShardCache
 
-    def _frontier(self) -> dict[str, object]:
-        frontier = read_frontier(self.store, run_id=self.run_id, contract=self.contract)
-        previous = self._last_frontier
-        if previous is not None:
-            old = previous.get("ready_train_shards", [])
-            new = frontier.get("ready_train_shards", [])
-            if not isinstance(old, list) or not isinstance(new, list) or new[: len(old)] != old:
-                raise RuntimeError("remote training frontier regressed or mutated")
-        self._last_frontier = frontier
-        return frontier
-
-    def _wait_for_shard(self, block_id: int) -> FrontierShard:
-        while True:
-            frontier = self._frontier()
-            train = _frontier_shards(frontier, "ready_train_shards")
-            index = _train_index_for_block(train, block_id)
-            if index is not None:
-                return train[index]
-            if frontier.get("producer_complete") is True:
-                raise RuntimeError(f"producer completed without required train block {block_id}")
-            time.sleep(self.poll_seconds)
-
-    def shard_for_block(self, block_id: int) -> FrontierShard:
-        if block_id < 0 or block_id >= self.planned_block_count:
-            raise RuntimeError(f"incremental train block {block_id} is outside the frozen horizon")
-        return self._wait_for_shard(block_id)
-
-    def _download_block_shard(self, block_id: int) -> Path:
-        shard = self._wait_for_shard(block_id)
-        return _download_verified(self.store, run_id=self.run_id, root=self.root, shard=shard)
-
-    def _future(self, block_id: int) -> Future[Path]:
-        with self._lock:
-            future = self._futures.get(block_id)
-            if future is None:
-                future = self._executor.submit(self._download_block_shard, block_id)
-                self._futures[block_id] = future
-            return future
-
-    def ensure_block(self, block_id: int) -> None:
-        self._future(block_id).result()
-        shard = self.shard_for_block(block_id)
-        next_block = shard.last_block_id + 1
-        if next_block < self.planned_block_count:
-            self._future(next_block)
-
-    def acknowledge(self, block_id: int) -> None:
-        shard = self.shard_for_block(block_id)
-        if block_id != shard.last_block_id:
-            return
-        path = self.root / shard.filename
-        if path.is_file() and not path.is_symlink():
-            path.unlink()
-        next_block = block_id + 1
-        if next_block < self.planned_block_count:
-            self._future(next_block)
-
-    def restore_after_acknowledged(self, block_id: int) -> None:
-        next_block = block_id + 1
-        if next_block < self.planned_block_count:
-            self._future(next_block).result()
-
-    def close(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=True)
-
-    def __del__(self) -> None:
-        try:
-            self.close()
-        except Exception:
-            pass
+        return IncrementalRollingShardCache
+    raise AttributeError(name)
 
 
 __all__ = [

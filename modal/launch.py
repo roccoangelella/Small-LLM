@@ -31,6 +31,7 @@ from profiles import (  # noqa: E402
     SUPPORTED_GPUS,
     canonical_run_id,
     resolve_presets,
+    resolve_profile_selection,
 )
 
 DATA_VOLUME = modal.Volume.from_name("small-llm-data", create_if_missing=True)
@@ -384,8 +385,9 @@ def train_deep_decay_remote(
 
 @app.local_entrypoint()
 def main(
-    model: str,
-    tokens: str,
+    model: str = "",
+    tokens: str = "",
+    profile: str = "",
     action: str = "train",
     gpu: str = DEFAULT_GPU,
     dataset_dir: str = "",
@@ -394,6 +396,11 @@ def main(
     precision: str = DEFAULT_PRECISION,
     dry_run: bool = False,
 ) -> None:
+    model, tokens = resolve_profile_selection(
+        profile=profile,
+        model=model,
+        tokens=tokens,
+    )
     model_preset, token_preset = resolve_presets(model, tokens)
     if action not in {"train", "deep-decay"}:
         raise ValueError("action must be 'train' or 'deep-decay'")
@@ -406,7 +413,7 @@ def main(
     if token_preset.label == "100B" and max_steps_this_session == 0:
         raise ValueError("100B runs require an explicit positive --max-steps-this-session budget")
     if token_preset.label == "100B" and gpu != DEFAULT_GPU:
-        raise ValueError("100M/100B is restricted to the Modal H100 lane")
+        raise ValueError("200M/100B is restricted to the Modal H100 lane")
     if precision != "fp16":
         raise ValueError("the first Modal production migration is frozen to fp16")
     if token_preset.dataset_transport == "hf_rolling_shards" and dataset_dir:
@@ -629,7 +636,6 @@ def main(
 
 if __name__ == "__main__":
     raise SystemExit(
-        "Use: modal run --detach modal/launch.py --model 100M --tokens 2B, "
-        "--model 100M --tokens 10B, --model 100M --tokens 100B "
-        "--max-steps-this-session N, or --action deep-decay --model 100M --tokens 10B"
+        "Use: modal run --detach modal/launch.py --profile 200M-100B "
+        "--max-steps-this-session N, or --action deep-decay --profile 100M-10B"
     )

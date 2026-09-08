@@ -21,27 +21,24 @@ last_reviewed: 2026-09-08
 ## Immediate priorities
 
 1. Build and fully publish `100b-b64-dataset-001` to its dedicated public HF bucket, then verify its terminal manifest/READY/frontier and immutable shard inventory.
-2. Finish the pre-wiring understanding gate for the accepted 200M architecture and LR schedule.
-3. Wire a dedicated approximately-200M geometry and 200M/100B WSqD scientific recipe into the provider-neutral trainer and only the Modal/Beam provider profiles and launch surfaces.
-4. Preserve block-64/context-2048 global geometry, hybrid Muon+AdamW routing, FP16 qualified GDN-2 execution, exact dataset order, split latest/best checkpoint semantics, and cross-provider exact-resume identity unless explicitly superseded.
-5. Run local tests plus Modal H100 and Beam RTX4090 import/data-stage/microbatch/training/resume smoke gates before any long dispatch.
+2. Preserve block-64/context-2048 global geometry, hybrid Muon+AdamW routing, FP16 qualified GDN-2 execution, exact dataset order, split latest/best checkpoint semantics, and cross-provider exact-resume identity unless explicitly superseded.
+3. Run local tests plus Modal H100 and Beam RTX4090 import/data-stage/microbatch/training/resume smoke gates before any long dispatch.
+4. Launch the long trajectory only after the completed-corpus and provider smoke gates pass.
 
 ## Wiring readiness findings
 
-The existing stack is structurally ready but does not yet expose the new run:
+The accepted 200M/100B run is now wired without opening a Kaggle path:
 
-- `100b-b64` dataset/token profiles already exist in both Modal and Beam adapters.
-- The provider launchers already enforce explicit-step budgets for 100B and restrict 100B to Modal H100 / Beam RTX4090.
-- The generic trainer already supports fresh WSqD with warmup, stable peak span, settling, calibrated power-law decay, terminal cooldown, and serialized exact-resume scheduler state.
-- The provider profile tables currently expose only 20M/100M model presets.
-- `trainer --model-size` currently accepts only `smoke` and `substantive`, and setup currently constructs only those two geometries.
-- the generic provider runtime command currently hardcodes fresh `3e-4` WSD rather than the accepted 200M/100B WSqD recipe.
+- `100b-b64` resolves through one shared Modal/Beam scientific profile registry under `providers/`;
+- the provider launchers enforce an explicit session-step budget and restrict 100B to Modal H100 / Beam RTX4090;
+- `trainer --model-size expanded` constructs the frozen 200M geometry;
+- trainer setup installs the accepted 200M/100B WSqD plan before checkpoint identity is computed;
+- the generic trainer serializes exact-resume scheduler and optimizer state;
+- compact `--profile 200M-100B` and legacy `--model 200M --tokens 100B` selectors resolve identically.
 
-These are wiring changes, not unresolved scientific-design questions.
+## Next operational gate
 
-## Next decision gate
-
-Before writing the accepted implementation, the user must demonstrate understanding of the proposed geometry and LR schedule in their own words, per project protocol. After that gate, wiring can proceed without another scientific decision unless implementation inspection uncovers a contradiction.
+No further scientific decision is required before smoke qualification. The remaining gates are completed public-corpus verification and provider-specific import, staging, training, and exact-resume smoke results. Any proposed change to geometry, optimizer routing, LR anchors, dataset order, or provider boundary still requires an explicit superseding decision.
 
 The accepted target implementation is:
 

@@ -27,7 +27,8 @@ model/        geometry-scalable GDN-2 hybrid decoder
 trainer/      optimization, checkpointing, evaluation, and generation
 kaggle/       T4 launch, SFT, diagnostic, evaluation, and publication entry points
 beam/         alternate Beam provider adapter and reproduction procedures
-modal/        Modal provider adapter and reproduction procedures
+modal/        Modal SDK bindings and stable launcher paths
+providers/    provider-neutral Modal/Beam profiles and rolling-data orchestration
 tests/        offline correctness and repository-contract tests
 journals/     informal study notes
 llm_docs/     authoritative project memory
@@ -58,6 +59,15 @@ python kaggle/launch.py --help
 python kaggle/launch_sft.py --help
 python kaggle/launch_r_sft.py --help
 ```
+
+Resolve the current Modal/Beam pretraining profile with one selector (dry-run only; real launch still requires the roadmap gates):
+
+```bash
+modal run modal/launch.py --profile 200M-100B --max-steps-this-session 1 --dry-run
+uv run python beam/launch.py --profile 200M-100B --gpu RTX4090 --max-steps-this-session 1 --dry-run
+```
+
+The older `--model 200M --tokens 100B` spelling remains supported.
 
 Inspect the current 100M/10B post-completion pretraining probes without allocating a GPU:
 

@@ -4,6 +4,15 @@
 
 The Beam adapter remains an alternate provider surface, but the original 100M/10B pretraining trajectory is complete at `step-00076294` / 10,000,007,168 consumed target tokens. The 100M/10B procedures below are therefore reproduction/provider-qualification material, not an active instruction to launch another full trajectory. Current project state lives in [`../llm_docs/current/status.md`](../llm_docs/current/status.md).
 
+Scientific profile resolution and rolling-HF staging/production are shared with Modal under `providers/`; this directory keeps Beam SDK, image, GPU, volume, and visibility behavior. The compact profile selector for the accepted next trajectory is:
+
+```bash
+uv run python beam/launch.py --profile 200M-100B --gpu RTX4090 \
+  --max-steps-this-session 1 --dry-run
+```
+
+This is only a dry-run example. The public-corpus and provider smoke gates still apply. `--model 200M --tokens 100B` remains a compatibility spelling.
+
 Beam is a Python SDK plus CLI and is included by the project's canonical `uv sync` environment. Run the launcher from the repository root so Beam syncs the complete checkout.
 
 ## Setup

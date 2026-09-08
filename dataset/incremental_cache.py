@@ -3,32 +3,55 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Mapping
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 from dataset.incremental_frontier import (
     SHARD_FRONTIER_FILENAME,
     FrontierShard,
-    IncrementalRollingShardCache as _BaseIncrementalRollingShardCache,
+    FrontierStore,
     _download_verified,
     _frontier_shards,
     _train_index_for_block,
+    read_frontier,
 )
+from dataset.src.remote import ensure_safe_directory
 
 
-class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
-    """Poll HF only at frontier boundaries and keep async work per shard."""
+class IncrementalRollingShardCache:
+    """Dynamic current+next cache backed by a monotonic remote READY frontier."""
 
-    def __init__(self, **kwargs: object) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        root: Path,
+        run_id: str,
+        contract: Mapping[str, object],
+        store: FrontierStore,
+        prefetch_shards: int = 1,
+        poll_seconds: float = 5.0,
+    ) -> None:
+        if prefetch_shards < 1:
+            raise ValueError("incremental prefetch_shards must be at least one")
+        self.root = ensure_safe_directory(root)
+        self.run_id = run_id
+        self.contract = dict(contract)
+        self.store = store
+        self.prefetch_shards = prefetch_shards
+        self.poll_seconds = poll_seconds
+        self.planned_block_count = int(contract["planned_train_blocks"])
+        self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="dataset-frontier-prefetch",
+        )
+        self._last_frontier: dict[str, object] | None = None
         self._cached_train: list[FrontierShard] = []
         self._cached_producer_complete = False
         self._shard_futures: dict[str, Future[Path]] = {}
-        # Disable the base per-block future table. Dynamic production should
-        # allocate O(shards), not O(optimizer updates), bookkeeping.
-        self._futures.clear()
         local = self.root / SHARD_FRONTIER_FILENAME
         if local.is_file():
             try:
@@ -60,7 +83,11 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         self._last_frontier = frontier
 
     def _refresh_ready_prefix(self) -> None:
-        frontier = super()._frontier()
+        frontier = read_frontier(
+            self.store,
+            run_id=self.run_id,
+            contract=self.contract,
+        )
         self._accept_frontier(frontier)
 
     def _cached_shard(self, block_id: int) -> FrontierShard | None:
@@ -68,6 +95,10 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         return None if index is None else self._cached_train[index]
 
     def _wait_for_shard(self, block_id: int) -> FrontierShard:
+        if block_id < 0 or block_id >= self.planned_block_count:
+            raise RuntimeError(
+                f"incremental train block {block_id} is outside the frozen horizon"
+            )
         cached = self._cached_shard(block_id)
         if cached is not None:
             return cached
@@ -79,6 +110,9 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
             if self._cached_producer_complete:
                 raise RuntimeError(f"producer completed without required train block {block_id}")
             time.sleep(self.poll_seconds)
+
+    def shard_for_block(self, block_id: int) -> FrontierShard:
+        return self._wait_for_shard(block_id)
 
     def _shard_future(self, shard: FrontierShard) -> Future[Path]:
         with self._lock:
@@ -169,6 +203,15 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         shard = self._wait_for_shard(next_block)
         self._shard_future(shard).result()
         self._prefetch_successor(shard)
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
 
 __all__ = ["IncrementalRollingShardCache"]

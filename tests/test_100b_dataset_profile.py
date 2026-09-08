@@ -76,13 +76,13 @@ class Dataset100BProfileTests(unittest.TestCase):
         self.assertEqual(contract["trainer"]["planned_target_tokens"], 100_000_071_680)
 
     def test_provider_launchers_stage_without_spawning_a_100b_producer(self) -> None:
+        rolling = (ROOT / "providers" / "rolling_dataset.py").read_text(encoding="utf-8")
+        self.assertIn("require_completed_frontier(store, run_id=profile.run_id)", rolling)
+        self.assertIn("store.verify_bucket_visibility()", rolling)
         for provider in ("modal", "beam"):
             launch = (ROOT / provider / "launch.py").read_text(encoding="utf-8")
-            rolling = (ROOT / provider / "rolling_dataset.py").read_text(encoding="utf-8")
             with self.subTest(provider=provider):
                 self.assertIn("dataset_profile.launch_concurrent_producer", launch)
-                self.assertIn("require_completed_frontier(store, run_id=profile.run_id)", rolling)
-                self.assertIn("store.verify_bucket_visibility()", rolling)
                 self.assertIn("100B runs require an explicit positive --max-steps-this-session budget", launch)
                 expected_gpu = "DEFAULT_GPU" if provider == "modal" else '"RTX4090"'
                 self.assertIn(f"gpu != {expected_gpu}", launch)
@@ -99,10 +99,27 @@ class Dataset100BProfileTests(unittest.TestCase):
                     profiles["canonical_run_id"](model, tokens),
                     "200m-100b-data-001",
                 )
+                self.assertEqual(
+                    profiles["resolve_profile_selection"](
+                        profile="200m-100b",
+                        model=None,
+                        tokens=None,
+                    ),
+                    ("200M", "100B"),
+                )
                 with self.assertRaises(ValueError):
                     profiles["resolve_presets"]("100M", "100B")
                 with self.assertRaises(ValueError):
                     profiles["resolve_presets"]("200M", "10B")
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "either --profile or --model/--tokens",
+                ):
+                    profiles["resolve_profile_selection"](
+                        profile="200M-100B",
+                        model="200M",
+                        tokens="100B",
+                    )
 
 
 if __name__ == "__main__":

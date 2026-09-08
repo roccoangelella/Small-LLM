@@ -2,6 +2,15 @@
 
 `modal/launch.py` is the canonical Modal entry point for new single-GPU Small-LLM pretraining runs. All operator interaction for this lane happens from the VPS. Kaggle is only the remote source that already stores the verified 2B finite dataset.
 
+Scientific profile resolution and rolling-HF staging/production are shared with Beam under `providers/`; this directory keeps Modal SDK, image, GPU, secret, and Volume behavior. Resolve the accepted next trajectory with one selector:
+
+```bash
+modal run modal/launch.py --profile 200M-100B \
+  --max-steps-this-session 1 --dry-run
+```
+
+This is only a dry-run example. The completed-public-corpus and provider smoke gates still apply. `--model 200M --tokens 100B` remains a compatibility spelling.
+
 ## One-time VPS setup
 
 Use the repository `.venv`:

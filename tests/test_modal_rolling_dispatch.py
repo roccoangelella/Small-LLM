@@ -57,7 +57,7 @@ class ModalRollingDispatchTests(unittest.TestCase):
         self.assertNotIn("retries=", h100_decorator)
 
     def test_cpu_stage_uses_checkpoint_aligned_incremental_lead_window(self) -> None:
-        source = (ROOT / "modal" / "rolling_dataset.py").read_text(encoding="utf-8")
+        source = (ROOT / "providers" / "rolling_dataset.py").read_text(encoding="utf-8")
 
         self.assertIn("next_unconsumed_block", source)
         self.assertIn("stage_incremental_window", source)

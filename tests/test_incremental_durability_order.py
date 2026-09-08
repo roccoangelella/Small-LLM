@@ -25,8 +25,8 @@ class IncrementalDurabilityOrderTests(unittest.TestCase):
         self.assertLess(durable_commit, publish_ready)
         self.assertLess(publish_ready, evict)
 
-    def test_modal_producer_binds_volume_commit_to_durability_hook(self) -> None:
-        source = (ROOT / "modal" / "rolling_producer.py").read_text(encoding="utf-8")
+    def test_shared_producer_binds_volume_commit_to_durability_hook(self) -> None:
+        source = (ROOT / "providers" / "rolling_producer.py").read_text(encoding="utf-8")
         self.assertIn("durable_progress_hook=commit_cache_volume", source)
         self.assertNotIn("periodic", source.lower())
 

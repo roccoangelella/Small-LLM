@@ -40,6 +40,7 @@ from profiles import (  # noqa: E402
     SUPPORTED_GPUS,
     canonical_run_id,
     resolve_presets,
+    resolve_profile_selection,
 )
 
 SECRETS = ["WANDB_API_KEY", "HF_TOKEN", "SMALL_LLM_HF_REPO_ID"]
@@ -552,15 +553,28 @@ def _stage_with_incremental_producer(model: str, tokens: str) -> tuple[dict[str,
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--tokens", required=True)
+    parser.add_argument(
+        "--profile",
+        help="compact MODEL-TOKENS selector, for example 200M-100B",
+    )
+    parser.add_argument("--model", help="legacy split model selector")
+    parser.add_argument("--tokens", help="legacy split token-budget selector")
     parser.add_argument("--gpu", default=DEFAULT_GPU, choices=sorted(SUPPORTED_GPUS))
     parser.add_argument("--dataset-dir", default="")
     parser.add_argument("--max-steps-this-session", type=int, default=0)
     parser.add_argument("--microbatch-size", type=int, default=0)
     parser.add_argument("--precision", default=DEFAULT_PRECISION)
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    try:
+        args.model, args.tokens = resolve_profile_selection(
+            profile=args.profile,
+            model=args.model,
+            tokens=args.tokens,
+        )
+    except ValueError as error:
+        parser.error(str(error))
+    return args
 
 
 def main() -> int:
@@ -573,7 +587,7 @@ def main() -> int:
     if token_preset.label == "100B" and args.max_steps_this_session == 0:
         raise ValueError("100B runs require an explicit positive --max-steps-this-session budget")
     if token_preset.label == "100B" and args.gpu != "RTX4090":
-        raise ValueError("100M/100B is restricted to the Beam RTX4090 lane")
+        raise ValueError("200M/100B is restricted to the Beam RTX4090 lane")
     if args.precision != "fp16":
         raise ValueError("the Beam adapter is frozen to fp16")
     if token_preset.dataset_transport == "hf_rolling_shards" and args.dataset_dir:
