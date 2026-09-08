@@ -19,6 +19,18 @@ SETTLE_LR_RATIO = 1.0 / 3.0
 COOLDOWN_START_LR_RATIO = 1.0 / 30.0
 FINAL_LR_RATIO = 1.0 / 60.0
 
+# ADRs 0161-0163: exact 200M/100B schedule. These are block-aligned
+# target-token positions, not approximate source-token counts.
+PRETRAIN_200M_100B_PEAK_LR = 3.5e-4
+PRETRAIN_200M_100B_TOTAL_TOKENS = 100_000_071_680
+PRETRAIN_200M_100B_WARMUP_TOKENS = 5_000_003_584
+PRETRAIN_200M_100B_ANCHOR_TOKENS = 20_316_160_000
+PRETRAIN_200M_100B_SETTLE_END_TOKENS = 23_316_398_080
+PRETRAIN_200M_100B_COOLDOWN_START_TOKENS = 95_999_754_240
+PRETRAIN_200M_100B_SETTLE_LR_RATIO = 8.0 / 35.0
+PRETRAIN_200M_100B_COOLDOWN_START_LR_RATIO = 4.0 / 175.0
+PRETRAIN_200M_100B_FINAL_LR_RATIO = 2.0 / 175.0
+
 
 @dataclass(frozen=True, slots=True)
 class FreshAggressiveDecayPlan:
@@ -130,6 +142,31 @@ def fresh_aggressive_decay_plan(
     )
 
 
+def pretrain_200m_100b_decay_plan() -> FreshAggressiveDecayPlan:
+    """Return the exact ADR-0161/0162/0163 schedule for 200M on 100B."""
+
+    peak_tokens = PRETRAIN_200M_100B_ANCHOR_TOKENS - PRETRAIN_200M_100B_WARMUP_TOKENS
+    settle_tokens = PRETRAIN_200M_100B_SETTLE_END_TOKENS - PRETRAIN_200M_100B_ANCHOR_TOKENS
+    decay_tokens = PRETRAIN_200M_100B_TOTAL_TOKENS - PRETRAIN_200M_100B_COOLDOWN_START_TOKENS
+    base_power = math.log(
+        PRETRAIN_200M_100B_SETTLE_LR_RATIO / PRETRAIN_200M_100B_COOLDOWN_START_LR_RATIO
+    ) / math.log(
+        PRETRAIN_200M_100B_COOLDOWN_START_TOKENS / PRETRAIN_200M_100B_SETTLE_END_TOKENS
+    )
+    return FreshAggressiveDecayPlan(
+        total_tokens=PRETRAIN_200M_100B_TOTAL_TOKENS,
+        warmup_tokens=PRETRAIN_200M_100B_WARMUP_TOKENS,
+        peak_tokens=peak_tokens,
+        settle_tokens=settle_tokens,
+        cooldown_start_tokens=PRETRAIN_200M_100B_COOLDOWN_START_TOKENS,
+        decay_tokens=decay_tokens,
+        settle_lr_ratio=PRETRAIN_200M_100B_SETTLE_LR_RATIO,
+        cooldown_start_lr_ratio=PRETRAIN_200M_100B_COOLDOWN_START_LR_RATIO,
+        minimum_lr_ratio=PRETRAIN_200M_100B_FINAL_LR_RATIO,
+        base_power=base_power,
+    )
+
+
 __all__ = [
     "COOLDOWN_START_LR_RATIO",
     "FINAL_LR_RATIO",
@@ -137,6 +174,16 @@ __all__ = [
     "FRESH_SETTLE_FRACTION",
     "FRESH_WARMUP_FRACTION",
     "FreshAggressiveDecayPlan",
+    "PRETRAIN_200M_100B_ANCHOR_TOKENS",
+    "PRETRAIN_200M_100B_COOLDOWN_START_LR_RATIO",
+    "PRETRAIN_200M_100B_COOLDOWN_START_TOKENS",
+    "PRETRAIN_200M_100B_FINAL_LR_RATIO",
+    "PRETRAIN_200M_100B_PEAK_LR",
+    "PRETRAIN_200M_100B_SETTLE_END_TOKENS",
+    "PRETRAIN_200M_100B_SETTLE_LR_RATIO",
+    "PRETRAIN_200M_100B_TOTAL_TOKENS",
+    "PRETRAIN_200M_100B_WARMUP_TOKENS",
     "SETTLE_LR_RATIO",
     "fresh_aggressive_decay_plan",
+    "pretrain_200m_100b_decay_plan",
 ]
