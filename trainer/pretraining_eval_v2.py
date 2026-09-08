@@ -31,6 +31,7 @@ L20_MAX_BATCH_TOKENS = 8_192
 BASE_PROMPT_BATCH_SIZE = 16
 BASE_PROMPT_SET_ID = "base-prompt-v2-unique-120-2026-09-04"
 BASE_PROMPT_SCORING_ID = "gemrouter-semantic-judge-v1"
+BASE_PROMPT_TOPK15 = 15
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +283,12 @@ def _run_prompt_view(
         )
         for index, (case, ids) in enumerate(zip(cases, prompt_ids, strict=True))
     ]
-    view = "greedy" if temperature == 0.0 else "sampled"
+    if temperature == 0.0:
+        view = "greedy"
+    elif top_k > 0:
+        view = f"sampled_topk{top_k}"
+    else:
+        view = "sampled"
     generated_rows = sample_token_ids_batched(
         model,
         requests,
@@ -379,6 +385,16 @@ def run_base_prompt_suite_v2(
         top_k=0,
         seed=17,
     )
+    sampled_topk15 = _run_prompt_view(
+        model,
+        model_max_seq_len=model_max_seq_len,
+        precision=precision,
+        suite=suite,
+        temperature=1.0,
+        top_p=1.0,
+        top_k=BASE_PROMPT_TOPK15,
+        seed=17,
+    )
     return {
         "schema": "small-llm-pretraining-base-prompts-v2",
         "suite_identity": {
@@ -419,6 +435,16 @@ def run_base_prompt_suite_v2(
             },
             "summary": _summary(sampled),
             "cases": sampled,
+        },
+        "sampled_topk15": {
+            "sampling": {
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "top_k": BASE_PROMPT_TOPK15,
+                "seed": 17,
+            },
+            "summary": _summary(sampled_topk15),
+            "cases": sampled_topk15,
         },
     }
 
@@ -715,6 +741,7 @@ __all__ = [
     "BASE_PROMPT_CASES_V2",
     "BASE_PROMPT_SCORING_ID",
     "BASE_PROMPT_SET_ID",
+    "BASE_PROMPT_TOPK15",
     "BasePromptCase",
     "L20_TASKS",
     "SmallLLMHarnessLM",
