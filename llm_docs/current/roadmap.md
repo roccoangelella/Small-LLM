@@ -1,18 +1,13 @@
 ---
 status: current
-last_reviewed: 2026-09-08
+last_reviewed: 2026-09-04
 ---
 
 # Current roadmap
 
-## Active MoE branch priority
+MoE branch: qualify and run the paired M0/M1 pilot per [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md), after explicit launch authorization.
 
-Qualify the local [ADR0157 pilot](../runbooks/moe-paired-pilot.md) on the exact source/image/data,
-then collect paired M0/M1 routing, quality and systems evidence after explicit launch authorization.
-No dense endpoint rerun or arbitrary quality cutoff is introduced. This branch priority is separate
-from the inherited dense/SFT roadmap below; its older task states are not new launch instructions.
-
-## Inherited dense/SFT position (2026-09-04)
+## Current position
 
 - The 20M scaling series through 2B is complete.
 - 100M/2B pretraining is complete at 2,001,000,448 consumed target tokens.
@@ -21,7 +16,7 @@ from the inherited dense/SFT roadmap below; its older task states are not new la
 - The 100M/10B S0 SFT trajectory `100m-10b-sft-s0-2b10pct-data-001` has been restarted after a Kaggle T4 session-time interruption; that interruption is infrastructure evidence, not a model-quality result.
 - ADR 0144 defines the current post-completion pretraining diagnostic: one launcher, two constant-LR holds (`1e-5`, `2e-5`), 3,000 updates per branch, preferred source `step-00071750`, strict current-best fallback from the same dedicated best-model repository, and no rolling-latest fallback.
 
-## Inherited dense/SFT priorities
+## Immediate priorities
 
 1. Complete or exactly resume the 100M/10B SFT trajectory under its existing checkpoint/data contract.
 2. Run evaluation-v2 SFT qualification after completion and compare the SFT model with the 100M/10B parent using the primary Behavior v2 suite, frozen `eval_core_v1`, masked-loss diagnostics, and the defined sampled-robustness view.
