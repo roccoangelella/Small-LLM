@@ -152,6 +152,15 @@ class BasePromptJudgeContractTests(unittest.TestCase):
         judged_names = [row["name"] for row in target["greedy"]["cases"]]
         self.assertNotIn("qualitative_00", judged_names)
 
+        first = target["greedy"]["cases"][0]
+        self.assertEqual(
+            first["prompt"],
+            "Question: At what Celsius temperature does water freeze?\nAnswer:",
+        )
+        self.assertEqual(first["continuation"], " At a temperature of -40 C.")
+        self.assertNotIn("reference_answer", first)
+        self.assertNotIn("response_tokens", first)
+
 
 if __name__ == "__main__":
     unittest.main()
