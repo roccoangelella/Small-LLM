@@ -236,7 +236,11 @@ def _newton_schulz_orthogonalize(update: Tensor, *, target_rms: float) -> Tensor
 
 
 class HybridMuonAdamW(Optimizer):
-    """One atomic optimizer with whole-matrix Muon and AdamW exception groups."""
+    """One optimizer for whole-matrix Muon and AdamW exception groups.
+
+    Updates are in-place, without rollback. A late exception invalidates the live
+    state: abort and reload a complete checkpoint rather than retrying this step.
+    """
 
     STATE_VERSION = 1
     RECIPE = "deepseek_v4_whole_matrix_hybrid_ns10"

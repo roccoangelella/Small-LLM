@@ -1,6 +1,6 @@
 # Optimizer strategy
 
-_Last reviewed: 2026-08-13_
+_Last reviewed: 2026-09-08_
 
 ## Current pretraining optimizer
 
@@ -38,7 +38,7 @@ AdamW first/second moments remain FP32. Current weight decay is 0.1 subject to t
 
 ## Shared update contract
 
-Both optimizer branches belong to one atomic optimizer object/update boundary:
+Both optimizer branches belong to one optimizer object and successful-update boundary:
 
 1. accumulate the full prepared block;
 2. resolve FP16 scaling/non-finite state;
@@ -47,7 +47,14 @@ Both optimizer branches belong to one atomic optimizer object/update boundary:
 5. update Muon and AdamW branches together;
 6. commit scheduler/tokens/dataset cursor only after success.
 
-A partial Muon-only or AdamW-only update is illegal.
+A partial Muon-only or AdamW-only update must never be accepted. This is not an
+optimizer rollback guarantee: the implementation mutates parameters and state
+in-place, so a late exception may leave earlier matrices changed. Current callers
+propagate that exception without retrying or acknowledging the block; abort the
+process and reload the last complete joint checkpoint. Do not checkpoint or reuse
+the failed live state. Ordinary AMP overflow retries skip optimizer mutation and
+are a separate path. The engine/session failure boundary is covered by
+`tests/test_trainer_session.py` for both dense and MoE.
 
 ## Schedule and LR
 

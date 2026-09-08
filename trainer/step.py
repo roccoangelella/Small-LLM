@@ -1,4 +1,8 @@
-"""One atomic prepared-block optimizer update."""
+"""One prepared-block update; commit progress only after optimizer success.
+
+Late optimizer exceptions propagate: the live state may be partially mutated and
+must be discarded or reloaded, not retried as an ordinary gradient overflow.
+"""
 
 from __future__ import annotations
 

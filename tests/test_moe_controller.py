@@ -92,6 +92,11 @@ class TestMoEController(unittest.TestCase):
         self.assertAlmostEqual(result.selected_probabilities.item(), .4, places=6)
         result.selected_probabilities.sum().backward()
         self.assertGreater(router.projection.weight.grad.abs().sum().item(), 0)
+        # Selecting one ORIGINAL softmax probability still differentiates the
+        # denominator through every logit; top-1 must not renormalize the gate to 1.
+        self.assertTrue(torch.all(router.projection.weight.grad[:, 0] != 0))
+        self.assertLess(router.projection.weight.grad[0, 0].item(), 0)
+        self.assertGreater(router.projection.weight.grad[1, 0].item(), 0)
         self.assertIsNone(router.selection_bias.grad)
 
     def test_forward_and_eval_do_not_advance_controller(self):
