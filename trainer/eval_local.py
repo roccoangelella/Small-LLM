@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, is_dataclass
 import hashlib
 import json
 import math
@@ -48,6 +49,16 @@ def _json_safe(value):
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return value
+
+
+def _model_config_dict(model_config: object) -> dict[str, object]:
+    # Dense ``ModelConfig`` is a plain dataclass; ``MoEModelConfig`` exposes ``as_dict``.
+    as_dict_method = getattr(model_config, "as_dict", None)
+    if callable(as_dict_method):
+        return dict(as_dict_method())
+    if is_dataclass(model_config):
+        return asdict(model_config)
+    raise TypeError("model config must be a dataclass or expose as_dict()")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -97,7 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "global_step": trainer_state.get("global_step"),
             "consumed_tokens": trainer_state.get("consumed_tokens"),
         },
-        "model_config": model_config.as_dict(),
+        "model_config": _model_config_dict(model_config),
         "eval_core_v1": _json_safe(metrics),
     }
     result = {

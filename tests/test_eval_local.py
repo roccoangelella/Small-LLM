@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from array import array
+from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ import torch
 from MOE_model.config import MoEModelConfig
 from MOE_model.model import MoESmallLLM
 from model.config import ModelConfig
+from model.model import SmallLLM
 from trainer import eval_suite
 from trainer import eval_local
 from tests.test_eval_suite import _write_tiny_eval
@@ -39,14 +41,14 @@ def _config() -> MoEModelConfig:
     return MoEModelConfig(dense=dense, expert_d_ff=96, moe_layer_indices=(0, 1, 2, 3))
 
 
-def _checkpoint(root: Path, model: MoESmallLLM, config: MoEModelConfig) -> Path:
+def _checkpoint(root: Path, model: torch.nn.Module, model_config: dict[str, object]) -> Path:
     root.mkdir()
     with (root / "trainer_state.pkl").open("wb") as handle:
         pickle.dump(
             {
                 "version": 1,
                 "model": model.state_dict(),
-                "model_config": config.as_dict(),
+                "model_config": model_config,
                 "global_step": 3,
                 "consumed_tokens": 12,
             },
@@ -116,7 +118,7 @@ class LocalEvaluationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             config = _config()
-            checkpoint = _checkpoint(root / "checkpoint", MoESmallLLM(config), config)
+            checkpoint = _checkpoint(root / "checkpoint", MoESmallLLM(config), config.as_dict())
             eval_dir = root / "eval_core_v1"
             eval_dir.mkdir()
             _write_tiny_eval(eval_dir)
@@ -135,6 +137,30 @@ class LocalEvaluationTests(unittest.TestCase):
             self.assertEqual(result["model_config"], json.loads(json.dumps(config.as_dict())))
             self.assertEqual(result["eval_core_v1"]["target_tokens"], 3 * 19)
             self.assertEqual(result["eval_core_v1"]["eval_manifest_sha256"], json.loads((eval_dir / "manifest.json").read_text())["manifest_sha256"])
+
+    def test_real_dense_checkpoint_scores_tiny_eval_core(self) -> None:
+        # The dense ModelConfig is a plain dataclass without as_dict(); the adapter must still write model_config.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dense = _config().dense
+            checkpoint = _checkpoint(root / "checkpoint", SmallLLM(dense), asdict(dense))
+            eval_dir = root / "eval_core_v1"
+            eval_dir.mkdir()
+            _write_tiny_eval(eval_dir)
+            real_verify = eval_suite.verify_eval_core
+            with (
+                patch.object(eval_suite, "verify_eval_core",
+                             side_effect=lambda path, **_: real_verify(path, enforce_frozen_minimums=False)),
+                patch.object(eval_suite, "_gpt2_token_byte_lengths", return_value=[1, 1, 1, 1]),
+            ):
+                eval_local.main([
+                    "--checkpoint-dir", str(checkpoint), "--eval-dir", str(eval_dir),
+                    "--output-json", str(root / "result.json"), "--device", "cpu",
+                    "--precision", "fp32", "--batch-size", "19", "--bootstrap-samples", "2",
+                ])
+            result = json.loads((root / "result.json").read_text())
+            self.assertEqual(result["model_config"], json.loads(json.dumps(asdict(dense))))
+            self.assertEqual(result["eval_core_v1"]["target_tokens"], 3 * 19)
 
 
 if __name__ == "__main__":
