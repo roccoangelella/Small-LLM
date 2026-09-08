@@ -1,4 +1,4 @@
-"""Frozen public-HF profile and trainer horizon for the 100M/100B run."""
+"""Frozen public-HF profile and trainer horizon for the active 200M/100B run."""
 
 from __future__ import annotations
 
@@ -67,24 +67,13 @@ class Dataset100BProfileTests(unittest.TestCase):
 
         self.assertEqual(contract["planned_train_blocks"], 762_940)
         self.assertEqual(contract["planned_train_target_tokens"], 100_000_071_680)
-        self.assertEqual(
-            contract["trainer"],
-            {
-                "steps": 762_940,
-                "passes": 1,
-                "full_block_target_tokens": 131_072,
-                "schedule": "wsd",
-                "warmup_updates": 38_147,
-                "stable_updates": 572_205,
-                "decay_updates": 152_588,
-                "warmup_tokens": 5_000_003_584,
-                "stable_tokens": 75_000_053_760,
-                "decay_tokens": 20_000_014_336,
-                "minimum_lr_ratio": 0.1,
-                "validation_blocks": 16,
-                "planned_target_tokens": 100_000_071_680,
-            },
-        )
+        # Dataset qualification retains its generic finite-horizon WSD report.
+        # The active 200M scientific preset replaces this with ADR-0163 WSqD
+        # inside trainer setup before checkpoint identity is computed.
+        self.assertEqual(contract["trainer"]["steps"], 762_940)
+        self.assertEqual(contract["trainer"]["full_block_target_tokens"], 131_072)
+        self.assertEqual(contract["trainer"]["validation_blocks"], 16)
+        self.assertEqual(contract["trainer"]["planned_target_tokens"], 100_000_071_680)
 
     def test_provider_launchers_stage_without_spawning_a_100b_producer(self) -> None:
         for provider in ("modal", "beam"):
@@ -95,21 +84,25 @@ class Dataset100BProfileTests(unittest.TestCase):
                 self.assertIn("require_completed_frontier(store, run_id=profile.run_id)", rolling)
                 self.assertIn("store.verify_bucket_visibility()", rolling)
                 self.assertIn("100B runs require an explicit positive --max-steps-this-session budget", launch)
-                expected_lane = "Modal H100" if provider == "modal" else "Beam RTX4090"
-                self.assertIn(f"100M/100B is restricted to the {expected_lane} lane", launch)
+                expected_gpu = "DEFAULT_GPU" if provider == "modal" else '"RTX4090"'
+                self.assertIn(f"gpu != {expected_gpu}", launch)
 
-    def test_modal_and_beam_resolve_the_same_prebuilt_dataset(self) -> None:
+    def test_modal_and_beam_resolve_the_same_active_200m_100b_run(self) -> None:
         for provider in ("modal", "beam"):
             profiles = runpy.run_path(str(ROOT / provider / "profiles.py"))
-            model, tokens = profiles["resolve_presets"]("100M", "100B")
+            model, tokens = profiles["resolve_presets"]("200M", "100B")
             with self.subTest(provider=provider):
-                self.assertEqual(model.trainer_size, "substantive")
+                self.assertEqual(model.trainer_size, "expanded")
                 self.assertEqual(tokens.dataset_profile, "100b-b64")
                 self.assertEqual(tokens.dataset_transport, "hf_rolling_shards")
                 self.assertEqual(
                     profiles["canonical_run_id"](model, tokens),
-                    "100m-100b-data-001",
+                    "200m-100b-data-001",
                 )
+                with self.assertRaises(ValueError):
+                    profiles["resolve_presets"]("100M", "100B")
+                with self.assertRaises(ValueError):
+                    profiles["resolve_presets"]("200M", "10B")
 
 
 if __name__ == "__main__":
