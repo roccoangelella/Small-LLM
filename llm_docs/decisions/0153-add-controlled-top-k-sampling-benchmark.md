@@ -1,22 +1,26 @@
 # ADR 0153 — Add a controlled top-k sampling benchmark
 
 Date: 2026-09-08
-Status: accepted in principle; exact positive `top_k` value pending implementation confirmation
+Status: accepted
 
 ## Decision
 
-Add an additional sampled Base Prompt benchmark for both pretrained and SFT evaluation paths, keeping the current sampled temperature and nucleus settings (`temperature=1.0`, `top_p=1.0`) while applying a positive `top_k` cutoff.
+Add an additional sampled Base Prompt benchmark for both pretrained and SFT evaluation paths, keeping the current sampled temperature and nucleus settings while applying a tighter positive top-k cutoff:
 
-This new view is intended to measure whether restricting sampling to the highest-probability token set improves robustness relative to the existing canonical sampled contract (`temperature=1.0`, `top_p=1.0`, `top_k=0`).
+- `temperature=1.0`
+- `top_p=1.0`
+- `top_k=15`
+- `seed=17`
+- output view name: `sampled_topk15`
 
-Important semantic clarification: in the current evaluator, `top_k=0` means top-k filtering is disabled (full-distribution sampling). Therefore a positive value such as `top_k=50` is a *narrower*, not broader, sampling distribution.
+The existing canonical sampled benchmark remains unchanged at `temperature=1.0`, `top_p=1.0`, `top_k=0`, `seed=17` for comparability with prior runs.
 
-The existing canonical sampled benchmark remains unchanged for comparability with prior runs. The new top-k benchmark is additive and should be judgeable by the same GemRouter Base Prompt semantic-judge pipeline.
+Important semantic clarification: in the current evaluator, `top_k=0` means top-k filtering is disabled and sampling can draw from the full vocabulary distribution. `top_k=15` instead restricts each decoding step to the 15 highest-logit candidates before sampling, preserving stochastic decoding while aggressively cutting the low-probability tail.
+
+The same `sampled_topk15` Base Prompt view must be produced for pretrained checkpoints and for both parent and SFT sides of post-SFT qualification. The GemRouter Base Prompt semantic judge must score greedy, canonical sampled, and `sampled_topk15` views.
 
 ## Rationale
 
-The current full-distribution sampled results are substantially below greedy results. A controlled positive-top-k view can distinguish general temperature sensitivity from degradation caused by allowing low-probability tail tokens into the candidate set.
+The current full-distribution sampled results are substantially below greedy results. For a 100M-parameter model, the hypothesis is that the long probability tail contains too many weak candidates, so unconstrained `top_k=0` sampling destroys otherwise usable local knowledge. A top-15 view is deliberately more restrictive than top-50 and gives a stronger diagnostic of whether sampled degradation is caused by tail noise rather than missing knowledge.
 
-## Pending implementation detail
-
-Before wiring, the exact positive `top_k` value must be confirmed after the user demonstrates understanding of the difference between `top_k=0` and positive top-k filtering, per project workflow.
+This benchmark is additive. It does not redefine the canonical sampled contract.
