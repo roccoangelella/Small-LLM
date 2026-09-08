@@ -5,7 +5,7 @@ last_reviewed: 2026-09-04
 
 # Current roadmap
 
-MoE branch: qualify and run the paired M0/M1 pilot per [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md), after explicit launch authorization.
+MoE branch: qualify and run the paired M0/M1 pilot per [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md), after explicit launch authorization. This is the MoE branch priority; the dense/SFT lifecycle below retains its earlier scope.
 
 ## Current position
 

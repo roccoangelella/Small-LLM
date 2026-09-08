@@ -8,7 +8,7 @@ supersedes: null
 
 ## Context and problem statement
 
-The `moe-8e-top1` branch has an unbalanced control but needs an executable, observable M0/M1 comparison. Edo authorized local plan/code corrections and local commits on 2026-09-08; paid runs and remote publication remain separate. This decision extends branch ADRs 0154–0156: their no-balancing rule defines M0; M1 is the explicit additional arm. The dense endpoint is historical context; D100 only measures systems behavior.
+The `moe-8e-top1` branch has an unbalanced control but needs an executable, observable M0/M1 comparison. This decision extends branch ADRs 0154–0156: their no-balancing rule defines M0; M1 is the explicit additional arm. The dense endpoint is historical context; D100 only measures systems behavior.
 
 ## Considered options
 

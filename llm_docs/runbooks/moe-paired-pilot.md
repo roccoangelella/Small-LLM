@@ -3,6 +3,8 @@
 Protocol: [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md).
 The local code is prepared for D100/M0/M1 on the existing Beam RTX4090 and Modal H100 resources. Cloud execution remains unqualified until the exact image passes CUDA/FLA and volume-resume checks. A command below is not authorization to spend or publish.
 
+The pilot and `--experiment-dir` observation are single-process only. Do not enable observation in the dual-T4/DDP entrypoints: rank ownership and shared artifact writes are not implemented for distributed observation.
+
 ## Local verification
 
 From the repository root, with the model dependencies already installed:
