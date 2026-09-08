@@ -49,15 +49,9 @@ D100 uses `--arm D --steps 100`, no gamma, on the same lane settings. It measure
 
 A retry reuses the same command/namespace. The runner verifies the latest complete joint checkpoint and computes only the remaining successful updates. A partial/corrupt latest checkpoint cannot become a completed result. There is no W&B/HF publication in this pilot. Modal commits the immutable checkpoint tree at its event and commits remaining artifacts at finalization; Beam uses its durable volumes. The stdout callback does not pause the child while committing. Preserve the selected checkpoint directories; no latest-only cleanup.
 
-## Triton cache seed (ADR 0169)
+## Triton cache seed — pending integration
 
-The first run per lane, precision and microbatch compiles and autotunes the FLA kernels inside its first update (about 3 minutes on H100,
-4–5 on the RTX 4090) and then publishes the cache as a seed under `<cache volume>/triton/<cache_id>/`. Every later cold container extracts it
-to `/tmp/small-llm-triton/<cache_id>` before the child starts; the pilot log line `[triton-seed]` reports `seeded`, `local_seed`,
-`jit_fallback` (with the rejection reason) or `disabled`, and `experiment/triton_seed.json` keeps it. To build the seed before the pilot,
-run `--arm D --steps 1` under a scratch run id on the lane; to qualify it, rerun in a fresh container with `SMALL_LLM_TRITON_SEED_STRICT=1`.
-To force a rebuild after a kernel-facing source change, delete the seed directory (the contract hash changes anyway, so a stale seed is
-simply ignored). `SMALL_LLM_TRITON_SEED_DISABLE=1` opts out. The seed never enters the pilot identity.
+This branch does not implement automatic seed extraction or harvesting. That work is separate on `edo/triton-seed` (ADR 0169 there); do not rely on its environment flags or artifact paths here. Rocco's existing Kaggle seed is documented in ADR 0102 and is specific to its pinned runtime and geometry. No additional GPU cache-building run is part of the current qualification.
 
 ## Intrinsic evaluation and probe analysis
 
