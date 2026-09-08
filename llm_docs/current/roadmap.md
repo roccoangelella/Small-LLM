@@ -13,28 +13,33 @@ last_reviewed: 2026-09-08
 - Evaluation v2 is active under ADRs 0140 and 0141.
 - The 100M/10B S0 SFT trajectory `100m-10b-sft-s0-2b10pct-data-001` has been restarted after a Kaggle T4 session-time interruption; that interruption is infrastructure evidence, not a model-quality result.
 - ADR 0144 defines the current post-completion pretraining diagnostic: one launcher, two constant-LR holds (`1e-5`, `2e-5`), 3,000 updates per branch, preferred source `step-00071750`, strict current-best fallback from the same dedicated best-model repository, and no rolling-latest fallback.
-- ADR 0153 authorizes 100M/100B on Modal H100 and Beam RTX 4090.
-- ADR 0158 freezes a complete prebuilt public-HF `100b-b64-dataset-001`; paid providers do not build this corpus.
+- ADR 0159 supersedes ADR 0153's next-run scale target and selects approximately 200M parameters / 50B target tokens for the next major pretraining trajectory.
+- ADR 0158 remains in force: the complete public-HF `100b-b64-dataset-001` corpus is still built to 100B even though the immediate training horizon is 50B; paid providers do not build this corpus.
 
 ## Immediate priorities
 
 1. Build and fully publish `100b-b64-dataset-001` to its dedicated public HF bucket, then verify its terminal manifest/READY/frontier and immutable shard inventory.
-2. Complete or exactly resume the 100M/10B SFT trajectory under its existing checkpoint/data contract.
-3. Run evaluation-v2 SFT qualification after completion and compare the SFT model with the 100M/10B parent using the primary Behavior v2 suite, frozen `eval_core_v1`, masked-loss diagnostics, and the defined sampled-robustness view.
-4. Run the ADR-0144 `hold-1e-5` and `hold-2e-5` pretraining probes from the same source/data continuation and compare their validation trajectories.
-5. Run provider CPU-stage/live-smoke checks against the completed 100B bucket before allocating a full training segment.
+2. Plan and freeze the approximately-200M / 50B scientific contract before implementation: exact architecture/parameter count, optimizer and LR schedule, block/microbatch/update geometry, checkpoint cadence, provider limits, and deterministic 50B consumption mapping onto the 100B corpus.
+3. Qualify the frozen 200M geometry and run contract with local/provider smoke tests before any long GPU trajectory is launched.
+4. Complete or exactly resume outstanding 100M/10B qualification/probe work where it remains scientifically useful for interpreting the scaling transition.
 
 ## Next decision gate
 
-Do not authorize another long pretraining trajectory solely because an execution path is available. The next scaling decision should use, at minimum:
+ADR 0159 fixes the scale target but deliberately does not freeze the 200M model or training recipe. The immediate gate is therefore architectural and optimization design, not another scale-choice debate.
 
-- the 100M/10B endpoint relative to 100M/2B under evaluation v2;
-- the two low-LR probe trajectories from ADR 0144;
-- the completed 100M/10B SFT qualification.
+Before wiring production launchers, explicitly decide and understand:
 
-ADR 0153 resolved this gate in favor of more data at fixed 100M scale. The 100B trajectory is authorized only on its frozen Modal H100 and Beam RTX 4090 lanes; corpus completion and provider CPU-stage/live-smoke verification remain prelaunch gates.
+- whether 200M is a pure width/depth scale of the existing `[GDN-2, GDN-2, GDN-2, gated full MHA]` hybrid family or introduces a new architecture change;
+- exact `d_model`, depth, FFN width, attention/GDN head geometry, and resulting learned parameter count;
+- optimizer routing and peak LR;
+- warmup/stable/decay shape over exactly 50B targets;
+- global tokens per optimizer update and provider-specific microbatch slicing;
+- checkpoint/evaluation cadence and deterministic exact-resume behavior;
+- the exact 50B prefix/slice contract drawn from `100b-b64-dataset-001`.
 
-## Frozen boundaries still in force
+No long 200M/50B launch is authorized until those items are frozen and provider smoke-tested.
+
+## Frozen boundaries still in force unless explicitly superseded
 
 - Context remains 2,048 for the current comparison family.
 - Production CUDA GDN-2 uses `fla-core==0.5.2`, saved chunk 32 / FLA internal chunk 64.
