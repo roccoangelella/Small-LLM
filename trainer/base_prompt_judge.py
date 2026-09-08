@@ -389,7 +389,10 @@ def judge_prompt_suite(
 
     result: dict[str, object] = {"prompt_set_id": prompt_set_id}
     all_batches: dict[str, object] = {}
-    for view in ("greedy", "sampled"):
+    views = ["greedy", "sampled"]
+    if isinstance(prompt_suite.get("sampled_topk15"), Mapping):
+        views.append("sampled_topk15")
+    for view in views:
         rows = _objective_rows(prompt_suite, view)
         judgments, batches = _judge_rows(
             rows,
