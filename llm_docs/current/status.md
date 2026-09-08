@@ -1,6 +1,15 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-08 for the MoE scope; dense/SFT facts below retain their 2026-09-05 provenance.
+
+## Active MoE branch work
+
+On `edo/moe-experiment-ready`, [ADR0157](../decisions/0157-moe-paired-pilot-controller-and-observation.md)
+and the [pilot runbook](../runbooks/moe-paired-pilot.md) govern the paired M0/M1 experiment.
+Local implementation adds the sign controller, transactional rejection, fixed-probe/profile artifacts,
+local intrinsic evaluation and provider child-process wiring. No MoE GPU result or paid launch is
+claimed; CUDA/FLA and provider recovery remain qualification steps. Local verification: 106 focused tests pass, one CUDA test skips; wheel build passes. Broad discovery has no new failure IDs relative to `084b0d9`, but remains red on inherited defects/missing dependencies. The dense lifecycle facts below
+are inherited context, not a new dense-run authorization.
 
 ## Repository and protocol state
 
