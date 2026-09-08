@@ -1,7 +1,8 @@
 ---
-status: accepted
+status: superseded
 date: 2026-09-08
 supersedes: 0153
+superseded_by: 0160
 owners: [Small-LLM]
 ---
 
