@@ -39,7 +39,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, required=True)
     p.add_argument("--resume")
     p.add_argument("--sequences-per-block", type=int)
-    p.add_argument("--model-size", choices=("smoke", "substantive"), default="smoke")
+    p.add_argument("--model-size", choices=("smoke", "substantive", "expanded"), default="smoke")
     p.add_argument(
         "--architecture",
         choices=("gdn2_hybrid", "swa_hybrid", "all_mha"),
