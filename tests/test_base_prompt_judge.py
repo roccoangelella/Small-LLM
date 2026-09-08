@@ -79,6 +79,7 @@ def _prompt_suite():
         },
         "greedy": {"cases": list(cases)},
         "sampled": {"cases": list(cases)},
+        "sampled_topk15": {"cases": list(cases)},
     }
 
 
@@ -148,6 +149,7 @@ class BasePromptJudgeContractTests(unittest.TestCase):
         target = result["targets"]["pretraining"]
         self.assertEqual(target["greedy"]["summary"]["judged_cases"], 2)
         self.assertEqual(target["sampled"]["summary"]["judged_cases"], 2)
+        self.assertEqual(target["sampled_topk15"]["summary"]["judged_cases"], 2)
         self.assertEqual(target["greedy"]["summary"]["accuracy"], 0.5)
         judged_names = [row["name"] for row in target["greedy"]["cases"]]
         self.assertNotIn("qualitative_00", judged_names)
