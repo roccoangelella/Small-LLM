@@ -11,36 +11,47 @@ last_reviewed: 2026-09-08
 - 100M/2B pretraining is complete at 2,001,000,448 consumed target tokens.
 - 100M/10B deep-decay pretraining is complete at `step-00076294` / 10,000,007,168 consumed target tokens.
 - Evaluation v2 is active under ADRs 0140 and 0141.
-- The 100M/10B S0 SFT trajectory `100m-10b-sft-s0-2b10pct-data-001` has been restarted after a Kaggle T4 session-time interruption; that interruption is infrastructure evidence, not a model-quality result.
-- ADR 0144 defines the current post-completion pretraining diagnostic: one launcher, two constant-LR holds (`1e-5`, `2e-5`), 3,000 updates per branch, preferred source `step-00071750`, strict current-best fallback from the same dedicated best-model repository, and no rolling-latest fallback.
-- ADR 0160 supersedes ADR 0159 and selects approximately 200M parameters / 100B target tokens for the next major pretraining trajectory.
-- ADR 0161 retains the successful 100M/10B deep-decay/WSqD-style LR structure but requires a modestly broader numerical LR range at every major anchor for 200M/100B; exact numerical values remain open.
-- ADR 0162 freezes the 200M/100B LR phase timing as a 10x proportional scaling of the successful 100M/10B trajectory: warmup endpoint step 38,147 (~5.000B targets), deep-decay start step 155,000 (20.31616B), aggressive-settle endpoint step 177,890 (23.31639808B), terminal-cooldown start step 732,420 (95.99975424B), and final step 762,940 (100.00007168B).
+- ADR 0160 selects approximately 200M parameters / 100B target tokens for the next major pretraining trajectory.
+- ADR 0161 keeps the successful 100M/10B deep-decay/WSqD-style LR structure while modestly widening every major LR anchor.
+- ADR 0162 freezes phase timing as a 10x proportional scaling of the successful 100M/10B trajectory: warmup endpoint step 38,147 (~5.000B targets), deep-decay start step 155,000 (20.31616B), aggressive-settle endpoint step 177,890 (23.31639808B), terminal-cooldown start step 732,420 (95.99975424B), and final step 762,940 (100.00007168B).
+- ADR 0163 freezes the exact LR anchors at `3.5e-4 -> 8e-5 -> 8e-6 -> 4e-6`; with ADR 0162 timing, the calibrated long-decay exponent remains `~1.6270515945225403`.
+- ADR 0164 restricts production wiring for this run to Modal H100 and Beam RTX4090; no Kaggle 200M/100B production launcher is authorized.
 - ADR 0158 remains in force: the complete public-HF `100b-b64-dataset-001` corpus is built to 100B and the next major run is intended to consume the full corpus; paid providers do not build this corpus.
 
 ## Immediate priorities
 
 1. Build and fully publish `100b-b64-dataset-001` to its dedicated public HF bucket, then verify its terminal manifest/READY/frontier and immutable shard inventory.
-2. Plan and freeze the approximately-200M / 100B scientific contract before implementation: exact architecture/parameter count, optimizer and exact LR anchors, block/microbatch/update geometry, checkpoint cadence, and provider limits.
-3. Freeze the exact widened LR values under ADR 0161 and solve the decay function/exponent across ADR 0162's fixed proportional phase boundaries. The starting evidence is the successful 100M/10B sequence `3e-4 -> 1e-4 -> 1e-5 -> 5e-6`; for 200M/100B, peak should be only modestly higher and each later anchor only modestly lower.
-4. Qualify the frozen 200M geometry and run contract with local/provider smoke tests before any long GPU trajectory is launched.
-5. Complete or exactly resume outstanding 100M/10B qualification/probe work where it remains scientifically useful for interpreting the scaling transition.
+2. Finish the pre-wiring understanding gate for the accepted 200M architecture and LR schedule.
+3. Wire a dedicated approximately-200M geometry and 200M/100B WSqD scientific recipe into the provider-neutral trainer and only the Modal/Beam provider profiles and launch surfaces.
+4. Preserve block-64/context-2048 global geometry, hybrid Muon+AdamW routing, FP16 qualified GDN-2 execution, exact dataset order, split latest/best checkpoint semantics, and cross-provider exact-resume identity unless explicitly superseded.
+5. Run local tests plus Modal H100 and Beam RTX4090 import/data-stage/microbatch/training/resume smoke gates before any long dispatch.
+
+## Wiring readiness findings
+
+The existing stack is structurally ready but does not yet expose the new run:
+
+- `100b-b64` dataset/token profiles already exist in both Modal and Beam adapters.
+- The provider launchers already enforce explicit-step budgets for 100B and restrict 100B to Modal H100 / Beam RTX4090.
+- The generic trainer already supports fresh WSqD with warmup, stable peak span, settling, calibrated power-law decay, terminal cooldown, and serialized exact-resume scheduler state.
+- The provider profile tables currently expose only 20M/100M model presets.
+- `trainer --model-size` currently accepts only `smoke` and `substantive`, and setup currently constructs only those two geometries.
+- the generic provider runtime command currently hardcodes fresh `3e-4` WSD rather than the accepted 200M/100B WSqD recipe.
+
+These are wiring changes, not unresolved scientific-design questions.
 
 ## Next decision gate
 
-ADR 0160 fixes the scale target, ADR 0161 fixes the qualitative LR-range direction, and ADR 0162 fixes the proportional LR phase timing. The immediate gate is now exact architecture plus exact numerical optimization design.
+Before writing the accepted implementation, the user must demonstrate understanding of the proposed geometry and LR schedule in their own words, per project protocol. After that gate, wiring can proceed without another scientific decision unless implementation inspection uncovers a contradiction.
 
-Before wiring production launchers, explicitly decide and understand:
+The accepted target implementation is:
 
-- whether 200M is a pure width/depth scale of the existing `[GDN-2, GDN-2, GDN-2, gated full MHA]` hybrid family or introduces a new architecture change;
-- exact `d_model`, depth, FFN width, attention/GDN head geometry, and resulting learned parameter count;
-- optimizer routing and the exact widened LR anchors;
-- the continuous decay function/exponent connecting those LR anchors over ADR 0162's fixed phase boundaries;
-- global tokens per optimizer update and provider-specific microbatch slicing;
-- checkpoint/evaluation cadence and deterministic exact-resume behavior;
-- deterministic full-corpus consumption of `100b-b64-dataset-001`.
-
-No long 200M/100B launch is authorized until those items are frozen and provider smoke-tested.
+- approximately 200M hybrid family geometry: `d_model=768`, `n_layers=20`, `d_ff=2048`, 12 x 64 attention/GDN heads, `[GDN-2, GDN-2, GDN-2, gated full MHA]` rhythm, context 2048;
+- hybrid Muon + AdamW routing unchanged;
+- block-64 global optimizer updates = 131,072 targets/update;
+- exact 100B block-aligned endpoint = 100,000,071,680 targets / step 762,940;
+- WSqD LR anchors `3.5e-4 -> 8e-5 -> 8e-6 -> 4e-6` at ADR 0162's proportional boundaries;
+- long-decay `base_power ~= 1.6270515945225403`;
+- Modal H100 and Beam RTX4090 only.
 
 ## Frozen boundaries still in force unless explicitly superseded
 
