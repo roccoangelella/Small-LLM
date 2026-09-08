@@ -101,40 +101,112 @@ def _rolling_cache(args: object) -> object | None:
     )
 
 
+def _require_expanded_200m_100b(args: object) -> object:
+    """Validate and return the exact ADR-0161/0162/0163 schedule plan."""
+
+    from .fresh_decay import pretrain_200m_100b_decay_plan
+
+    if getattr(args, "architecture", None) != "gdn2_hybrid":
+        raise RuntimeError("the frozen 200M/100B preset requires gdn2_hybrid")
+    if getattr(args, "optimizer", None) != "hybrid_muon_adamw":
+        raise RuntimeError("the frozen 200M/100B preset requires hybrid_muon_adamw")
+    if getattr(args, "precision", None) != "fp16":
+        raise RuntimeError("the frozen 200M/100B preset requires fp16")
+    if getattr(args, "sequences_per_block", None) != 64:
+        raise RuntimeError("the frozen 200M/100B preset requires 64 sequences per optimizer block")
+    expected_scalars = {
+        "weight_decay": 0.1,
+        "muon_momentum": 0.95,
+        "muon_lr_multiplier": 1.0,
+        "muon_update_rms": 0.18,
+        "muon_weight_decay": 0.1,
+        "max_grad_norm": 1.0,
+    }
+    for name, expected in expected_scalars.items():
+        if float(getattr(args, name)) != expected:
+            raise RuntimeError(f"the frozen 200M/100B preset requires {name}={expected}")
+
+    manifest_path = getattr(args, "dataset_manifest", None)
+    if manifest_path is None:
+        raise RuntimeError("the frozen 200M/100B preset requires the 100B dataset manifest")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as error:
+        raise RuntimeError("the 200M/100B dataset manifest is not readable") from error
+    if not isinstance(payload, Mapping):
+        raise RuntimeError("the 200M/100B dataset manifest must contain a JSON object")
+    production = payload.get("production")
+    if not isinstance(production, Mapping) or production.get("run_id") != "100b-b64-dataset-001":
+        raise RuntimeError("the expanded 200M preset is frozen to 100b-b64-dataset-001")
+    if production.get("target_source_tokens") != 100_000_000_000:
+        raise RuntimeError("the expanded 200M preset requires the frozen 100B source-token target")
+    return pretrain_200m_100b_decay_plan()
+
+
 def setup(args: object):
     seed_everything(args.seed)
-    factory = ModelConfig.smoke if args.model_size == "smoke" else ModelConfig.substantive
+    factories = {
+        "smoke": ModelConfig.smoke,
+        "substantive": ModelConfig.substantive,
+        "expanded": ModelConfig.expanded,
+    }
+    try:
+        factory = factories[args.model_size]
+    except KeyError as error:
+        raise RuntimeError(f"unknown model-size preset {args.model_size!r}") from error
     model_overrides: dict[str, object] = {"architecture": args.architecture}
     if args.gdn_chunk_size is not None:
         model_overrides["gdn_chunk_size"] = args.gdn_chunk_size
     model_config = factory(**model_overrides)
     model = SmallLLM(model_config)
     initialize_model(model, args.initialization)
-    trainer_config = TrainerConfig(
-        optimizer=args.optimizer,
-        microbatch_size=args.microbatch_size,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        muon_momentum=args.muon_momentum,
-        muon_lr_multiplier=args.muon_lr_multiplier,
-        muon_update_rms=args.muon_update_rms,
-        muon_weight_decay=args.muon_weight_decay,
-        max_grad_norm=args.max_grad_norm,
-        precision=args.precision,
-        schedule=args.schedule,
-        warmup_tokens=args.warmup_tokens,
-        stable_tokens=args.stable_tokens,
-        decay_tokens=args.decay_tokens,
-        minimum_lr_ratio=args.minimum_lr_ratio,
-        schedule_anchor_tokens=args.schedule_anchor_tokens,
-        cooldown_start_tokens=args.cooldown_start_tokens,
-        settle_tokens=args.settle_tokens,
-        settle_lr_ratio=args.settle_lr_ratio,
-        base_power=args.base_power,
-        checkpoint_every_steps=args.checkpoint_every_steps,
-        evaluation_every_steps=args.evaluation_every_steps,
-        seed=args.seed,
-    )
+
+    if args.model_size == "expanded":
+        from .fresh_decay import PRETRAIN_200M_100B_PEAK_LR
+
+        plan = _require_expanded_200m_100b(args)
+        trainer_config = TrainerConfig(
+            optimizer=args.optimizer,
+            microbatch_size=args.microbatch_size,
+            learning_rate=PRETRAIN_200M_100B_PEAK_LR,
+            weight_decay=args.weight_decay,
+            muon_momentum=args.muon_momentum,
+            muon_lr_multiplier=args.muon_lr_multiplier,
+            muon_update_rms=args.muon_update_rms,
+            muon_weight_decay=args.muon_weight_decay,
+            max_grad_norm=args.max_grad_norm,
+            precision=args.precision,
+            **plan.trainer_kwargs(),
+            checkpoint_every_steps=args.checkpoint_every_steps,
+            evaluation_every_steps=args.evaluation_every_steps,
+            seed=args.seed,
+        )
+    else:
+        trainer_config = TrainerConfig(
+            optimizer=args.optimizer,
+            microbatch_size=args.microbatch_size,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
+            muon_momentum=args.muon_momentum,
+            muon_lr_multiplier=args.muon_lr_multiplier,
+            muon_update_rms=args.muon_update_rms,
+            muon_weight_decay=args.muon_weight_decay,
+            max_grad_norm=args.max_grad_norm,
+            precision=args.precision,
+            schedule=args.schedule,
+            warmup_tokens=args.warmup_tokens,
+            stable_tokens=args.stable_tokens,
+            decay_tokens=args.decay_tokens,
+            minimum_lr_ratio=args.minimum_lr_ratio,
+            schedule_anchor_tokens=args.schedule_anchor_tokens,
+            cooldown_start_tokens=args.cooldown_start_tokens,
+            settle_tokens=args.settle_tokens,
+            settle_lr_ratio=args.settle_lr_ratio,
+            base_power=args.base_power,
+            checkpoint_every_steps=args.checkpoint_every_steps,
+            evaluation_every_steps=args.evaluation_every_steps,
+            seed=args.seed,
+        )
     cache_manager = _rolling_cache(args)
     source = SchemaV2ShardReader(
         args.dataset_dir,
