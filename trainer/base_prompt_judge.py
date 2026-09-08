@@ -307,6 +307,8 @@ def _judge_rows(
                 parsed = parse_judgments(str(content), expected_ids=ids)
                 for row, judgment in zip(batch, parsed, strict=True):
                     judgment["family"] = row["family"]
+                    judgment["prompt"] = row["prompt"]
+                    judgment["continuation"] = row["continuation"]
                 judgments.extend(parsed)
                 batches.append(
                     {
