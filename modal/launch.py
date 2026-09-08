@@ -403,6 +403,10 @@ def main(
         raise ValueError(f"microbatch-size must be 0 (auto) or 1..{SEQUENCES_PER_BLOCK}")
     if max_steps_this_session < 0:
         raise ValueError("max-steps-this-session cannot be negative")
+    if token_preset.label == "100B" and max_steps_this_session == 0:
+        raise ValueError("100B runs require an explicit positive --max-steps-this-session budget")
+    if token_preset.label == "100B" and gpu != DEFAULT_GPU:
+        raise ValueError("100M/100B is restricted to the Modal H100 lane")
     if precision != "fp16":
         raise ValueError("the first Modal production migration is frozen to fp16")
     if token_preset.dataset_transport == "hf_rolling_shards" and dataset_dir:
@@ -428,7 +432,7 @@ def main(
         "model_size": model_preset.trainer_size,
         "dataset_profile": token_preset.dataset_profile,
         "dataset_transport": token_preset.dataset_transport,
-        "incremental_dataset_producer": bool(dataset_profile.incremental_frontier),
+        "incremental_dataset_producer": bool(dataset_profile.launch_concurrent_producer),
         "run_id": canonical_run_id(model_preset, token_preset),
         "gpu": gpu,
         "microbatch_size": (
@@ -512,7 +516,10 @@ def main(
 
     producer_call = None
     producer_result: dict[str, object] | None = None
-    if token_preset.dataset_transport == "hf_rolling_shards" and dataset_profile.incremental_frontier:
+    if (
+        token_preset.dataset_transport == "hf_rolling_shards"
+        and dataset_profile.launch_concurrent_producer
+    ):
         _stage(
             "cpu_dataset_producer_start",
             dataset_profile=token_preset.dataset_profile,
@@ -623,5 +630,6 @@ def main(
 if __name__ == "__main__":
     raise SystemExit(
         "Use: modal run --detach modal/launch.py --model 100M --tokens 2B, "
-        "--model 100M --tokens 10B, or --action deep-decay --model 100M --tokens 10B"
+        "--model 100M --tokens 10B, --model 100M --tokens 100B "
+        "--max-steps-this-session N, or --action deep-decay --model 100M --tokens 10B"
     )

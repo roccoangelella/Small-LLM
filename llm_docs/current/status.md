@@ -1,6 +1,6 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-08
 
 ## Repository and protocol state
 
@@ -16,6 +16,8 @@ Last reviewed: 2026-09-05
 - ADR 0149 corrects the Base Prompt v2 construction bug: the active full set now contains 120 unique prompt texts and IDs, with exactly 20 unique objective prompts in each of the five objective families and 20 unique qualitative prompts. Older recycled-template Base Prompt v2 aggregates are historical defective evidence and must not be interpreted as a 100-unique-prompt statistic.
 - ADR 0150 removes local substring/regex scoring from Base Prompt v2. The GPU evaluator now emits raw prompt/reference/continuation evidence with pending judge status; `trainer.base_prompt_judge` scores the 100 objective cases afterward through the same GemRouter endpoint used by R-SFT. Greedy and sampled views are judged semantically; the 20 qualitative cases remain unscored.
 - ADR 0151 makes `chat.py` persist downloaded local-chat artifacts under root-level `chat_models/<stage>/<run_id>/`, re-verify cached checkpoints before reuse, ignore that runtime cache in Git, and print the effective generation configuration at startup without changing the current sampling values.
+- ADR 0153 authorizes 100M/100B as the next pretraining scale target on Modal H100 and Beam RTX 4090.
+- ADR 0158 freezes `100b-b64-dataset-001`: the existing context-2048/block-64/approximately-1-GiB schema-v2 producer prebuilds the full 100B corpus in a dedicated public HF bucket. Modal and Beam are consumers only and require a completed READY frontier before GPU dispatch.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.

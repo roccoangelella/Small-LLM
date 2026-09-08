@@ -128,8 +128,8 @@ def required_remote_shard_free_bytes(
 
     ``resident_shards=3`` deliberately budgets an active writer, a just-finalized
     upload/readback candidate, and one additional tail/checkpoint margin.  It is
-    independent of the total corpus horizon, so a 10B dataset never requires a
-    20+ GiB local preflight merely because its canonical copy is remote.
+    independent of the total corpus horizon, so a large dataset never requires
+    its complete packed size locally merely because its canonical copy is remote.
     """
 
     if isinstance(target_shard_bytes, bool) or target_shard_bytes <= 0:

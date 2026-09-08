@@ -50,6 +50,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
+- [`0153-select-100m-100b-as-next-pretraining-scale-target.md`](0153-select-100m-100b-as-next-pretraining-scale-target.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
@@ -58,6 +59,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0054-retire-google-drive-for-new-dataset-durability.md`](0054-retire-google-drive-for-new-dataset-durability.md)
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
+- [`0158-prebuild-100b-in-public-hf-bucket.md`](0158-prebuild-100b-in-public-hf-bucket.md)
 
 ### 4. Post-Training & R-SFT Reasoning
 - [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)

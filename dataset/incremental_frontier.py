@@ -368,6 +368,45 @@ def read_frontier(store: FrontierStore, *, run_id: str, contract: Mapping[str, o
     return payload
 
 
+def require_completed_frontier(
+    store: FrontierStore,
+    *,
+    run_id: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Verify the terminal metadata required by a prebuilt dataset consumer."""
+
+    contract = read_run_contract(store, run_id=run_id)
+    frontier = read_frontier(store, run_id=run_id, contract=contract)
+    if frontier.get("producer_complete") is not True:
+        raise RuntimeError("prebuilt dataset profile requires a completed HF shard frontier")
+    rows = [
+        *_frontier_shards(frontier, "ready_train_shards"),
+        *_frontier_shards(frontier, "frozen_validation_shards"),
+    ]
+    train = _sorted_contiguous(rows, split="train")
+    validation = _sorted_contiguous(rows, split="validation")
+    planned = int(contract["planned_train_blocks"])
+    if not train or train[-1].last_block_id + 1 < planned:
+        raise RuntimeError("completed HF shard frontier does not cover the frozen training horizon")
+    if frontier.get("last_ready_train_block_id") != train[-1].last_block_id:
+        raise RuntimeError("completed HF shard frontier has an inconsistent final train block")
+    required_validation = int(dict(contract["trainer"])["validation_blocks"])
+    if not validation or validation[-1].last_block_id + 1 < required_validation:
+        raise RuntimeError("completed HF shard frontier does not cover frozen validation")
+    final_hash = frontier.get("final_manifest_sha256")
+    ready = store._read_json(_object(store, run_id, "ready.json"))
+    if (
+        not isinstance(final_hash, str)
+        or len(final_hash) != 64
+        or not isinstance(ready, Mapping)
+        or ready.get("run_id") != run_id
+        or ready.get("target_reached") is not True
+        or ready.get("manifest_sha256") != final_hash
+    ):
+        raise RuntimeError("completed HF shard frontier and readiness pointer disagree")
+    return contract, frontier
+
+
 def _frontier_shards(frontier: Mapping[str, object], field: str) -> list[FrontierShard]:
     raw = frontier.get(field)
     if not isinstance(raw, list):
@@ -668,6 +707,7 @@ __all__ = [
     "publish_run_contract",
     "read_frontier",
     "read_run_contract",
+    "require_completed_frontier",
     "stage_incremental_window",
     "standard_wsd_plan",
     "write_consumer_snapshot",

@@ -11,8 +11,8 @@
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
 TEMPERATURE = 1.0
-TOP_K = 50
-TOP_P = 1.0
+TOP_K = 20
+TOP_P = 0.95
 MAX_NEW_TOKENS = 128
 SEED = 17
 

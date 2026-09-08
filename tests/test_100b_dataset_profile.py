@@ -1,0 +1,116 @@
+"""Frozen public-HF profile and trainer horizon for the 100M/100B run."""
+
+from __future__ import annotations
+
+import runpy
+import unittest
+from pathlib import Path
+
+from dataset.incremental_frontier import build_run_contract
+from dataset.qualification import get_profile, production_arguments
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class Dataset100BProfileTests(unittest.TestCase):
+    def test_100b_profile_reuses_the_10b_shard_strategy(self) -> None:
+        ten = get_profile("modal-10b-b64")
+        profile = get_profile("100b")
+
+        self.assertEqual(profile.run_id, "100b-b64-dataset-001")
+        self.assertEqual(profile.target_source_tokens, 100_000_000_000)
+        self.assertEqual(profile.minimum_source_tokens, 90_000_000_000)
+        self.assertEqual(profile.maximum_source_tokens, 110_000_000_000)
+        self.assertEqual(profile.checkpoint_source_tokens, ten.checkpoint_source_tokens)
+        self.assertEqual(profile.context_length, ten.context_length)
+        self.assertEqual(profile.sequences_per_block, ten.sequences_per_block)
+        self.assertEqual(profile.target_shard_bytes, ten.target_shard_bytes)
+        self.assertTrue(profile.evict_remote_shards)
+        self.assertTrue(profile.incremental_frontier)
+        self.assertEqual(profile.nominal_training_tokens, 100_000_000_000)
+        self.assertEqual(profile.training_validation_blocks, 16)
+        self.assertFalse(profile.hf_bucket_private)
+        self.assertFalse(profile.launch_concurrent_producer)
+
+    def test_100b_build_is_locked_to_public_hf_incremental_upload(self) -> None:
+        args = production_arguments(
+            "100b",
+            ["--weights-file", "dataset/climbmix_code_free_weights.json", "--output-dir", "out"],
+        )
+
+        self.assertEqual(args[args.index("--run-id") + 1], "100b-b64-dataset-001")
+        self.assertEqual(args[args.index("--target-tokens") + 1], "100000000000")
+        self.assertEqual(args[args.index("--nominal-training-tokens") + 1], "100000000000")
+        self.assertEqual(args[args.index("--sequences-per-block") + 1], "64")
+        self.assertEqual(args[args.index("--target-shard-bytes") + 1], str(1024**3))
+        self.assertIn("--evict-remote-shards", args)
+        self.assertIn("--incremental-frontier", args)
+        self.assertIn("--public-hf-bucket", args)
+
+    def test_100b_contract_has_exact_whole_block_horizon(self) -> None:
+        profile = get_profile("100b")
+        contract = build_run_contract(
+            run_id=str(profile.run_id),
+            nominal_training_tokens=int(profile.nominal_training_tokens or 0),
+            target_source_tokens=profile.target_source_tokens,
+            minimum_source_tokens=profile.minimum_source_tokens,
+            maximum_source_tokens=profile.maximum_source_tokens,
+            checkpoint_source_tokens=profile.checkpoint_source_tokens,
+            context_length=profile.context_length,
+            sequences_per_block=profile.sequences_per_block,
+            target_shard_bytes=profile.target_shard_bytes,
+            configuration_hash="a" * 64,
+            schema_hash="b" * 64,
+            work_plan_hash="c" * 64,
+            validation_blocks=profile.training_validation_blocks,
+        )
+
+        self.assertEqual(contract["planned_train_blocks"], 762_940)
+        self.assertEqual(contract["planned_train_target_tokens"], 100_000_071_680)
+        self.assertEqual(
+            contract["trainer"],
+            {
+                "steps": 762_940,
+                "passes": 1,
+                "full_block_target_tokens": 131_072,
+                "schedule": "wsd",
+                "warmup_updates": 38_147,
+                "stable_updates": 572_205,
+                "decay_updates": 152_588,
+                "warmup_tokens": 5_000_003_584,
+                "stable_tokens": 75_000_053_760,
+                "decay_tokens": 20_000_014_336,
+                "minimum_lr_ratio": 0.1,
+                "validation_blocks": 16,
+                "planned_target_tokens": 100_000_071_680,
+            },
+        )
+
+    def test_provider_launchers_stage_without_spawning_a_100b_producer(self) -> None:
+        for provider in ("modal", "beam"):
+            launch = (ROOT / provider / "launch.py").read_text(encoding="utf-8")
+            rolling = (ROOT / provider / "rolling_dataset.py").read_text(encoding="utf-8")
+            with self.subTest(provider=provider):
+                self.assertIn("dataset_profile.launch_concurrent_producer", launch)
+                self.assertIn("require_completed_frontier(store, run_id=profile.run_id)", rolling)
+                self.assertIn("store.verify_bucket_visibility()", rolling)
+                self.assertIn("100B runs require an explicit positive --max-steps-this-session budget", launch)
+                expected_lane = "Modal H100" if provider == "modal" else "Beam RTX4090"
+                self.assertIn(f"100M/100B is restricted to the {expected_lane} lane", launch)
+
+    def test_modal_and_beam_resolve_the_same_prebuilt_dataset(self) -> None:
+        for provider in ("modal", "beam"):
+            profiles = runpy.run_path(str(ROOT / provider / "profiles.py"))
+            model, tokens = profiles["resolve_presets"]("100M", "100B")
+            with self.subTest(provider=provider):
+                self.assertEqual(model.trainer_size, "substantive")
+                self.assertEqual(tokens.dataset_profile, "100b-b64")
+                self.assertEqual(tokens.dataset_transport, "hf_rolling_shards")
+                self.assertEqual(
+                    profiles["canonical_run_id"](model, tokens),
+                    "100m-100b-data-001",
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -90,13 +90,18 @@ def stage_for_h100(
     store = HuggingFaceBucketShardStore(
         bucket_id,
         token=base_runtime._hf_token(),
-        private=True,
+        private=profile.hf_bucket_private,
         create_bucket=False,
     )
+    if not profile.hf_bucket_private:
+        store.verify_bucket_visibility()
     destination = cache_root / "datasets" / profile.run_id
     if profile.incremental_frontier:
+        from dataset.incremental_frontier import require_completed_frontier
         from dataset.incremental_stage import stage_incremental_window_when_ready
 
+        if not profile.launch_concurrent_producer:
+            require_completed_frontier(store, run_id=profile.run_id)
         staged = stage_incremental_window_when_ready(
             store=store,
             run_id=profile.run_id,

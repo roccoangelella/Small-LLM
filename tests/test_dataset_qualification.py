@@ -110,6 +110,7 @@ class DatasetQualificationTests(unittest.TestCase):
             "20m-2b": ("20m-2b-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
             "modal-2b-b64": ("modal-2b-b64-dataset-001", 2_000_000_000, 1_800_000_000, 2_200_000_000, 80_000_000, True),
             "modal-10b-b64": ("modal-10b-b64-dataset-001", 10_000_000_000, 9_000_000_000, 11_000_000_000, 500_000_000, True),
+            "100b-b64": ("100b-b64-dataset-001", 100_000_000_000, 90_000_000_000, 110_000_000_000, 500_000_000, True),
         }
         self.assertEqual(set(PROFILES), set(expected))
         for key, values in expected.items():
@@ -129,7 +130,7 @@ class DatasetQualificationTests(unittest.TestCase):
             if key == "modal-2b-b64":
                 self.assertEqual(profile.sequences_per_block, 64)
                 self.assertEqual(profile.target_shard_bytes, 32 * 1024 * 1024)
-            elif key == "modal-10b-b64":
+            elif key in {"modal-10b-b64", "100b-b64"}:
                 self.assertEqual(profile.sequences_per_block, 64)
                 self.assertEqual(profile.target_shard_bytes, 1024**3)
                 self.assertTrue(profile.evict_remote_shards)
@@ -146,13 +147,15 @@ class DatasetQualificationTests(unittest.TestCase):
             ("modal-2b", "modal-2b-b64"),
             ("10b", "modal-10b-b64"),
             ("modal-10b", "modal-10b-b64"),
+            ("100b", "100b-b64"),
+            ("modal-100b", "100b-b64"),
         )
         for alias, canonical in aliases:
             with self.subTest(alias=alias):
                 self.assertIs(get_profile(alias), get_profile(canonical))
 
     def test_active_profiles_append_exact_locked_production_identity(self) -> None:
-        for key in ("20m-100m", "20m-500m", "20m-2b", "modal-2b-b64", "modal-10b-b64"):
+        for key in ("20m-100m", "20m-500m", "20m-2b", "modal-2b-b64", "modal-10b-b64", "100b-b64"):
             with self.subTest(profile=key):
                 profile = get_profile(key)
                 args = production_arguments(

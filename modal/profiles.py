@@ -50,6 +50,12 @@ TOKEN_PRESETS: dict[int, TokenPreset] = {
         "modal-10b-b64",
         "hf_rolling_shards",
     ),
+    100_000_000_000: TokenPreset(
+        100_000_000_000,
+        "100B",
+        "100b-b64",
+        "hf_rolling_shards",
+    ),
 }
 LEGACY_WANDB_IDS: dict[tuple[int, int], str] = {
     (20_000_000, 100_000_000): "20m-100m-data-004",
@@ -68,7 +74,7 @@ def parse_quantity(value: str) -> int:
     compact = value.strip().replace("_", "").replace(",", "").replace(" ", "")
     match = _QUANTITY.fullmatch(compact)
     if match is None:
-        raise ValueError(f"invalid size {value!r}; use forms such as 20M, 100M, 2B, or 10B")
+        raise ValueError(f"invalid size {value!r}; use forms such as 20M, 100M, 10B, or 100B")
     try:
         amount = Decimal(match.group(1)) * _MULTIPLIERS[match.group(2).upper()]
     except InvalidOperation as error:

@@ -1,4 +1,4 @@
-"""Concurrent-capable production builder for the 10B incremental shard frontier.
+"""Concurrent-capable production builder for incremental shard frontiers.
 
 The legacy production builder remains unchanged for already-qualified finite
 runs. This path extends the same deterministic producer with one additional

@@ -18,8 +18,8 @@ The explicit programming cluster is excluded; the resulting corpus is not guaran
 
 ## Active modules
 
-- `dataset.qualification`: experiment-facing finite-dataset CLI and single registry for frozen profiles, including the block-64 Modal profiles.
-- `dataset.production`: reusable schema-v2 producer with exact mixture accounting, verified Hugging Face Storage Bucket durability, bounded-disk shard eviction, locking, resume, and the incremental 10B producer.
+- `dataset.qualification`: experiment-facing finite-dataset CLI and single registry for frozen profiles, including the block-64 10B and 100B profiles.
+- `dataset.production`: reusable schema-v2 producer with exact mixture accounting, verified Hugging Face Storage Bucket durability, bounded-disk shard eviction, locking, resume, and incremental shard-frontier production.
 - `dataset.incremental_frontier`: immutable prelaunch run contract plus monotonic READY-shard frontier for producer/consumer overlap.
 - `dataset.incremental_cache`: low-overhead dynamic current/next cache that polls the remote frontier only when the known READY prefix is exhausted.
 - `dataset.incremental_stage`: CPU bootstrap waiting and checkpoint-aligned current+successor+validation verification before GPU dispatch.
@@ -29,7 +29,7 @@ The explicit programming cluster is excluded; the resulting corpus is not guaran
 - `dataset.main`: shared schema-v2 verification plus the low-level stream-cache development surface still covered by streaming tests.
 - `dataset.src`: shared producer, streaming, storage, work-plan, retry, verification, HF bucket, checkpoint, and compatibility primitives.
 
-Google Drive is not an active storage backend. New remote dataset production uses a private Hugging Face Storage Bucket. The historical filename `drive_manifest.json` and legacy `drive_file_id` fields remain readable only because existing datasets and checkpoints already bind those names into their identity.
+Google Drive is not an active storage backend. New remote dataset production uses Hugging Face Storage Buckets. Profile `100b-b64` requires a public bucket; older profiles remain private. The historical filename `drive_manifest.json` and legacy `drive_file_id` fields remain readable only because existing datasets and checkpoints already bind those names into their identity.
 
 ## Finite dataset profiles
 
@@ -55,6 +55,35 @@ uv run --env-file .env python -m dataset.qualification build \
 ```
 
 Remote builds require `HF_TOKEN` and either `SMALL_LLM_HF_DATASET_BUCKET_ID` or `SMALL_LLM_HF_REPO_ID`; the latter derives `<repo>-datasets`.
+
+### Prebuilt public `100b-b64`
+
+The 100B corpus uses the same producer, stratification, context+1 format, block-64 geometry, approximately-1-GiB immutable shards, verified upload, and completed frontier used by the 10B lane. It changes only the frozen corpus/horizon identity. Build it completely before allocating a training GPU:
+
+```bash
+export SMALL_LLM_HF_DATASET_BUCKET_ID=<owner>/<dedicated-public-100b-bucket>
+
+uv run --env-file .env python -m dataset.qualification build \
+  --profile 100b \
+  --weights-file dataset/climbmix_code_free_weights.json \
+  --output-dir /data/small-llm/100b-b64-dataset-001 \
+  --reader-workers 8
+```
+
+Resume the exact same output directory and bucket after an interruption:
+
+```bash
+uv run --env-file .env python -m dataset.qualification build \
+  --profile 100b \
+  --weights-file dataset/climbmix_code_free_weights.json \
+  --output-dir /data/small-llm/100b-b64-dataset-001 \
+  --reader-workers 8 \
+  --resume
+```
+
+The profile passes `--public-hf-bucket` itself and verifies the resulting bucket visibility. Never point this profile at the existing private 10B bucket. Production evicts each local finalized shard only after HF upload/read-back verification and durable progress publication, so local disk remains bounded. Completion requires `ready.json`, `manifest.json`, and a `shard_frontier.json` with `producer_complete=true` and the full 762,940-block horizon.
+
+Modal and Beam both refuse GPU dispatch for this profile until that completed frontier is present. They then stage and hash only the checkpoint-aligned current+successor window. Each 100B invocation also requires an explicit positive `--max-steps-this-session` so an omitted session budget cannot request the entire remaining trajectory.
 
 ### Incremental `modal-10b-b64`
 

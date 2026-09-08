@@ -16,6 +16,7 @@ from dataset.incremental_frontier import (
     build_run_contract,
     publish_frontier,
     publish_run_contract,
+    require_completed_frontier,
     stage_incremental_window,
 )
 from dataset.incremental_stage import stage_incremental_window_when_ready
@@ -262,6 +263,40 @@ class IncrementalFrontierTests(unittest.TestCase):
                     timeout_seconds=0.1,
                     poll_seconds=0.001,
                 )
+
+    def test_prebuilt_consumer_requires_complete_horizon_and_matching_ready_pointer(self) -> None:
+        store = FakeStore()
+        contract = _contract()
+        publish_run_contract(store, run_id="dataset-001", contract=contract)
+        train = _entry("train", 0, 0, 99, b"a" * 2000)
+        validation = _entry("validation", 0, 0, 0, b"v" * 20)
+        manifest_hash = "d" * 64
+        publish_frontier(
+            store,
+            run_id="dataset-001",
+            contract=contract,
+            durability_manifest=_durability(train, validation),
+            producer_complete=True,
+            final_manifest_sha256=manifest_hash,
+        )
+        store._write_json(
+            store.object_key("dataset-001", "ready.json"),
+            {
+                "version": 1,
+                "run_id": "dataset-001",
+                "manifest_sha256": manifest_hash,
+                "target_reached": True,
+            },
+        )
+        completed_contract, frontier = require_completed_frontier(store, run_id="dataset-001")
+        self.assertEqual(completed_contract, contract)
+        self.assertTrue(frontier["producer_complete"])
+
+        store.json_objects[store.object_key("dataset-001", "ready.json")][
+            "manifest_sha256"
+        ] = "e" * 64
+        with self.assertRaisesRegex(RuntimeError, "readiness pointer disagree"):
+            require_completed_frontier(store, run_id="dataset-001")
 
     def test_uncommitted_remote_shards_never_enter_ready_frontier(self) -> None:
         store = FakeStore()

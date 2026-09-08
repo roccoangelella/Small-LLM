@@ -39,14 +39,14 @@ def produce_incremental_dataset(
 
     _, token_preset = resolve_presets(model, tokens)
     profile = get_profile(token_preset.dataset_profile)
-    if not profile.incremental_frontier or profile.run_id is None:
-        raise RuntimeError("concurrent producer was requested for a non-incremental dataset profile")
+    if not profile.launch_concurrent_producer or profile.run_id is None:
+        raise RuntimeError("concurrent producer is disabled for this dataset profile")
 
     bucket_id = _dataset_bucket_id()
     store = HuggingFaceBucketShardStore(
         bucket_id,
         token=base_runtime._hf_token(),
-        private=True,
+        private=profile.hf_bucket_private,
         create_bucket=True,
     )
     ready = store._read_json(store.object_key(profile.run_id, "ready.json"))

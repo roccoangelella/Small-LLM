@@ -570,6 +570,10 @@ def main() -> int:
         raise ValueError(f"microbatch-size must be 0 (auto) or 1..{SEQUENCES_PER_BLOCK}")
     if args.max_steps_this_session < 0:
         raise ValueError("max-steps-this-session cannot be negative")
+    if token_preset.label == "100B" and args.max_steps_this_session == 0:
+        raise ValueError("100B runs require an explicit positive --max-steps-this-session budget")
+    if token_preset.label == "100B" and args.gpu != "RTX4090":
+        raise ValueError("100M/100B is restricted to the Beam RTX4090 lane")
     if args.precision != "fp16":
         raise ValueError("the Beam adapter is frozen to fp16")
     if token_preset.dataset_transport == "hf_rolling_shards" and args.dataset_dir:
@@ -587,7 +591,7 @@ def main() -> int:
         "model_size": model_preset.trainer_size,
         "dataset_profile": token_preset.dataset_profile,
         "dataset_transport": token_preset.dataset_transport,
-        "incremental_dataset_producer": bool(dataset_profile.incremental_frontier),
+        "incremental_dataset_producer": bool(dataset_profile.launch_concurrent_producer),
         "run_id": canonical_run_id(model_preset, token_preset),
         "gpu": args.gpu,
         "microbatch_size": (
@@ -621,7 +625,7 @@ def main() -> int:
     producer_result: object = None
     if token_preset.dataset_transport == "hf_rolling_shards":
         _stage("cpu_dataset_stage_start", dataset_profile=token_preset.dataset_profile)
-        if dataset_profile.incremental_frontier:
+        if dataset_profile.launch_concurrent_producer:
             staged, producer_result = _stage_with_incremental_producer(
                 model_preset.label, token_preset.label
             )

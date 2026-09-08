@@ -19,7 +19,12 @@ class FakeBucketApi:
 
     def create_bucket(self, *, bucket_id: str, private: bool, exist_ok: bool, token=None):
         self.created.append((bucket_id, private, exist_ok, token))
+        self.private = private
         return SimpleNamespace(bucket_id=bucket_id)
+
+    def bucket_info(self, *, bucket_id: str, token=None):
+        del bucket_id, token
+        return SimpleNamespace(private=self.private)
 
     def batch_bucket_files(self, *, bucket_id: str, add=None, delete=None, token=None):
         del bucket_id, token
@@ -68,6 +73,21 @@ class HuggingFaceBucketShardStoreTests(unittest.TestCase):
             api=api,
             create_bucket=True,
         )
+
+    def test_public_bucket_creation_and_visibility_are_verified(self) -> None:
+        api = FakeBucketApi()
+        store = HuggingFaceBucketShardStore(
+            "owner/public-datasets",
+            token="token",
+            private=False,
+            api=api,
+            create_bucket=True,
+        )
+        self.assertEqual(api.created, [("owner/public-datasets", False, True, "token")])
+        store.verify_bucket_visibility()
+        api.private = True
+        with self.assertRaisesRegex(RuntimeError, "expected public"):
+            store.verify_bucket_visibility()
 
     def test_upload_is_read_back_verified_and_download_is_atomic(self) -> None:
         api = FakeBucketApi()

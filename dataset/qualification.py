@@ -37,6 +37,8 @@ class DatasetProfile:
     incremental_frontier: bool = False
     nominal_training_tokens: int | None = None
     training_validation_blocks: int = 16
+    hf_bucket_private: bool = True
+    launch_concurrent_producer: bool = False
 
     def __post_init__(self) -> None:
         if self.incremental_frontier:
@@ -46,6 +48,8 @@ class DatasetProfile:
                 raise ValueError("incremental dataset profiles require positive validation blocks")
         elif self.nominal_training_tokens is not None:
             raise ValueError("nominal_training_tokens is only valid for incremental profiles")
+        if self.launch_concurrent_producer and not self.incremental_frontier:
+            raise ValueError("concurrent dataset producers require an incremental frontier")
 
     @property
     def target_source_tokens(self) -> int:
@@ -163,11 +167,30 @@ PROFILES: dict[str, DatasetProfile] = {
         incremental_frontier=True,
         nominal_training_tokens=10_000_000_000,
         training_validation_blocks=16,
+        launch_concurrent_producer=True,
         plan=QualificationProfile(
             name="modal-10b-b64-v1",
             target_source_tokens=10_000_000_000,
             minimum_source_tokens=9_000_000_000,
             maximum_source_tokens=11_000_000_000,
+            checkpoint_source_tokens=500_000_000,
+            **_MODAL_B64_1G_GEOMETRY,
+        ),
+    ),
+    "100b-b64": DatasetProfile(
+        key="100b-b64",
+        run_id="100b-b64-dataset-001",
+        evict_remote_shards=True,
+        incremental_frontier=True,
+        nominal_training_tokens=100_000_000_000,
+        training_validation_blocks=16,
+        hf_bucket_private=False,
+        launch_concurrent_producer=False,
+        plan=QualificationProfile(
+            name="100b-b64-v1",
+            target_source_tokens=100_000_000_000,
+            minimum_source_tokens=90_000_000_000,
+            maximum_source_tokens=110_000_000_000,
             checkpoint_source_tokens=500_000_000,
             **_MODAL_B64_1G_GEOMETRY,
         ),
@@ -182,6 +205,8 @@ ALIASES = {
     "modal-2b": "modal-2b-b64",
     "10b": "modal-10b-b64",
     "modal-10b": "modal-10b-b64",
+    "100b": "100b-b64",
+    "modal-100b": "100b-b64",
 }
 
 _LOCKED_PRODUCTION_FLAGS = frozenset(
@@ -199,6 +224,7 @@ _LOCKED_PRODUCTION_FLAGS = frozenset(
         "--incremental-frontier",
         "--nominal-training-tokens",
         "--training-validation-blocks",
+        "--public-hf-bucket",
     }
 )
 
@@ -266,6 +292,8 @@ def production_arguments(profile: DatasetProfile | str, argv: Sequence[str]) -> 
                 str(resolved.training_validation_blocks),
             ]
         )
+    if not resolved.hf_bucket_private:
+        result.append("--public-hf-bucket")
     return result
 
 
@@ -359,6 +387,8 @@ def profile_payload(profile: DatasetProfile) -> dict[str, object]:
         "incremental_frontier": profile.incremental_frontier,
         "nominal_training_tokens": profile.nominal_training_tokens,
         "training_validation_blocks": profile.training_validation_blocks,
+        "hf_bucket_private": profile.hf_bucket_private,
+        "launch_concurrent_producer": profile.launch_concurrent_producer,
         "remote_backend": "hf_bucket",
         **payload,
     }

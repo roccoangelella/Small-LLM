@@ -1,6 +1,6 @@
 ---
 status: current
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-08
 ---
 
 # Current roadmap
@@ -13,14 +13,16 @@ last_reviewed: 2026-09-04
 - Evaluation v2 is active under ADRs 0140 and 0141.
 - The 100M/10B S0 SFT trajectory `100m-10b-sft-s0-2b10pct-data-001` has been restarted after a Kaggle T4 session-time interruption; that interruption is infrastructure evidence, not a model-quality result.
 - ADR 0144 defines the current post-completion pretraining diagnostic: one launcher, two constant-LR holds (`1e-5`, `2e-5`), 3,000 updates per branch, preferred source `step-00071750`, strict current-best fallback from the same dedicated best-model repository, and no rolling-latest fallback.
+- ADR 0153 authorizes 100M/100B on Modal H100 and Beam RTX 4090.
+- ADR 0158 freezes a complete prebuilt public-HF `100b-b64-dataset-001`; paid providers do not build this corpus.
 
 ## Immediate priorities
 
-1. Complete or exactly resume the 100M/10B SFT trajectory under its existing checkpoint/data contract.
-2. Run evaluation-v2 SFT qualification after completion and compare the SFT model with the 100M/10B parent using the primary Behavior v2 suite, frozen `eval_core_v1`, masked-loss diagnostics, and the defined sampled-robustness view.
-3. Run the ADR-0144 `hold-1e-5` and `hold-2e-5` pretraining probes from the same source/data continuation and compare their validation trajectories. The purpose is to test whether the apparent 10B tail plateau is explained by terminal LR decay rather than by model/data saturation.
-4. Re-evaluate completed pretrained checkpoints with evaluation v2 where needed so subsequent scale decisions use one protocol.
-5. Keep completed 100M/10B provider/run procedures as reproduction and recovery references, not as active launch authorization.
+1. Build and fully publish `100b-b64-dataset-001` to its dedicated public HF bucket, then verify its terminal manifest/READY/frontier and immutable shard inventory.
+2. Complete or exactly resume the 100M/10B SFT trajectory under its existing checkpoint/data contract.
+3. Run evaluation-v2 SFT qualification after completion and compare the SFT model with the 100M/10B parent using the primary Behavior v2 suite, frozen `eval_core_v1`, masked-loss diagnostics, and the defined sampled-robustness view.
+4. Run the ADR-0144 `hold-1e-5` and `hold-2e-5` pretraining probes from the same source/data continuation and compare their validation trajectories.
+5. Run provider CPU-stage/live-smoke checks against the completed 100B bucket before allocating a full training segment.
 
 ## Next decision gate
 
@@ -30,7 +32,7 @@ Do not authorize another long pretraining trajectory solely because an execution
 - the two low-LR probe trajectories from ADR 0144;
 - the completed 100M/10B SFT qualification.
 
-After those results are available, choose explicitly between more data at fixed 100M scale, a geometry/architecture change, or shifting additional effort toward post-training. Record that choice in a new ADR. No 50B- or 100B-token pretraining trajectory is authorized by this roadmap.
+ADR 0153 resolved this gate in favor of more data at fixed 100M scale. The 100B trajectory is authorized only on its frozen Modal H100 and Beam RTX 4090 lanes; corpus completion and provider CPU-stage/live-smoke verification remain prelaunch gates.
 
 ## Frozen boundaries still in force
 
