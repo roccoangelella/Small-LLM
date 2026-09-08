@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 PROFILE = "20m-100m-data-scaling-v1"
 RUN_ID = "20m-100m-dataset-001"
 SLUG = "small-llm-20m-100m-dataset-001"

@@ -117,6 +117,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0143-remove-ire-project-state.md`](0143-remove-ire-project-state.md)
 - [`0145-synchronize-readme-lifecycle-with-current-state.md`](0145-synchronize-readme-lifecycle-with-current-state.md)
 - [`0149-support-100m-10b-pretrained-run-in-local-chat.md`](0149-support-100m-10b-pretrained-run-in-local-chat.md)
+- [`0167-harden-test-kaggle-rsft-and-memory-contracts.md`](0167-harden-test-kaggle-rsft-and-memory-contracts.md)
 
 ## Superseded ADRs
 

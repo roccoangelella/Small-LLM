@@ -23,10 +23,11 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 KAGGLE_DIR = Path(__file__).resolve().parent
-REPO = KAGGLE_DIR.parent
+KAGGLE_ROOT = KAGGLE_DIR.parent
+REPO = KAGGLE_ROOT.parent
 TRAINING_ENGINE = KAGGLE_DIR / "run_20m_100m_data_scaling.py"
 PUBLISH_ENGINE = KAGGLE_DIR / "build_and_push_100m.py"
-PUBLISH_REQUIREMENTS = KAGGLE_DIR / "requirements-100m-publish.txt"
+PUBLISH_REQUIREMENTS = KAGGLE_ROOT / "env" / "requirements-100m-publish.txt"
 PUBLISH_BOOTSTRAP_ENV = "SMALL_LLM_PUBLISH_BOOTSTRAPPED"
 KAGGLE_TRANSPORT_ARCHIVE = re.compile(r"^[0-9]+\.archive$")
 WANDB_INIT_TIMEOUT_SECONDS = "30"
@@ -450,7 +451,7 @@ def publication_bootstrap_command(
         "--with-requirements",
         str(PUBLISH_REQUIREMENTS),
         "python",
-        str(KAGGLE_DIR / "launch.py"),
+        str(KAGGLE_ROOT / "launch.py"),
         *argv,
     ]
 

@@ -38,13 +38,13 @@ The old decoded-text/Gemini curation pipeline, per-budget dataset qualification 
 
 ## Main commands
 
-Install the complete supported project runtime:
+Install the locked supported runtime and default test group:
 
 ```bash
-uv sync
+uv sync --locked
 ```
 
-Use `uv sync --locked` when you want a fail-closed check that `pyproject.toml` and the committed `uv.lock` already agree.
+It installs the locked default `runtime` and `test` groups and fails closed if `pyproject.toml` and the committed `uv.lock` disagree.
 
 Inspect the frozen finite-dataset profiles:
 
@@ -88,8 +88,11 @@ Full pretraining evaluation v2 uses the separately pinned `lm-evaluation-harness
 Run the offline repository tests:
 
 ```bash
-uv run python -m unittest discover -v
+uv run --extra model python -m unittest discover -v
+uv run --extra model pytest -q
 ```
+
+`pytest` covers plain-function tests omitted by `unittest` discovery.
 
 ## Documentation
 

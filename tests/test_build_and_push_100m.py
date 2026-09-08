@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[1] / "kaggle" / "build_and_push_100m.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "kaggle" / "src" / "build_and_push_100m.py"
 SPEC = importlib.util.spec_from_file_location("small_llm_build_push_100m", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 suite = importlib.util.module_from_spec(SPEC)

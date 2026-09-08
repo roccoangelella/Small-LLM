@@ -22,7 +22,7 @@ from typing import Any, Mapping, Sequence
 
 import run_20m_one_click as common
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 DEFAULT_COMMIT = "__PIN_20M_100M_LAUNCH_COMMIT__"
 DATASET_RUN_ID = "20m-100m-dataset-001"
 PROFILE = "20m-100m-data-scaling-v1"

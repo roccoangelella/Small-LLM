@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-KAGGLE = ROOT / "kaggle"
+KAGGLE = ROOT / "kaggle" / "src"
 
 
 def _load(name: str, path: Path):

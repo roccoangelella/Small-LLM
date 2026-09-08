@@ -42,8 +42,8 @@ import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-REPO = Path(__file__).resolve().parents[1]
-KAGGLE = REPO / "kaggle"
+REPO = Path(__file__).resolve().parents[2]
+KAGGLE = Path(__file__).resolve().parent
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 if str(KAGGLE) not in sys.path:

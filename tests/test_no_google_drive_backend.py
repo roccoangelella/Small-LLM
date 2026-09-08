@@ -44,9 +44,9 @@ def test_remote_dependency_lists_are_hf_only() -> None:
     dataset_requirements = (ROOT / "dataset" / "requirements-remote.txt").read_text(
         encoding="utf-8"
     )
-    kaggle_requirements = (ROOT / "kaggle" / "requirements-100m-publish.txt").read_text(
-        encoding="utf-8"
-    )
+    kaggle_requirements = (
+        ROOT / "kaggle" / "env" / "requirements-100m-publish.txt"
+    ).read_text(encoding="utf-8")
     assert dataset_requirements.strip() == "huggingface-hub>=1.5,<2"
     assert "huggingface-hub>=1.5,<2" in kaggle_requirements
     assert "google-" not in dataset_requirements.lower()

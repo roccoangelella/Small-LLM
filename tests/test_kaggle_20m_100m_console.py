@@ -11,7 +11,7 @@ import types
 import unittest
 from pathlib import Path
 
-KAGGLE_DIR = Path(__file__).resolve().parents[1] / "kaggle"
+KAGGLE_DIR = Path(__file__).resolve().parents[1] / "kaggle" / "src"
 if str(KAGGLE_DIR) not in sys.path:
     sys.path.insert(0, str(KAGGLE_DIR))
 

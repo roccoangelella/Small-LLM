@@ -7,7 +7,7 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "kaggle" / "run_gdn2_fla_fp32_qualification.py"
+SCRIPT = ROOT / "kaggle" / "src" / "run_gdn2_fla_fp32_qualification.py"
 SPEC = importlib.util.spec_from_file_location("gdn2_fla_fp32_qualification", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 qualification = importlib.util.module_from_spec(SPEC)

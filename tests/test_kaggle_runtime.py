@@ -10,8 +10,9 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 KAGGLE = ROOT / "kaggle"
-if str(KAGGLE) not in sys.path:
-    sys.path.insert(0, str(KAGGLE))
+KAGGLE_SRC = KAGGLE / "src"
+if str(KAGGLE_SRC) not in sys.path:
+    sys.path.insert(0, str(KAGGLE_SRC))
 
 import runtime  # noqa: E402
 
@@ -78,7 +79,8 @@ class KaggleRuntimeTests(unittest.TestCase):
         self.assertIn("--env-file", command)
         self.assertIn(str(ROOT / ".env"), command)
         self.assertIn("--with-requirements", command)
-        self.assertIn(str(KAGGLE / "requirements-100m-publish.txt"), command)
+        self.assertIn(str(KAGGLE / "env" / "requirements-100m-publish.txt"), command)
+        self.assertIn(str(KAGGLE / "launch.py"), command)
         self.assertEqual(
             command[-5:],
             ["publish", "--model", "20M", "--tokens", "2B"],

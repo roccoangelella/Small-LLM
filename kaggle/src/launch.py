@@ -13,7 +13,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Sequence
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
@@ -267,7 +267,7 @@ def _dual_t4_uv_command(args: argparse.Namespace, uv: str) -> list[str]:
         "--extra-index-url",
         DUAL_T4_CUDA_WHEEL_INDEX,
         "python",
-        str(REPO / "kaggle" / "qualify_dual_t4_watchdog.py"),
+        str(Path(__file__).resolve().with_name("qualify_dual_t4_watchdog.py")),
         *_dual_t4_arguments(args),
     ]
 
@@ -280,7 +280,10 @@ def _run_dual_t4_qualification(args: argparse.Namespace) -> int:
 
 
 def _deep_decay_command(args: argparse.Namespace) -> list[str]:
-    command = [sys.executable, str(REPO / "kaggle" / "deep_decay_10b_from_15500.py")]
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve().with_name("deep_decay_10b_from_15500.py")),
+    ]
     if args.max_steps_this_session is not None:
         command += ["--max-steps-this-session", str(args.max_steps_this_session)]
     if args.dry_run:

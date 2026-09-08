@@ -1,6 +1,7 @@
 """Modal contracts for Bucket latest plus dedicated recreate-only model best."""
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import unittest
@@ -9,10 +10,24 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 MODAL = ROOT / "modal"
-if str(MODAL) not in sys.path:
-    sys.path.insert(0, str(MODAL))
 
-import model_repo_checkpoint as transport  # noqa: E402
+# Modal intentionally preserves flat remote import names. Isolate those names
+# during collection so a previously imported Kaggle ``runtime`` cannot leak in.
+_FLAT_MODULES = ("model_repo_checkpoint", "profiles", "runtime")
+_SAVED_MODULES = {name: sys.modules.get(name) for name in _FLAT_MODULES}
+for _name in _FLAT_MODULES:
+    sys.modules.pop(_name, None)
+sys.path.insert(0, str(MODAL))
+try:
+    transport = importlib.import_module("model_repo_checkpoint")
+finally:
+    sys.path.remove(str(MODAL))
+    for _name in _FLAT_MODULES:
+        sys.modules.pop(_name, None)
+    for _name, _module in _SAVED_MODULES.items():
+        if _module is not None:
+            sys.modules[_name] = _module
+
 from trainer.cli_args import parse_args  # noqa: E402
 
 

@@ -118,7 +118,7 @@ class ReasoningTokenizerTests(unittest.TestCase):
             self.spec,
             base_encoding=_ByteEncoding(),
         )
-        with self.assertRaisesRegex(ValueError, "outside the R-SFT vocabulary"):
+        with self.assertRaisesRegex(ValueError, "outside the R-SFT semantic vocabulary"):
             encoding.decode([50_260])
 
 

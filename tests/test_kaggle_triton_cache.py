@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-KAGGLE = ROOT / "kaggle"
+KAGGLE = ROOT / "kaggle" / "src"
 
 
 def _load(name: str, path: Path):
@@ -65,7 +65,7 @@ class KaggleTritonCacheTests(unittest.TestCase):
         self.assertIn("qualified_runtime_uv_args()", source)
         self.assertIn('_uv_worker_command("compile", uv)', source)
         self.assertIn('_uv_worker_command("validate", uv)', source)
-        self.assertIn("dual_t4_train_block64.py", source)
+        self.assertNotIn("CheckpointCoordinator", source)
 
     def test_package_and_seed_round_trip_preserves_cache_tree(self) -> None:
         module = _load("small_llm_triton_cache_roundtrip_test", KAGGLE / "triton_cache.py")

@@ -142,15 +142,18 @@ class AcceleratedEvalCoreTests(unittest.TestCase):
             legacy_dir = root / "legacy"
             accelerated_dir = root / "accelerated"
 
-            legacy_manifest = eval_core.build_eval_core(
-                legacy_dir,
-                record_stream=stream,
-                validation_probability=1.0,
-                fast_documents_per_cluster=1,
-                fast_targets_per_cluster=1,
-                full_documents_per_cluster=1,
-                full_targets_per_cluster=1,
-            )
+            with (
+                patch("dataset.eval_core.list_source_files", return_value=[source]),
+                patch("dataset.eval_core._iter_source_records", return_value=iter(stream)),
+            ):
+                legacy_manifest = eval_core.build_eval_core(
+                    legacy_dir,
+                    validation_probability=1.0,
+                    fast_documents_per_cluster=1,
+                    fast_targets_per_cluster=1,
+                    full_documents_per_cluster=1,
+                    full_targets_per_cluster=1,
+                )
 
             with (
                 patch(

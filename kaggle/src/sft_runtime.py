@@ -14,7 +14,8 @@ import sys
 from typing import Sequence
 
 KAGGLE_DIR = Path(__file__).resolve().parent
-REPO = KAGGLE_DIR.parent
+KAGGLE_ROOT = KAGGLE_DIR.parent
+REPO = KAGGLE_ROOT.parent
 KAGGLE_WORK = Path("/kaggle/working")
 KAGGLE_INPUT = Path("/kaggle/input")
 PINNED_LAUNCH_COMMIT = "184adccc1c12437046594ac674bc8d61eb710125"

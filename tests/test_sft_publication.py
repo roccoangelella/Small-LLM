@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from kaggle.sft_publish import (
+KAGGLE_SRC = Path(__file__).resolve().parents[1] / "kaggle" / "src"
+if str(KAGGLE_SRC) not in sys.path:
+    sys.path.insert(0, str(KAGGLE_SRC))
+
+from sft_publish import (  # noqa: E402
     PublishFailure,
     _remove_kagglehub_transport_artifacts,
     _state_matches,

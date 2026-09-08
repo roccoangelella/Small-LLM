@@ -33,7 +33,7 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
             "3c920a7b682382181d4dc7557e217e6509d0dabe",
         )
 
-    def test_sft_train_launch_log_matches_pretraining_exactly(self) -> None:
+    def test_train_launch_logs_expose_topology_and_sft_fraction(self) -> None:
         argv = ["train", "--model", "20M", "--tokens", "500M"]
 
         pretraining_stdout = io.StringIO()
@@ -48,9 +48,16 @@ class UnifiedKaggleLauncherTests(unittest.TestCase):
         ):
             self.assertEqual(launch_sft.main(argv), 0)
 
-        expected = "[launch] action=train model=20M tokens=500M resume=automatic_verified\n"
-        self.assertEqual(pretraining_stdout.getvalue(), expected)
-        self.assertEqual(sft_stdout.getvalue(), expected)
+        self.assertEqual(
+            pretraining_stdout.getvalue(),
+            "[launch] action=train model=20M tokens=500M "
+            "execution=dual_t4_ddp resume=automatic_verified\n",
+        )
+        self.assertEqual(
+            sft_stdout.getvalue(),
+            "[launch] action=train model=20M tokens=500M "
+            "sft_fraction=4/100 resume=automatic_verified\n",
+        )
 
     def test_train_dry_run_exposes_profile_contract(self) -> None:
         result = subprocess.run(

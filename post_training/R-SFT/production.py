@@ -193,6 +193,41 @@ def _validate_completed_generation(
     return dict(manifest)
 
 
+def _validate_saved_generation_plan(
+    root: Path,
+    *,
+    examples_per_cell: int,
+    batch_size: int,
+    seed: int,
+    total_calls: int,
+) -> None:
+    """Reject configuration drift before reusing completed-batch state."""
+
+    manifest_path = root / "generation-manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeError("saved generation plan manifest is invalid") from error
+    if not isinstance(manifest, Mapping):
+        raise RuntimeError("saved generation plan manifest must be a JSON object")
+    supplied = manifest.get("manifest_sha256")
+    without_hash = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    if supplied != canonical_hash(without_hash):
+        raise RuntimeError("saved generation plan manifest self-hash mismatch")
+    expected = {
+        "schema": GENERATION_MANIFEST_SCHEMA,
+        "examples_per_cell": examples_per_cell,
+        "batch_size": batch_size,
+        "total_calls": total_calls,
+        "seed": seed,
+    }
+    for key, value in expected.items():
+        if manifest.get(key) != value:
+            raise RuntimeError(f"saved generation plan changed at {key}")
+
+
 def generate_resumable(
     output_dir: Path | str,
     *,
@@ -212,6 +247,15 @@ def generate_resumable(
         examples_per_cell=examples_per_cell,
         batch_size=batch_size,
     )
+
+    if not final_path.is_file():
+        _validate_saved_generation_plan(
+            root,
+            examples_per_cell=examples_per_cell,
+            batch_size=batch_size,
+            seed=seed,
+            total_calls=len(plan),
+        )
 
     if final_path.is_file():
         manifest = _validate_completed_generation(

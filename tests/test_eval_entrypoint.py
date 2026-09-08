@@ -39,7 +39,7 @@ class EvalEntrypointTests(unittest.TestCase):
                 path.mkdir(parents=True)
                 (path / "manifest.json").write_text("{}\n", encoding="utf-8")
 
-            with patch("trainer.eval_entrypoint.build_eval_core", side_effect=fake_build) as build:
+            with patch("trainer.eval_entrypoint._build_with_heartbeat", side_effect=fake_build) as build:
                 with patch("trainer.eval_entrypoint.verify_eval_core") as verify:
                     resolved = ensure_eval_core(target)
             self.assertEqual(resolved, target.resolve())
@@ -50,7 +50,7 @@ class EvalEntrypointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "eval_core_v1"
             target.mkdir()
-            with patch("trainer.eval_entrypoint.build_eval_core") as build:
+            with patch("trainer.eval_entrypoint._build_with_heartbeat") as build:
                 with patch("trainer.eval_entrypoint.verify_eval_core") as verify:
                     resolved = ensure_eval_core(target)
             self.assertEqual(resolved, target.resolve())

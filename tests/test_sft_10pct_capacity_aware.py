@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
-KAGGLE = ROOT / "kaggle"
+KAGGLE = ROOT / "kaggle" / "src"
 if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 
@@ -163,8 +163,12 @@ class SFT10PctCapacityAwareTests(unittest.TestCase):
 
     def test_train_uses_aggressive_10pct_worktree_and_wrapper(self) -> None:
         profile = self._profile()
-        worktree = Path("/tmp/small-llm-sft-10pct-worktree")
-        bundle = Path("/tmp/small-llm-sft-10pct-bundle")
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        worktree = Path(temporary) / "worktree"
+        runner = worktree / "kaggle" / "dual_t4_sft_10pct.py"
+        runner.parent.mkdir(parents=True)
+        runner.touch()
+        bundle = Path(temporary) / "bundle"
         prepared_profiles = []
         captured: dict[str, object] = {}
 

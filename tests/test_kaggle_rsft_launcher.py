@@ -8,7 +8,7 @@ import sys
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
-KAGGLE = REPO / "kaggle"
+KAGGLE = REPO / "kaggle" / "src"
 if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 

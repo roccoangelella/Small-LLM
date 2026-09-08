@@ -1,6 +1,8 @@
 """Repository contracts for the Markdown project-memory layout."""
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from pathlib import Path
 import unittest
@@ -42,7 +44,15 @@ REMOVED_PATHS = (
 )
 
 CURRENT_FILES = ("roadmap.md", "status.md")
-STRICT_ADR_SHAPE_FROM = 31
+ADR_LEGACY_BASELINE = (
+    ROOT / "tests" / "fixtures" / "project_memory_adr_legacy_baseline.json"
+)
+STRICT_ADR_HEADINGS = (
+    "## Context and problem statement",
+    "## Considered options",
+    "## Decision outcome",
+    "## Consequences",
+)
 
 
 def local_markdown_links(path: Path) -> tuple[str, ...]:
@@ -53,6 +63,22 @@ def local_markdown_links(path: Path) -> tuple[str, ...]:
         if target and "://" not in target and target.endswith(".md"):
             links.append(target)
     return tuple(links)
+
+
+def has_strict_adr_shape(text: str) -> bool:
+    return text.startswith("---\n") and all(
+        heading in text for heading in STRICT_ADR_HEADINGS
+    )
+
+
+def load_adr_legacy_baseline() -> dict[str, str]:
+    baseline = json.loads(ADR_LEGACY_BASELINE.read_text(encoding="utf-8"))
+    if not isinstance(baseline, dict) or not all(
+        isinstance(filename, str) and isinstance(digest, str)
+        for filename, digest in baseline.items()
+    ):
+        raise ValueError("ADR legacy baseline must map filenames to SHA-256 strings")
+    return baseline
 
 
 class ProjectMemoryLayoutTests(unittest.TestCase):
@@ -85,25 +111,45 @@ class ProjectMemoryLayoutTests(unittest.TestCase):
                         f"broken index link: {index} -> {target}",
                     )
 
-    def test_adrs_have_metadata_and_new_adrs_use_standard_shape(self) -> None:
+    def test_legacy_adr_baseline_is_explicit_and_unchanged(self) -> None:
+        decisions = DOCS / "decisions"
+        adrs = sorted(decisions.glob("[0-9][0-9][0-9][0-9]-*.md"))
+        baseline = load_adr_legacy_baseline()
+        self.assertTrue(baseline)
+
+        nonconforming = {
+            adr.name
+            for adr in adrs
+            if not has_strict_adr_shape(adr.read_text(encoding="utf-8"))
+        }
+        self.assertEqual(set(baseline), nonconforming)
+
+        for filename, expected_digest in sorted(baseline.items()):
+            path = decisions / filename
+            with self.subTest(adr=filename):
+                self.assertEqual(path.name, filename)
+                self.assertRegex(expected_digest, r"^[0-9a-f]{64}$")
+                self.assertTrue(path.is_file(), f"missing baseline ADR: {filename}")
+                actual_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                self.assertEqual(actual_digest, expected_digest)
+                self.assertFalse(
+                    has_strict_adr_shape(path.read_text(encoding="utf-8")),
+                    "conforming ADR cannot inherit a legacy exemption",
+                )
+
+    def test_conforming_existing_and_new_adrs_use_standard_shape(self) -> None:
         decisions = DOCS / "decisions"
         adrs = sorted(decisions.glob("[0-9][0-9][0-9][0-9]-*.md"))
         self.assertGreaterEqual(len(adrs), 3)
-        strict_headings = (
-            "## Context and problem statement",
-            "## Considered options",
-            "## Decision outcome",
-            "## Consequences",
-        )
+        baseline = load_adr_legacy_baseline()
         for adr in adrs:
-            text = adr.read_text(encoding="utf-8")
-            number = int(adr.name[:4])
             with self.subTest(adr=adr):
+                if adr.name in baseline:
+                    continue
+                text = adr.read_text(encoding="utf-8")
                 self.assertTrue(text.startswith("---\n"), "ADR needs YAML metadata")
-                self.assertIn("## Consequences", text)
-                if number >= STRICT_ADR_SHAPE_FROM:
-                    for heading in strict_headings:
-                        self.assertIn(heading, text)
+                for heading in STRICT_ADR_HEADINGS:
+                    self.assertIn(heading, text)
 
     def test_agent_map_stays_small_and_points_to_current_memory(self) -> None:
         text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")

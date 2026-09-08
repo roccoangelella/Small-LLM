@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
-KAGGLE = ROOT / "kaggle"
+KAGGLE = ROOT / "kaggle" / "src"
 if str(KAGGLE) not in sys.path:
     sys.path.insert(0, str(KAGGLE))
 

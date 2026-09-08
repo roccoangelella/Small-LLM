@@ -245,7 +245,11 @@ class RemoteCheckpointTest(unittest.TestCase):
                 schema_hash="schema",
             )
             pipeline = remote_coordinator.load("one", restored)
-            self.assertEqual(restored.state, trainer.state)
+            self.assertEqual(
+                {key: restored.state[key] for key in trainer.state},
+                trainer.state,
+            )
+            self.assertIn("python_rng_state", restored.state)
             self.assertEqual(pipeline["last_consumed_block_id"], -1)
             self.assertTrue((second / "cache" / "train" / "train-000000.bin").exists())
 

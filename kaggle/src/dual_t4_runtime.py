@@ -11,8 +11,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Sequence
 
-REPO = Path(__file__).resolve().parents[1]
-DDP_ENTRYPOINT = REPO / "kaggle" / "dual_t4_train.py"
+REPO = Path(__file__).resolve().parents[2]
+DDP_ENTRYPOINT = Path(__file__).resolve().with_name("dual_t4_train.py")
 WORLD_SIZE = 2
 TORCH_VERSION = "2.10.0"
 TRITON_VERSION = "3.6.0"
