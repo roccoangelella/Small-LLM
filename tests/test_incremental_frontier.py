@@ -10,8 +10,10 @@ import unittest
 from pathlib import Path
 
 from dataset.incremental_frontier import (
+    FrontierShard,
     RUN_CONTRACT_FILENAME,
     SHARD_FRONTIER_FILENAME,
+    _download_verified,
     build_consumer_manifest,
     build_run_contract,
     publish_frontier,
@@ -129,6 +131,33 @@ def _ready_store() -> tuple[FakeStore, dict[str, object], list[dict[str, object]
 
 
 class IncrementalFrontierTests(unittest.TestCase):
+    def test_download_rejects_unsafe_filename_before_deletion(self) -> None:
+        store = FakeStore()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cache"
+            root.mkdir()
+            outside = Path(tmp) / "outside.bin"
+            outside.write_bytes(b"sentinel")
+            shard = FrontierShard(
+                "../outside.bin",
+                "train",
+                1,
+                hashlib.sha256(b"x").hexdigest(),
+                0,
+                0,
+                1,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "unsafe local path"):
+                _download_verified(
+                    store,
+                    run_id="dataset-001",
+                    root=root,
+                    shard=shard,
+                )
+
+            self.assertTrue(outside.exists())
+
     def test_exact_10b_contract_and_standard_wsd_are_known_before_gpu(self) -> None:
         contract = build_run_contract(
             run_id="modal-10b-b64-dataset-001",

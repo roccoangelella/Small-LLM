@@ -3,7 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
+
+
+def _steps(value: str) -> tuple[int, ...]:
+    try:
+        result = tuple(sorted({int(item) for item in value.split(",")}))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("expected comma-separated update numbers") from error
+    if not result or result[0] < 0:
+        raise argparse.ArgumentTypeError("update numbers must be non-negative")
+    return result
 
 
 def parser() -> argparse.ArgumentParser:
@@ -115,6 +126,17 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
+    p.add_argument("--checkpoint-at-steps", type=_steps, default=(),
+                   help="Additional absolute successful-update numbers, including zero.")
+    p.add_argument("--experiment-dir", type=Path,
+                   help="Optional local manifest, JSONL events and fixed-probe artifacts.")
+    p.add_argument("--profile-at-steps", type=_steps, default=(),
+                   help="Profile one complete update at each absolute number; separate from clean timing.")
+    p.add_argument("--probe-sequences", type=int, default=0,
+                   help="Freeze the first N validation sequences; zero disables the probe.")
+    p.add_argument("--probe-lm-logits", action="store_true",
+                   help="Also retain full FP16 LM logits; router logits and FP32 CE are sufficient by default.")
+    p.add_argument("--source-commit", help="Source commit supplied by a provider image launcher.")
     p.add_argument(
         "--remote-publish-every-steps",
         type=int,
@@ -227,12 +249,24 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    args = parser().parse_args(argv)
+def parse_args(
+    argv: list[str] | None = None, *, argument_parser: argparse.ArgumentParser | None = None,
+) -> argparse.Namespace:
+    args = (argument_parser or parser()).parse_args(argv)
     if args.steps <= 0:
         raise SystemExit("--steps must be positive")
     if args.validation_blocks < 0:
         raise SystemExit("--validation-blocks cannot be negative")
+    if args.probe_sequences < 0:
+        raise SystemExit("--probe-sequences cannot be negative")
+    if (args.profile_at_steps or args.probe_sequences) and args.experiment_dir is None:
+        raise SystemExit("profiling and probes require --experiment-dir")
+    if 0 in args.profile_at_steps:
+        raise SystemExit("profile update numbers must be positive")
+    if args.probe_lm_logits and not args.probe_sequences:
+        raise SystemExit("--probe-lm-logits requires --probe-sequences")
+    if args.source_commit and re.fullmatch(r"[0-9a-f]{40}", args.source_commit) is None:
+        raise SystemExit("--source-commit must be a full Git SHA")
     if args.dataset_shard_prefetch < 1:
         raise SystemExit("--dataset-shard-prefetch must be at least one")
     if bool(args.dataset_shard_bucket) != bool(args.dataset_shard_run_id):

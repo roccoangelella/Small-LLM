@@ -59,15 +59,23 @@ def load_moe_model(
     if not isinstance(model_state, Mapping):
         raise RuntimeError("trainer_state.pkl has no model state mapping")
 
+    saved_raw_config = state.get("model_config")
+    saved_config: MoEModelConfig | None = None
+    if saved_raw_config is not None:
+        if not isinstance(saved_raw_config, Mapping):
+            raise RuntimeError("MoE checkpoint model_config is not a mapping")
+        saved_config = normalize_moe_model_config(saved_raw_config)
+
     if model_config_json is not None:
         raw_config = _read_json_mapping(model_config_json)
     else:
-        raw = state.get("model_config")
-        if not isinstance(raw, Mapping):
+        if saved_config is None:
             raise RuntimeError("MoE checkpoint has no self-describing model_config")
-        raw_config = dict(raw)
+        raw_config = saved_config.as_dict()
 
     config = normalize_moe_model_config(raw_config)
+    if saved_config is not None and config.as_dict() != saved_config.as_dict():
+        raise RuntimeError("supplied MoE model config does not match checkpoint model_config")
     model = MoESmallLLM(config)
     model.load_state_dict(model_state, strict=True)
     model.to(device)

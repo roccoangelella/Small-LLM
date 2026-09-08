@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol
 
-from dataset.src.remote import ensure_safe_directory, sha256_path
+from dataset.src.remote import ensure_safe_directory, safe_download_target, sha256_path
 from dataset.src.storage import write_json_atomic
+from dataset.src.remote import _safe_relative_path as safe_path
 
 RUN_CONTRACT_FILENAME = "run_contract.json"
 SHARD_FRONTIER_FILENAME = "shard_frontier.json"
@@ -192,6 +193,10 @@ def _require_shard(row: Mapping[str, object]) -> FrontierShard:
     sequences = row.get("sequence_count")
     if not isinstance(filename, str) or not filename:
         raise RuntimeError("frontier shard has an invalid filename")
+    try:
+        safe_path(filename)
+    except (RuntimeError, ValueError) as error:
+        raise RuntimeError(f"frontier shard has an unsafe filename: {filename}") from error
     if split not in {"train", "validation"}:
         raise RuntimeError(f"frontier shard has an invalid split: {filename}")
     if isinstance(byte_size, bool) or not isinstance(byte_size, int) or byte_size <= 0:
@@ -443,7 +448,10 @@ def write_consumer_snapshot(
 
 
 def _file_matches(root: Path, shard: FrontierShard) -> bool:
-    path = root / shard.filename
+    try:
+        path = safe_download_target(root, safe_path(shard.filename))
+    except (RuntimeError, ValueError) as error:
+        raise RuntimeError(f"frontier shard has an unsafe local path: {shard.filename}") from error
     if path.is_symlink() or not path.is_file():
         return False
     try:
@@ -460,7 +468,10 @@ def _download_verified(
     root: Path,
     shard: FrontierShard,
 ) -> Path:
-    destination = root / shard.filename
+    try:
+        destination = safe_download_target(root, safe_path(shard.filename))
+    except (RuntimeError, ValueError) as error:
+        raise RuntimeError(f"frontier shard has an unsafe local path: {shard.filename}") from error
     if _file_matches(root, shard):
         return destination
     if destination.exists() or destination.is_symlink():
@@ -631,7 +642,10 @@ class IncrementalRollingShardCache:
         shard = self.shard_for_block(block_id)
         if block_id != shard.last_block_id:
             return
-        path = self.root / shard.filename
+        try:
+            path = safe_download_target(self.root, safe_path(shard.filename))
+        except (RuntimeError, ValueError) as error:
+            raise RuntimeError(f"incremental cache has an unsafe shard path: {shard.filename}") from error
         if path.is_file() and not path.is_symlink():
             path.unlink()
         next_block = block_id + 1

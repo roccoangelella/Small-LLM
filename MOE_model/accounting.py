@@ -32,9 +32,9 @@ def count_moe_parameters(model: nn.Module, *, num_experts: int) -> MoEParameterC
         seen.add(identity)
         count = parameter.numel()
         total += count
-        if ".ffn.router." in name:
+        if name.startswith("ffn.router.") or ".ffn.router." in name:
             router += count
-        elif ".ffn.experts." in name:
+        elif name.startswith("ffn.experts.") or ".ffn.experts." in name:
             experts += count
     if experts % num_experts:
         raise RuntimeError("stored expert parameter count is not divisible by expert count")

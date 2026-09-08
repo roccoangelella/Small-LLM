@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import math
 from typing import Literal
 
 from model.config import ModelConfig
@@ -10,7 +11,7 @@ from model.config import ModelConfig
 RouterScoring = Literal["softmax"]
 RouterCombine = Literal["selected_softmax_probability"]
 DispatchKind = Literal["dropless_grouped_by_expert"]
-BalancingKind = Literal["none"]
+BalancingKind = Literal["none", "loss_free_sign"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,13 +32,23 @@ class MoEModelConfig:
     router_jitter: float = 0.0
     router_z_loss_coefficient: float = 1e-4
     load_balancing: BalancingKind = "none"
+    balancing_step_size: float = 0.0
     dispatch: DispatchKind = "dropless_grouped_by_expert"
     capacity_factor: None = None
     dropped_tokens_allowed: bool = False
     shared_expert: bool = False
-    version: int = 1
+    version: int = 2
 
     def __post_init__(self) -> None:
+        if self.version != 2:
+            raise ValueError("unsupported MoE configuration version; expected 2")
+        if (
+            self.router_scoring != "softmax"
+            or self.router_combine != "selected_softmax_probability"
+            or self.dispatch != "dropless_grouped_by_expert"
+            or self.expert_type != "swiglu_dense_copy"
+        ):
+            raise ValueError("unsupported MoE scoring, combine, dispatch or expert type")
         if self.num_experts != 8:
             raise ValueError("first MoE experiment is frozen to 8 experts")
         if self.top_k != 1:
@@ -52,15 +63,19 @@ class MoEModelConfig:
             raise ValueError("first MoE router must compute logits/probabilities in FP32")
         if self.router_jitter != 0.0:
             raise ValueError("first MoE experiment forbids routing jitter")
-        if self.load_balancing != "none":
-            raise ValueError("first MoE experiment intentionally has no load-balancing mechanism")
+        if self.load_balancing not in {"none", "loss_free_sign"}:
+            raise ValueError("unsupported load-balancing controller")
+        if not math.isfinite(self.balancing_step_size) or self.balancing_step_size < 0:
+            raise ValueError("balancing_step_size must be finite and non-negative")
+        if self.load_balancing == "none" and self.balancing_step_size != 0:
+            raise ValueError("M0 requires balancing_step_size=0")
         if self.capacity_factor is not None or self.dropped_tokens_allowed:
             raise ValueError("first MoE experiment is strictly dropless")
         if self.shared_expert:
             raise ValueError("first MoE experiment has no shared expert")
-        if self.router_init_std <= 0:
+        if not math.isfinite(self.router_init_std) or self.router_init_std <= 0:
             raise ValueError("router_init_std must be positive")
-        if self.router_z_loss_coefficient <= 0:
+        if not math.isfinite(self.router_z_loss_coefficient) or self.router_z_loss_coefficient <= 0:
             raise ValueError("router_z_loss_coefficient must be positive")
 
     @classmethod

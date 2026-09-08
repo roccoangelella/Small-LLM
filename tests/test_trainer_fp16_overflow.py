@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -25,6 +26,7 @@ class _SimulatedGradScaler:
         self._scale = float(scale)
         self._remaining = int(overflow_attempts)
         self._pending_overflow = False
+        self.step_calls = 0
 
     def is_enabled(self) -> bool:
         return True
@@ -42,6 +44,7 @@ class _SimulatedGradScaler:
         del optimizer
 
     def step(self, optimizer: torch.optim.Optimizer) -> None:
+        self.step_calls += 1
         self._pending_overflow = self._remaining > 0
         if self._pending_overflow:
             self._remaining -= 1
@@ -62,6 +65,9 @@ class _Scheduler:
     def prepare_step(self, next_tokens: int) -> float:
         self.prepared_tokens = next_tokens
         return 3e-4
+
+    def cancel_step(self) -> None:
+        self.prepared_tokens = self.committed_tokens
 
     def commit(self, tokens: int) -> None:
         self.committed_tokens = tokens
@@ -108,6 +114,39 @@ class FP16OverflowCalibrationTests(unittest.TestCase):
                 for parameter, original in zip(model.parameters(), before, strict=True)
             )
         )
+
+    def test_nonfinite_global_norm_skips_optimizer_mutation_before_retry(self):
+        torch.manual_seed(2)
+        model = TinyLM()
+        optimizer = torch.optim.SGD(model.parameters(), lr=3e-4)
+        engine = SimpleNamespace(
+            device=torch.device("cpu"),
+            config=TrainerConfig(
+                precision="fp32",
+                microbatch_size=1,
+                weight_decay=0.0,
+                max_overflow_retries=1,
+            ),
+            model=model,
+            optimizer=optimizer,
+            scheduler=_Scheduler(),
+            scaler=_SimulatedGradScaler(scale=2048.0, overflow_attempts=0),
+            consumed_tokens=0,
+            global_step=0,
+            overflow_events=0,
+        )
+
+        with patch(
+            "trainer.step.torch.nn.utils.clip_grad_norm_",
+            side_effect=[torch.tensor(float("inf")), torch.tensor(1.0)],
+        ):
+            metrics = train_step(engine, batch(0))
+
+        self.assertEqual(engine.scaler.step_calls, 1)
+        self.assertEqual(metrics.overflow_retries, 1)
+        self.assertEqual(metrics.overflow_events_total, 1)
+        self.assertEqual(metrics.grad_scaler_scale, 1024.0)
+        self.assertEqual(metrics.step, 1)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from contextlib import nullcontext
 import time
 from typing import Mapping
 
@@ -13,6 +14,11 @@ from torch.optim import Optimizer
 from .metrics import StepMetrics
 from .precision import autocast_context
 from .types import IGNORE_INDEX, TokenBatch
+
+
+def _profile_region(engine: object, name: str):
+    return (torch.profiler.record_function(name)
+            if getattr(engine, "_profile_regions", False) else nullcontext())
 
 
 def _optimizer_gradient_norms(optimizer: Optimizer) -> dict[str, float]:
@@ -67,6 +73,31 @@ def _fp16_overflow_retry_limit(scaler: object, configured_retries: int) -> int:
         return configured_retries
     reductions_to_one = math.ceil(math.log(1.0 / initial_scale) / math.log(backoff))
     return max(configured_retries, reductions_to_one)
+
+
+def _backoff_scaler_after_nonfinite_gradient(scaler: object) -> float:
+    """Back off a scaler without invoking an optimizer step.
+
+    ``GradScaler`` only records inf/nan checks made by ``unscale_``. A finite
+    gradient tensor can still overflow the global norm reduction, so calling
+    ``scaler.step`` after ``clip_grad_norm_`` reports a non-finite norm may
+    mutate optimizer state. Set the next scale explicitly and clear the
+    scaler's per-optimizer bookkeeping through ``update`` instead.
+    """
+
+    get_scale = getattr(scaler, "get_scale", None)
+    get_backoff = getattr(scaler, "get_backoff_factor", None)
+    update = getattr(scaler, "update", None)
+    if not callable(get_scale) or not callable(get_backoff) or not callable(update):
+        raise RuntimeError("enabled gradient scaler cannot back off a non-finite gradient norm")
+    scale = float(get_scale())
+    backoff = float(get_backoff())
+    if not math.isfinite(scale) or scale <= 0:
+        raise FloatingPointError(f"invalid FP16 loss scale: {scale!r}")
+    if not math.isfinite(backoff) or not 0.0 < backoff < 1.0:
+        raise FloatingPointError(f"invalid FP16 scale backoff factor: {backoff!r}")
+    update(new_scale=scale * backoff)
+    return float(get_scale())
 
 
 def _ordered_batch_tensors(batch: TokenBatch) -> tuple[torch.Tensor, torch.Tensor]:
@@ -142,7 +173,7 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
                 stop=stop,
                 device=engine.device,
             )
-            with autocast_context(engine.config.precision, engine.device):
+            with _profile_region(engine, "forward_ce"), autocast_context(engine.config.precision, engine.device):
                 logits = engine.model(microbatch_inputs)
                 if logits.ndim != 3 or logits.shape[:2] != microbatch_labels.shape:
                     raise RuntimeError("model logits do not match training labels")
@@ -152,28 +183,48 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
                     reduction="sum",
                 )
             if not torch.isfinite(loss_sum):
+                engine.scheduler.cancel_step()
                 engine.optimizer.zero_grad(set_to_none=True)
                 raise FloatingPointError(
                     "non-finite FP16 training loss; loss-scale reduction cannot "
                     f"repair a forward loss (block={batch.block_id})"
                 )
             total_loss += loss_sum.detach().float()
-            engine.scaler.scale(loss_sum / batch.target_token_count).backward()
+            with _profile_region(engine, "backward"):
+                engine.scaler.scale(loss_sum / batch.target_token_count).backward()
 
         engine.scaler.unscale_(engine.optimizer)
         role_gradient_norms = _optimizer_gradient_norms(engine.optimizer)
         gradient_norm = torch.nn.utils.clip_grad_norm_(engine.model.parameters(), engine.config.max_grad_norm)
         finite_gradient = bool(torch.isfinite(gradient_norm))
+        if not finite_gradient:
+            engine.scheduler.cancel_step()
         if not finite_gradient and not engine.scaler.is_enabled():
             raise FloatingPointError("non-finite gradient norm")
         grad_value = float(gradient_norm.detach())
         gradient_clipped = finite_gradient and grad_value > float(engine.config.max_grad_norm)
         scale_before = float(engine.scaler.get_scale())
+        if not finite_gradient:
+            _clear_optimizer_step_statistics(engine.optimizer)
+            scaler_scale = _backoff_scaler_after_nonfinite_gradient(engine.scaler)
+            retries, engine.overflow_events = retries + 1, engine.overflow_events + 1
+            engine.optimizer.zero_grad(set_to_none=True)
+            if retries > overflow_retry_limit:
+                raise FloatingPointError(
+                    "FP16 optimizer step remained non-finite after dynamic scale "
+                    f"calibration; block remains unacknowledged "
+                    f"(block={batch.block_id}, attempts={retries}, "
+                    f"initial_scale={initial_scaler_scale:g}, "
+                    f"current_scale={scaler_scale:g}, retry_limit={overflow_retry_limit})"
+                )
+            continue
         _clear_optimizer_step_statistics(engine.optimizer)
-        engine.scaler.step(engine.optimizer)
-        engine.scaler.update()
+        with _profile_region(engine, "optimizer"):
+            engine.scaler.step(engine.optimizer)
+            engine.scaler.update()
         scaler_scale = float(engine.scaler.get_scale())
         if engine.scaler.is_enabled() and (not finite_gradient or scaler_scale < scale_before):
+            engine.scheduler.cancel_step()
             retries, engine.overflow_events = retries + 1, engine.overflow_events + 1
             if retries > overflow_retry_limit:
                 engine.optimizer.zero_grad(set_to_none=True)
@@ -220,4 +271,9 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     )
 
 
-__all__ = ["_microbatch_to_device", "_ordered_batch_tensors", "train_step"]
+__all__ = [
+    "_backoff_scaler_after_nonfinite_gradient",
+    "_microbatch_to_device",
+    "_ordered_batch_tensors",
+    "train_step",
+]
