@@ -1,6 +1,6 @@
 # Bounded MoE pilot
 
-Protocol: [ADR 0157](../decisions/0157-moe-paired-pilot-controller-and-observation.md).
+Protocol: [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md).
 The local code is prepared for D100/M0/M1 on the existing Beam RTX4090 and Modal H100 resources. Cloud execution remains unqualified until the exact image passes CUDA/FLA and volume-resume checks. A command below is not authorization to spend or publish.
 
 ## Local verification

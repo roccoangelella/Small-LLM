@@ -133,4 +133,4 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md`](0052-evaluate-modal-rolling-checkpoints-directly-from-hf-bucket.md) — superseded by ADR 0055.
 
 Historical omnibus registers live under [`../archive/decision_registers/`](../archive/decision_registers/decisions_and_ablations.md).
-- [0157 — Paired MoE controller and observation](0157-moe-paired-pilot-controller-and-observation.md) (this MoE branch).
+- [0168 — Paired MoE controller and observation](0168-moe-paired-pilot-controller-and-observation.md) (this MoE branch).

@@ -4,7 +4,7 @@ date: 2026-09-08
 supersedes: null
 ---
 
-# 0157 — Paired MoE pilot with a committed selection controller
+# 0168 — Paired MoE pilot with a committed selection controller
 
 ## Context and problem statement
 

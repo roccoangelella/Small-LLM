@@ -76,4 +76,4 @@ current status -> accepted ADR -> current reference/runbook -> evidence -> resea
 
 The governance rationale is recorded in ADR 0031 and the project-memory research under `research/`.
 
-MoE branch pilot: [ADR0157](decisions/0157-moe-paired-pilot-controller-and-observation.md) and [runbook](runbooks/moe-paired-pilot.md).
+MoE branch pilot: [ADR 0168](decisions/0168-moe-paired-pilot-controller-and-observation.md) and [runbook](runbooks/moe-paired-pilot.md).
