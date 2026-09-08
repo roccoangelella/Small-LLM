@@ -39,6 +39,7 @@ class TokenPreset:
 MODEL_PRESETS: dict[int, ModelPreset] = {
     20_000_000: ModelPreset(20_000_000, "20M", "smoke"),
     100_000_000: ModelPreset(100_000_000, "100M", "substantive"),
+    200_000_000: ModelPreset(200_000_000, "200M", "expanded"),
 }
 TOKEN_PRESETS: dict[int, TokenPreset] = {
     100_000_000: TokenPreset(100_000_000, "100M", "20m-100m"),
@@ -69,7 +70,7 @@ def parse_quantity(value: str) -> int:
     compact = value.strip().replace("_", "").replace(",", "").replace(" ", "")
     match = _QUANTITY.fullmatch(compact)
     if match is None:
-        raise ValueError(f"invalid size {value!r}; use forms such as 20M, 100M, 10B, or 100B")
+        raise ValueError(f"invalid size {value!r}; use forms such as 20M, 100M, 200M, 10B, or 100B")
     try:
         amount = Decimal(match.group(1)) * _MULTIPLIERS[match.group(2).upper()]
     except InvalidOperation as error:
@@ -98,6 +99,10 @@ def resolve_presets(model: str, tokens: str) -> tuple[ModelPreset, TokenPreset]:
     except KeyError as error:
         supported = ", ".join(p.label for p in TOKEN_PRESETS.values())
         raise ValueError(f"unsupported token budget {_format_quantity(token_value)}; supported: {supported}") from error
+    if model_preset.label == "200M" and token_preset.label != "100B":
+        raise ValueError("the 200M production preset is frozen to the 100B trajectory")
+    if token_preset.label == "100B" and model_preset.label != "200M":
+        raise ValueError("the active 100B production trajectory is frozen to the 200M model")
     return model_preset, token_preset
 
 
