@@ -141,3 +141,5 @@ The current optimization intentionally does not use `torch.nn.DataParallel`; dua
 `lm-evaluation-harness==0.4.12` is pinned in `requirements-eval.txt` rather
 than the training lock. Evaluation tooling must not perturb the training
 environment.
+
+Cache integration (2026-09-08): ADR0169 now wires reviewed Triton seed restore/harvest into both pilot wrappers. Local lifecycle tests cover failure and publication paths; GPU cache-hit/durability/savings checks are pending the next authorized useful run. No dedicated cache build or new GPU run was launched.

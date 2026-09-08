@@ -134,3 +134,4 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 
 Historical omnibus registers live under [`../archive/decision_registers/`](../archive/decision_registers/decisions_and_ablations.md).
 - [0168 — Paired MoE controller and observation](0168-moe-paired-pilot-controller-and-observation.md) (this MoE branch).
+- [0169 — Seed the Triton cache per provider lane](0169-seed-the-triton-cache-per-provider-lane.md) (this MoE branch).

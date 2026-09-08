@@ -92,6 +92,7 @@ def train_pilot_rtx4090(
 
     return _pilot.run_provider_payload(
         payload, provider="beam", run_root=RUN_ROOT, volume_commit=_base.NOOP_VOLUME.commit,
+        cache_root=CACHE_ROOT, cache_commit=_base.NOOP_VOLUME.commit,
     )
 
 

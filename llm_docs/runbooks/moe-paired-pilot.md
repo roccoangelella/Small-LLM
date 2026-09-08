@@ -49,9 +49,13 @@ D100 uses `--arm D --steps 100`, no gamma, on the same lane settings. It measure
 
 A retry reuses the same command/namespace. The runner verifies the latest complete joint checkpoint and computes only the remaining successful updates. A partial/corrupt latest checkpoint cannot become a completed result. There is no W&B/HF publication in this pilot. Modal commits the immutable checkpoint tree at its event and commits remaining artifacts at finalization; Beam uses its durable volumes. The stdout callback does not pause the child while committing. Preserve the selected checkpoint directories; no latest-only cleanup.
 
-## Triton cache seed — pending integration
+## Triton cache seed (ADR 0169)
 
-This branch does not implement automatic seed extraction or harvesting. That work is separate on `edo/triton-seed` (ADR 0169 there); do not rely on its environment flags or artifact paths here. Rocco's existing Kaggle seed is documented in ADR 0102 and is specific to its pinned runtime and geometry. No additional GPU cache-building run is part of the current qualification.
+Modal and Beam now restore a compatible cache from the existing cache volume before the training child starts, then harvest a missing/rejected seed after a successful child. Compilation stays on local disk. Cache failures are recorded and do not fail completed training; `SMALL_LLM_TRITON_SEED_DISABLE=1` opts out. `SMALL_LLM_TRITON_SEED_STRICT=1` requires a valid seed and device contract, but **does not prove that every kernel was a cache hit**.
+
+`experiment/triton_seed.json` records the latest attempt; `logs/attempt-*.triton-seed.json` preserves each attempt, including restore and harvest/commit seconds, bytes and errors. The content-addressed archive is published before its atomic manifest pointer, so no shared filesystem lock is required between containers. Unreferenced generations can remain after interrupted publication; do not delete live archives during a run.
+
+Use the first already-authorized run at the **actual model/precision/microbatch** to harvest; do not launch an extra dense run to seed MoE. On a subsequent necessary fresh container, inspect restored status, remaining compilation and first-update versus steady timing. Compare net time saved after restore and harvest/commit costs. Local archive/lifecycle tests pass; actual CUDA cache reuse, numerical behavior and provider persistence still need this GPU check. No GPU run is authorized by this runbook.
 
 ## Intrinsic evaluation and probe analysis
 

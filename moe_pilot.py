@@ -364,9 +364,38 @@ def _result(spec: PilotSpec, runtime: float) -> dict[str, object]:
             "actual_sdk_verified": False}
 
 
+
+def _triton_seed_module():
+    """Load trainer/triton_seed.py by path so the pilot parent never executes ``trainer.__init__``."""
+
+    import importlib.util
+
+    path = Path(__file__).resolve().parent / "trainer" / "triton_seed.py"
+    spec = importlib.util.spec_from_file_location("small_llm_triton_seed", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load Triton seed helper from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _triton_seed_contract(request: PilotRequest, seed_module) -> dict[str, object] | None:
+    """Execution contract for the cache seed (ADR 0169); mirrors the child command, never the pilot identity."""
+
+    return seed_module.live_contract(
+        model=PILOT_MODEL + ("-dense" if request.arm == "D" else "-moe8top1"),
+        architecture="gdn2_hybrid", precision=request.precision,
+        microbatch_size=request.microbatch_size, context_length=2048,
+        gdn_chunk_size=32 if request.precision in {"fp16", "bf16"} else 64,
+    )
+
+
+
 def run_pilot(request: PilotRequest, *, checkpoint_callback: Callable[[str, Path], None] | None = None,
               final_callback: Callable[[], None] | None = None,
-              popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen) -> dict[str, object]:
+              popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
+              triton_seed_root: Path | None = None,
+              cache_commit: Callable[[], None] | None = None) -> dict[str, object]:
     started = time.perf_counter()
     spec = prepare_pilot(request)
     latest = find_latest_complete_checkpoint(spec.checkpoint_dir)
@@ -387,6 +416,26 @@ def run_pilot(request: PilotRequest, *, checkpoint_callback: Callable[[str, Path
                         "SMALL_LLM_EXPERIMENT_RUN_ID": request.run_id,
                         "SMALL_LLM_EXPERIMENT_ARM": request.arm,
                         "SMALL_LLM_EXPERIMENT_NAMESPACE": str(spec.namespace)})
+            # Triton/FLA cache seed (ADR 0169): execution optimisation, outside the pilot identity.
+            seed_module = _triton_seed_module()
+            seed_started = time.perf_counter()
+            seed_contract = None
+            try:
+                seed_contract = _triton_seed_contract(request, seed_module)
+                seed_status = seed_module.prepare(contract=seed_contract, seed_root=triton_seed_root)
+            except Exception as error:
+                if os.environ.get(seed_module.STRICT_ENV, "").strip().lower() in {"1", "true", "yes"}:
+                    raise
+                seed_status = {"status": "disabled", "reason": str(error), "env": {}}
+            seed_status["prepare_seconds"] = time.perf_counter() - seed_started
+            env.update(seed_status.get("env", {}))
+            spec.experiment_dir.mkdir(parents=True, exist_ok=True)
+            write_json_atomic(spec.experiment_dir / "triton_seed.json",
+                              {"before": {k: v for k, v in seed_status.items() if k != "env"}, "contract": seed_contract})
+            write_json_atomic(log_path.with_suffix(".triton-seed.json"),
+                              {"before": {k: v for k, v in seed_status.items() if k != "env"}, "contract": seed_contract})
+            print(f"[triton-seed] {seed_status['status']}"
+                  + (f" ({seed_status['rejection']})" if seed_status.get("rejection") else ""), flush=True)
             process = popen_factory(command, cwd=str(Path(__file__).resolve().parent), env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             try:
@@ -411,6 +460,22 @@ def run_pilot(request: PilotRequest, *, checkpoint_callback: Callable[[str, Path
                 raise
             if code != 0:
                 raise RuntimeError(f"pilot child exited with status {code}")
+            if seed_contract is not None and triton_seed_root is not None and seed_status["status"] == "jit_fallback":
+                seed_started = time.perf_counter()
+                try:
+                    harvest = seed_module.harvest(contract=seed_contract, seed_root=triton_seed_root,
+                                                  overwrite=bool(seed_status.get("rejection")))
+                    if harvest["status"] == "published" and cache_commit is not None:
+                        cache_commit()
+                except Exception as error:
+                    # A replaceable cache must never turn completed training into a failed job.
+                    harvest = {"status": "error", "reason": str(error)}
+                harvest["harvest_and_commit_seconds"] = time.perf_counter() - seed_started
+                record = {"before": {k: v for k, v in seed_status.items() if k != "env"},
+                          "after": harvest, "contract": seed_contract}
+                write_json_atomic(spec.experiment_dir / "triton_seed.json", record)
+                write_json_atomic(log_path.with_suffix(".triton-seed.json"), record)
+                print(f"[triton-seed] {harvest['status']}", flush=True)
         result = _result(spec, accumulated + time.perf_counter() - started)
         if result["completed_steps"] < request.steps:
             raise RuntimeError(f"pilot child stopped before its absolute cap: {result['completed_steps']} < {request.steps}")
@@ -549,15 +614,22 @@ def prepare_provider_payload(
 
 def run_provider_payload(
     payload: Mapping[str, object], *, provider: str, run_root: Path,
-    volume_commit: Callable[[], None],
+    volume_commit: Callable[[], None], cache_root: Path | None = None,
+    cache_commit: Callable[[], None] | None = None,
 ) -> dict[str, object]:
-    """GPU-side provider boundary with checkpoint and final volume commits."""
+    """GPU-side provider boundary with checkpoint and final volume commits.
+
+    ``cache_root`` is the mounted cache volume; its ``triton/`` subtree holds the
+    kernel cache seeds (ADR 0169) and ``cache_commit`` persists a newly published one.
+    """
 
     request = request_from_payload(payload, provider=provider, run_root=run_root)
     return run_pilot(
         request,
         checkpoint_callback=lambda _checkpoint_id, _checkpoint_path: volume_commit(),
         final_callback=volume_commit,
+        triton_seed_root=None if cache_root is None else cache_root / "triton",
+        cache_commit=cache_commit,
     )
 
 
