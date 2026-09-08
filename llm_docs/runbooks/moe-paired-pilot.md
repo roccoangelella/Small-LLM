@@ -1,7 +1,7 @@
 # Bounded MoE pilot
 
 Protocol: [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md).
-The local code is prepared for D100/M0/M1 on the existing Beam RTX4090 and Modal H100 resources. Cloud execution remains unqualified until the exact image passes CUDA/FLA and volume-resume checks. A command below is not authorization to spend or publish.
+The local code is prepared for D100/M0/M1 on the existing Beam RTX4090 and Modal H100 resources. H100 full-shape single-update checks pass at microbatch8 in FP16/BF16; microbatch16 M0 exhausts memory in BF16. See the [qualification evidence](../evidence/2026-09-08-modal-moe-qualification.json). Full real-data resume and evaluation remain required. A command below is not authorization to spend or publish.
 
 The pilot and `--experiment-dir` observation are single-process only. Do not enable observation in the dual-T4/DDP entrypoints: rank ownership and shared artifact writes are not implemented for distributed observation.
 
@@ -39,15 +39,25 @@ python beam/moe_launch.py --arm M1 --gamma 0.001 --run-id moe-pilot-001 \
   --precision fp16 --microbatch-size 4 --source-commit "$PILOT_SOURCE_SHA"
 modal run modal/moe_launch.py --arm M0 --run-id moe-pilot-001 \
   --dataset-dir /data/modal-2b-b64-dataset-001 --steps 300 \
-  --precision fp16 --microbatch-size 16 --source-commit "$PILOT_SOURCE_SHA"
+  --precision fp16 --microbatch-size 8 --source-commit "$PILOT_SOURCE_SHA"
 modal run modal/moe_launch.py --arm M1 --gamma 0.001 --run-id moe-pilot-001 \
   --dataset-dir /data/modal-2b-b64-dataset-001 --steps 300 \
-  --precision fp16 --microbatch-size 16 --source-commit "$PILOT_SOURCE_SHA"
+  --precision fp16 --microbatch-size 8 --source-commit "$PILOT_SOURCE_SHA"
 ```
 
 D100 uses `--arm D --steps 100`, no gamma, on the same lane settings. It measures systems behavior; do not rerun a completed dense endpoint. Use exact mounted paths from the preflight, not these example paths without checking. `modal run` itself contacts Modal, including when its local entrypoint receives a dry-run option.
 
 A retry reuses the same command/namespace. The runner verifies the latest complete joint checkpoint and computes only the remaining successful updates. A partial/corrupt latest checkpoint cannot become a completed result. There is no W&B/HF publication in this pilot. Modal commits the immutable checkpoint tree at its event and commits remaining artifacts at finalization; Beam uses its durable volumes. The stdout callback does not pause the child while committing. Preserve the selected checkpoint directories; no latest-only cleanup.
+
+## Triton cache seed (ADR 0169)
+
+The first run per lane, precision and microbatch compiles and autotunes the FLA kernels inside its first update (about 3 minutes on H100,
+4–5 on the RTX 4090) and then publishes the cache as a seed under `<cache volume>/triton/<cache_id>/`. Every later cold container extracts it
+to `/tmp/small-llm-triton/<cache_id>` before the child starts; the pilot log line `[triton-seed]` reports `seeded`, `local_seed`,
+`jit_fallback` (with the rejection reason) or `disabled`, and `experiment/triton_seed.json` keeps it. To build the seed before the pilot,
+run `--arm D --steps 1` under a scratch run id on the lane; to qualify it, rerun in a fresh container with `SMALL_LLM_TRITON_SEED_STRICT=1`.
+To force a rebuild after a kernel-facing source change, delete the seed directory (the contract hash changes anyway, so a stale seed is
+simply ignored). `SMALL_LLM_TRITON_SEED_DISABLE=1` opts out. The seed never enters the pilot identity.
 
 ## Intrinsic evaluation and probe analysis
 
@@ -78,6 +88,6 @@ For M0/M1 probe comparisons at matched steps, omit checkpoint-delta options: dif
 
 ## Interpretation and closure
 
-The outer profiler region `session_step` includes data wait and acknowledgement; nested `forward_ce`, `backward`, and `optimizer` regions distinguish compute phases. The profile event reports capture plus export time. Keep clean update timing separate from profiled updates, validation, probe and checkpoint overhead. Compare hardware only at matched tokens/LR: H100 300 is still warmup, 4090 reaches 1000. Test observation-on/off from the same snapshot when estimating overhead. Retaining all planned MoE checkpoints across both lanes is about 93.2 GB in the fully allocated state scenario, before dense, profiles and metadata; use measured bytes for storage planning.
+The outer profiler region `session_step` includes data wait and acknowledgement; nested `forward_ce`, `backward`, and `optimizer` regions distinguish compute phases. The profile event reports capture plus export time. Keep clean update timing separate from profiled updates, validation, probe and checkpoint overhead. Compare hardware only at matched tokens/LR: H100 300 is still warmup, 4090 reaches 1000. Warm smoke BF16 checks from the same snapshot preserve model/optimizer/controller/RNG bitwise across observation off, telemetry and profiling. In two repeats, off takes0.47–0.57s, telemetry0.45–0.60s, and profile+export20.6–23.3s with approximately100MB traces. This is not full-shape overhead: keep profiles sparse and measure their complete cost separately. Retaining all planned MoE checkpoints across both lanes is about 93.2 GB in the fully allocated state scenario, before dense, profiles and metadata; use measured bytes for storage planning.
 
 Session summaries and runner runtime are diagnostic wall clocks, not bills. Runtime persistence includes handled failed attempts and result verification, but excludes final volume commit/provider startup and can miss abruptly terminated tails. Provider receipts must account for CPU/RAM, all attempts, storage and credit rules; useful-token cost divides total spend by unique durable targets. Function completion ends compute; retain volumes until artifacts are verified and their later cleanup is explicitly chosen.

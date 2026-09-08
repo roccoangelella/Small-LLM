@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-09-05
 
-MoE branch: the paired M0/M1 pilot is governed by [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md); no MoE GPU result is claimed yet.
+MoE branch: the paired M0/M1 pilot is governed by [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md); H100 single-update qualification passes for D/M0/M1 at microbatch8 in FP16/BF16; M0 microbatch16 fails with OOM in BF16. [Measured scope](../evidence/2026-09-08-modal-moe-qualification.json). Scientific pilot results remain unavailable.
 
 ## Repository and protocol state
 
