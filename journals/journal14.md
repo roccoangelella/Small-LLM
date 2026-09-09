@@ -41,17 +41,32 @@ Then, we also compute the average probability that the router assigns a token to
 $$P_i = \frac{1}{T} \sum p_i(x)$$
 We use them to compute:
 $$L_{\text{balance}} = \alpha \cdot N \sum f_i P_i$$ 
-This is called <u>Balance Loss</u>. Alpha il just a coefficient, commonly set at 10^-2.
+This is called <u>Balance Loss</u>. $\alpha$ is just a coefficient, commonly set at $10^{-2}$.
 
 
-This Balance Loss will be summed to the CE loss, and the reason is straightforward: we introduce a loss that is inversely proportional to the entropy of the router distribution: higher entropy (and therefore nearly equal probabilities of being routed in either of the i experts) leads to lower loss, while preferring an expert over the others lowers the entropy and triggers a higher loss, impressing this as an unwanted behavior in the router. (I speak in terms of entropy mainly as a mental model, entropy isn't mearued here).
+This Balance Loss will be summed to the CE loss, and the reason is straightforward: we introduce a loss that is inversely proportional to the entropy of the router distribution: higher entropy (and therefore nearly equal probabilities of being routed in either of the $i$ experts) leads to lower loss, while preferring an expert over the others lowers the entropy and triggers a higher loss, impressing this as an unwanted behavior in the router. (I speak in terms of entropy mainly as a mental model, entropy isn't mearued here).
 
 However, using this loss is equivalent to forcing the router to learn both which expert is the best one for each task and to use experts in a uniform way. This can generate conflict and harm the performances of the router, and therefore of the whole llm.
 
 ### Auxiliary-loss-free balancing:
-We introduce a non-learned bias that is inversely proportional to the expert's charge, defined as bi^t+1​=bi^t+γsign(cˉ−ci​). This bias is then added to each expert i during the Top-K selection phase T=TopK(s+b,K). This technique has been proved to yield a much better experts balancing then Auxiliary loss method.
+We introduce a non-learned bias that is inversely proportional to the expert's charge, defined as $b_i^{t+1} = b_i^t + \gamma \operatorname{sign}(\bar{c} - c_i)$. This bias is then added to each expert $i$ during the Top-$K$ selection phase $T = \operatorname{TopK}(s + b, K)$. This technique has been proved to yield a much better experts balancing then Auxiliary loss method.
 
 DeepSeek-V4 uses a mixture of these two techniques. It mostly relies on bias, but it also uses a tiny balance loss weight, having proved that it can help avoiding extreme imbalances.
 
 ### Quantile Balancing:
-Used by Kimi K3, running the top 16 out of 896 experts.
+Used by Kimi K3, running the top 16 out of 896 experts. For a batch of $m$ tokens, $mK$ routing decisions will take place. If we're willing to distribute them across 896 experts, we'd need $q = \frac{mK}{N}$ tokens per expert, which, for K3, means that each expert is selected to process roughly 1.786% of the $m$ tokens.
+Kimi K3 processes tokens in this way: 
+1. The router computes the Sigmoid scores for every expert, producing 896 scores for every token, applying the bias to the Top-$K$ ranking.
+2. Once the top 16 is selected, the Sigmoid scores get normalized (with no bias!!), willing to use them for the 16-items weighted average.
+3. Interestingly, Kimi saves also the Sigmoid+bias score of the $K+1$ expert as well, denoted $\alpha$, and called **cutoff**. It describes the threshold that an expert must overcome to get into the Top-$K$ for token $i$.
+4. Cutoff $\alpha$ is used to compute the *margin*, denoted $m_{i,j} = s_{i,j} - \alpha_i$, where $i \to \text{token}; j \to \text{expert}$. It frames how far each expert is from that token's cutoff. The expert $j$ is above token $i$'s cutoff when $s_{i,j} + b_j > \alpha_i$, which is equivalent to **$m_{i,j} > -b_j$**, which is the central equation here.
+5. At this point, the bias is basically the margin's threshold: we pick experts whose margin is greater than bias, therefore we can count the number of tokens assigned to expert $j$ as:
+$$
+\boxed{ \ell_j(b_j) = \sum_{i=1}^m \mathbf{1}[m_{i,j} > -b_j] }
+$$
+that we want to be equal to $q$, therefore the final goal is:
+$$
+\sum_{i=1}^m \mathbf{1}[m_{i,j} > -b_j] = \frac{mK}{N}
+$$
+
+To obtain this we run a simple optimization task that finds the optimal bias.
