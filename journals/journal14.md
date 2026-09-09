@@ -21,7 +21,7 @@ The output of a plain top-$k$ operation isn't differentiable, being a discrete o
 Softmax enforces the experts to be in a "free for all" competition. This means that the softmax routing process isn't an independent evaluation process. To overcome this dependency bias, sota LLMs have the router producing $N$ sigmoids, ranking according to the 0-1 score. Only after picking the top-$k$, the sigmoids output is normalized to produce a probability distribution.
 
 ### Softplus routing: 
-Deepseek-V4 doesn't use sigmoid routing but $\sqrt{\operatorname{softplus}(\cdot)}$. Softplus is a continuous approximation of the ReLU function. It follows that, by taking $\sqrt{\operatorname{softplus}(a)}$, we avoid being constrained in a 0-1 range (which is also the historical reason for ReLU taking over sigmoid, other than higher computational ease), and we're able to express activations that are much higher than 1 (despite in an increasing marginal way due to the sqrt).
+Deepseek-V4 doesn't use sigmoid routing but $\sqrt{\mathrm{softplus}(\cdot)}$. Softplus is a continuous approximation of the ReLU function. It follows that, by taking $\sqrt{\mathrm{softplus}(a)}$, we avoid being constrained in a 0-1 range (which is also the historical reason for ReLU taking over sigmoid, other than higher computational ease), and we're able to express activations that are much higher than 1 (despite in an increasing marginal way due to the sqrt).
 
 ***
 
@@ -37,7 +37,7 @@ This is a problem for mainly two reasons, one is more obvious and the other one 
 For every expert $i$ we define:
 
 ```math
-f_i = \frac{1}{T} \sum \mathbf{1}[\operatorname{argmax}(p(x)) = i]
+f_i = \frac{1}{T} \sum \mathbf{1}[\mathrm{argmax}(p(x)) = i]
 ```
 
 that simply defines, among the total number of tokens, the percentage of which had ben routed to expert $i$.
@@ -50,7 +50,7 @@ P_i = \frac{1}{T} \sum p_i(x)
 We use them to compute:
 
 ```math
-L_{\text{balance}} = \alpha \cdot N \sum f_i P_i
+L_{\mathrm{balance}} = \alpha \cdot N \sum f_i P_i
 ```
 
 This is called **Balance Loss**. $\alpha$ is just a coefficient, commonly set at $10^{-2}$.
@@ -64,10 +64,10 @@ However, using this loss is equivalent to forcing the router to learn both which
 We introduce a non-learned bias that is inversely proportional to the expert's charge, defined as:
 
 ```math
-b_i^{t+1} = b_i^t + \gamma \operatorname{sign}(\bar{c} - c_i)
+b_i^{t+1} = b_i^t + \gamma \mathrm{sign}(\bar{c} - c_i)
 ```
 
-This bias is then added to each expert $i$ during the Top-$K$ selection phase $T = \operatorname{TopK}(s + b, K)$. This technique has been proved to yield a much better experts balancing then Auxiliary loss method.
+This bias is then added to each expert $i$ during the Top-$K$ selection phase $T = \mathrm{TopK}(s + b, K)$. This technique has been proved to yield a much better experts balancing then Auxiliary loss method.
 
 DeepSeek-V4 uses a mixture of these two techniques. It mostly relies on bias, but it also uses a tiny balance loss weight, having proved that it can help avoiding extreme imbalances.
 
