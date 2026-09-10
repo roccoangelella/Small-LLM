@@ -1,11 +1,37 @@
 ---
 status: current
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-10
 ---
 
 # Current roadmap
 
 MoE branch: qualify and run the paired M0/M1 pilot per [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md), after explicit launch authorization. This is the MoE branch priority; the dense/SFT lifecycle below retains its earlier scope.
+
+## MoE branch: execution efficiency gates and open decisions (2026-09-10)
+
+Accepted on this branch: ADRs 0170–0172 (batched Muon, fused attention + chunked loss, sorted
+dispatch), CPU-equivalent, GPU-unmeasured. Before any many-expert 100B run (ADR 0168 on `main`):
+
+1. **GPU profile of the accepted E64/Top-2/h352/d256/L8/V8k geometry** with the largest fitting
+   microbatch, telemetry off, four clocks reported; compare launches/syncs per token against the
+   2026-09-08 baseline. Requires explicit launch authorization and a cost cap.
+2. **Batched expert GEMM** (pad sorted slices, one `bmm` per layer) after the profile shows the
+   expert loop dominating; then CUDA graphs on static shapes. FP8 last.
+3. **Router contract to settle with the `main` owner**: the 2026-09-10 `main` history records two
+   accepted contracts for the same experiment — sigmoid expert scores (commit `433039d`) and
+   `sqrt(softplus(z))` scores (commit `e0621b6`, later) — both with Top-K over `s + b`, Quantile
+   Balancing bias for selection only, unbiased normalized mixture weights, FP32 router on AdamW, no
+   z-loss. Both files were removed from the `main` tree by ADR 0172 (`main` numbering, "experiment
+   memory on dedicated branches") and are on no branch tip. With elementwise scores the router rows
+   of unselected experts receive no gradient from the LM loss; balance rests entirely on the bias.
+4. **Merge of `main` into this branch**: 81 files changed on `main` since the 2026-09-06 merge base,
+   9 touched on both sides (`dataset/incremental_cache.py`, `dataset/incremental_frontier.py`,
+   `trainer/cli_args.py`, `pyproject.toml`, `kaggle/src/launch.py`, `llm_docs/current/*`,
+   `llm_docs/decisions/README.md`, `tests/test_incremental_frontier.py`). `main` also carries the
+   offline test-health fix (51 files) and the shared rolling-dataset producer refactor.
+5. **Proposal, not adopted**: save checkpoints at log-spaced consumed-token counts (1, 2, 5, 10,
+   20, 50, 100 B) during the long run so later studies (knowledge-vs-tokens curves, expert
+   specialization, retrofit experiments) reuse one trajectory; cost is disk only.
 
 ## Current position
 

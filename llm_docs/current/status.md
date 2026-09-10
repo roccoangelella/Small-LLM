@@ -1,6 +1,8 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-10
+
+MoE branch execution efficiency (2026-09-10, local commits `b5e3ffb`, `8f195ee`, `fbe4ef2`, not pushed): ADR 0170 batches Muon Newton–Schulz by matrix shape, ADR 0171 fuses attention (SDPA) and scores the output loss in 4,096-token chunks with recompute, ADR 0172 sorts MoE dispatch with one host sync per layer. Equivalence to the previous implementations is proven on CPU (bit-identical for Muon and dispatch; FP32-rounding tolerance for attention and loss) by 18 new tests; the full suite (623 tests) shows no failing test id that was not already failing in the 2026-09-08 baseline log. Measured baseline motivating the work: [RTX 4090 profile](../evidence/moe_execution_profile_rtx4090_2026-09-08.md) — 11,073 targets/s, MFU ≈ 4 %, 521,704 launches and 5,120 `nonzero` syncs per update. No GPU measurement of the three changes exists yet; contracts and remaining priorities in [`training_execution_efficiency.md`](../reference/training_execution_efficiency.md).
 
 MoE branch: the paired M0/M1 pilot is governed by [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md); H100 single-update qualification passes for D/M0/M1 at microbatch8 in FP16/BF16; M0 microbatch16 fails with OOM in BF16. [Measured scope](../evidence/2026-09-08-modal-moe-qualification.json). Scientific pilot results remain unavailable.
 
