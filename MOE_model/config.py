@@ -14,10 +14,10 @@ from typing import Literal
 
 from model.config import ModelConfig
 
-RouterScoring = Literal["softmax"]
+RouterScoring = Literal["softmax", "sqrt_softplus"]
 RouterCombine = Literal["selected_softmax_probability", "normalised_topk_softmax"]
 DispatchKind = Literal["dropless_grouped_by_expert", "dropless_padded_batched_gemm"]
-BalancingKind = Literal["none", "loss_free_sign"]
+BalancingKind = Literal["none", "loss_free_sign", "quantile"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +48,7 @@ class MoEModelConfig:
     def __post_init__(self) -> None:
         if self.version not in {2, 3}:
             raise ValueError("unsupported MoE configuration version; expected 2 or 3")
-        if self.router_scoring != "softmax":
+        if self.router_scoring not in {"softmax", "sqrt_softplus"}:
             raise ValueError("unsupported MoE router scoring")
         if self.expert_type not in {"swiglu_dense_copy", "swiglu"}:
             raise ValueError("unsupported MoE expert type")
@@ -82,6 +82,18 @@ class MoEModelConfig:
                 raise ValueError(f"top_k={self.top_k} requires router_combine={expected_combine!r}")
             if self.expert_d_ff <= 0:
                 raise ValueError("expert_d_ff must be positive")
+            if self.router_scoring == "sqrt_softplus":
+                # Elementwise affinities carry no cross-expert normalisation of their own.
+                # At k = 1 the mixture weight would renormalise to exactly 1 and the router
+                # would receive no gradient from the language-model loss, so the contract
+                # that selected these scores also requires k >= 2.
+                if self.top_k < 2:
+                    raise ValueError("sqrt_softplus affinities require top_k >= 2")
+                if self.router_z_loss_coefficient != 0.0:
+                    raise ValueError(
+                        "the classical softmax z-loss does not apply to sqrt_softplus "
+                        "affinities; the accepted contract sets its coefficient to zero"
+                    )
         if self.expert_type == "swiglu_dense_copy" and self.expert_d_ff != self.dense.d_ff:
             raise ValueError("experts must be exact dense-FFN-width copies")
         if self.moe_layer_indices != tuple(range(self.dense.n_layers)):
@@ -96,7 +108,7 @@ class MoEModelConfig:
             raise ValueError("unsupported load-balancing controller")
         if not math.isfinite(self.balancing_step_size) or self.balancing_step_size < 0:
             raise ValueError("balancing_step_size must be finite and non-negative")
-        if self.load_balancing == "none" and self.balancing_step_size != 0:
+        if self.load_balancing != "loss_free_sign" and self.balancing_step_size != 0:
             raise ValueError("M0 requires balancing_step_size=0")
         if self.capacity_factor is not None or self.dropped_tokens_allowed:
             raise ValueError("first MoE experiment is strictly dropless")
@@ -104,8 +116,18 @@ class MoEModelConfig:
             raise ValueError("first MoE experiment has no shared expert")
         if not math.isfinite(self.router_init_std) or self.router_init_std <= 0:
             raise ValueError("router_init_std must be positive")
-        if not math.isfinite(self.router_z_loss_coefficient) or self.router_z_loss_coefficient <= 0:
-            raise ValueError("router_z_loss_coefficient must be positive")
+        if not math.isfinite(self.router_z_loss_coefficient) or self.router_z_loss_coefficient < 0:
+            raise ValueError("router_z_loss_coefficient must be finite and non-negative")
+        if self.version == 2 and self.router_z_loss_coefficient <= 0:
+            raise ValueError("version 2 requires a positive router z-loss coefficient")
+        if self.load_balancing == "quantile":
+            # Accepted by the owner's router ADR, but its estimator and update semantics
+            # are explicitly listed there as still to be specified. Fail closed rather
+            # than ship an invented controller.
+            raise ValueError(
+                "quantile balancing is accepted but not yet specified; see the router "
+                "contract decision before enabling it"
+            )
 
     @classmethod
     def substantive(cls, **dense_overrides: object) -> "MoEModelConfig":
@@ -117,13 +139,13 @@ class MoEModelConfig:
 
         Eight decoder layers in the frozen (gdn, gdn, gdn, mha) pattern give six GDN-2
         blocks and two gated-MHA blocks; width 256 with four 64-wide heads; SwiGLU experts
-        of width 352; an 8,000-entry tied vocabulary. Counting these parameters must give
-        144,025,496 stored and 9,938,840 active per token, which is the independent check
+        of width 352; an 8,192-entry tied vocabulary. Counting these parameters must give
+        144,074,648 stored and 9,987,992 active per token, which is the independent check
         against the architecture options document.
         """
 
         dense_fields = {
-            "semantic_vocab_size": 8_000, "padded_vocab_size": 8_000, "max_seq_len": 2_048,
+            "semantic_vocab_size": 8_192, "padded_vocab_size": 8_192, "max_seq_len": 2_048,
             # dense d_ff=704 is the reference the owner's granularity ADR matches
             # (K*h = 2*352 = 704); experts are decoupled from it via expert_type="swiglu".
             "d_model": 256, "n_layers": 8, "d_ff": 704, "n_heads": 4, "head_dim": 64,
@@ -139,6 +161,12 @@ class MoEModelConfig:
             "router_combine": "normalised_topk_softmax",
             "dispatch": "dropless_padded_batched_gemm",
             "moe_layer_indices": tuple(range(int(dense_fields["n_layers"]))),
+            # The owner's accepted router contract: sqrt-softplus affinities, no softmax
+            # z-loss, router init 0.02. Load balancing stays off until Quantile Balancing
+            # has a specified estimator.
+            "router_scoring": "sqrt_softplus",
+            "router_init_std": 0.02,
+            "router_z_loss_coefficient": 0.0,
             "version": 3,
         }
         moe_fields.update(

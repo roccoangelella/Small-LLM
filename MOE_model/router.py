@@ -39,11 +39,16 @@ class SwitchTopKRouter(nn.Module):
 
     def __init__(
         self, d_model: int, num_experts: int, *, init_std: float,
-        balancing_step_size: float = 0.0, top_k: int = 1,
+        balancing_step_size: float = 0.0, top_k: int = 1, scoring: str = "softmax",
     ) -> None:
         super().__init__()
         if d_model <= 0 or num_experts <= 1 or init_std <= 0:
             raise ValueError("invalid router geometry")
+        if scoring not in {"softmax", "sqrt_softplus"}:
+            raise ValueError("unsupported router scoring")
+        if scoring == "sqrt_softplus" and int(top_k) < 2:
+            raise ValueError("sqrt_softplus affinities require top_k >= 2")
+        self.scoring = scoring
         if not 1 <= int(top_k) <= int(num_experts):
             raise ValueError("top_k must be between 1 and num_experts")
         self.d_model = int(d_model)
@@ -85,18 +90,31 @@ class SwitchTopKRouter(nn.Module):
         device_type = x.device.type
         with torch.autocast(device_type=device_type, enabled=False):
             logits = F.linear(x.float(), self.projection.weight.float())
-            probabilities = torch.softmax(logits, dim=-1)
-            # The bias steers selection only; the returned weights stay unbiased.
-            expert_indices = (probabilities + self.selection_bias).topk(self.top_k, dim=-1).indices
-            selected = probabilities.gather(-1, expert_indices)
+            if self.scoring == "softmax":
+                # Version 2: probabilities normalised across experts; the classical
+                # softmax z-loss keeps the logits from drifting.
+                scores = torch.softmax(logits, dim=-1)
+                z_loss = torch.logsumexp(logits, dim=-1).square().mean()
+                distribution = scores
+            else:
+                # Accepted contract: elementwise affinity, no cross-expert normalisation
+                # before selection. There is no softmax partition function here, so the
+                # classical z-loss does not apply and is returned as an exact zero.
+                scores = torch.sqrt(F.softplus(logits))
+                z_loss = logits.new_zeros(())
+                distribution = scores / scores.sum(dim=-1, keepdim=True).clamp_min(
+                    torch.finfo(scores.dtype).tiny
+                )
+            # The balancing bias steers selection only; weights come from unbiased scores.
+            expert_indices = (scores + self.selection_bias).topk(self.top_k, dim=-1).indices
+            selected = scores.gather(-1, expert_indices)
             if self.top_k > 1:
                 selected = selected / selected.sum(dim=-1, keepdim=True).clamp_min(
                     torch.finfo(selected.dtype).tiny
                 )
-            log_z = torch.logsumexp(logits, dim=-1)
-            z_loss = log_z.square().mean()
-            entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1)
-            entropy_sum = entropy.sum()
+            entropy_sum = -(
+                distribution * distribution.clamp_min(1e-12).log()
+            ).sum(dim=-1).sum()
             expert_counts = torch.bincount(
                 expert_indices.reshape(-1), minlength=self.num_experts
             )

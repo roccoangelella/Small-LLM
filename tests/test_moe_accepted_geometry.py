@@ -60,9 +60,13 @@ class TestAcceptedConfiguration(unittest.TestCase):
         self.assertEqual(
             (config.dense.n_layers, config.dense.d_model, config.expert_d_ff), (8, 256, 352)
         )
-        self.assertEqual(config.semantic_vocab_size, 8_000)
+        self.assertEqual(config.semantic_vocab_size, 8_192)
         self.assertEqual(config.dense.layer_pattern.count("gdn"), 3)
         self.assertEqual(config.dispatch, "dropless_padded_batched_gemm")
+        # The owner's accepted router contract.
+        self.assertEqual(config.router_scoring, "sqrt_softplus")
+        self.assertEqual(config.router_z_loss_coefficient, 0.0)
+        self.assertEqual(config.router_init_std, 0.02)
 
     def test_version_two_stays_frozen_on_every_opened_axis(self) -> None:
         dense = MoEModelConfig.substantive().dense
@@ -91,9 +95,11 @@ class TestAcceptedParameterCounts(unittest.TestCase):
         config = MoEModelConfig.accepted()
         model = initialize_moe_model(MoESmallLLM(config), "normal")
         counts = count_moe_parameters(model, num_experts=64, top_k=2)
-        # Independent arithmetic from the 2026-09-09 architecture options document.
-        self.assertEqual(counts.total, 144_025_496)
-        self.assertEqual(counts.active_per_token, 9_938_840)
+        # The 2026-09-09 architecture document computed 144,025,496 / 9,938,840 at an
+        # 8,000-entry vocabulary; the owner fixed 8,192 on 2026-09-10, which adds
+        # 192 * 256 = 49,152 tied parameters to both totals.
+        self.assertEqual(counts.total, 144_025_496 + 192 * 256)
+        self.assertEqual(counts.active_per_token, 9_938_840 + 192 * 256)
         self.assertEqual(counts.experts_stored, 3 * 8 * 256 * 64 * 352)
         self.assertEqual(counts.router, 8 * 256 * 64)
 
@@ -141,6 +147,93 @@ class TestTopKRouter(unittest.TestCase):
             after.selected_probabilities.squeeze(-1), probabilities[:, 3], rtol=1e-6, atol=1e-6
         )
         self.assertEqual(before.token_count, after.token_count)
+
+
+class TestAcceptedRouterContract(unittest.TestCase):
+    """The router numerics the owner accepted on 2026-09-10."""
+
+    def _sqrt_softplus_config(self, **overrides):
+        import dataclasses
+
+        fields = {"router_scoring": "sqrt_softplus", "router_z_loss_coefficient": 0.0}
+        fields.update(overrides)
+        return dataclasses.replace(_tiny(num_experts=6, top_k=2), **fields)
+
+    def test_affinity_is_elementwise_sqrt_softplus_without_a_partition_function(self) -> None:
+        torch.manual_seed(21)
+        router = SwitchTopKRouter(16, 6, init_std=0.02, top_k=2, scoring="sqrt_softplus")
+        x = torch.randn(30, 16)
+        route = router(x)
+        logits = x.float() @ router.projection.weight.float().T
+        scores = torch.sqrt(F.softplus(logits))
+        torch.testing.assert_close(
+            route.expert_indices, scores.topk(2, dim=-1).indices, rtol=0, atol=0
+        )
+        expected = scores.gather(-1, route.expert_indices)
+        expected = expected / expected.sum(dim=-1, keepdim=True)
+        torch.testing.assert_close(route.selected_probabilities, expected, rtol=1e-6, atol=1e-7)
+        # No softmax partition function, so no classical z-loss.
+        self.assertEqual(float(route.z_loss), 0.0)
+        # Scores are not a distribution: they need not sum to one across experts.
+        self.assertFalse(bool(torch.allclose(scores.sum(dim=-1), torch.ones(30))))
+
+    def test_bias_steers_selection_while_weights_stay_unbiased(self) -> None:
+        torch.manual_seed(22)
+        router = SwitchTopKRouter(16, 5, init_std=0.02, top_k=2, scoring="sqrt_softplus")
+        x = torch.randn(20, 16)
+        with torch.no_grad():
+            router.selection_bias[4] += 50.0
+        route = router(x)
+        self.assertTrue(bool((route.expert_indices == 4).any(dim=-1).all()))
+        scores = torch.sqrt(F.softplus(x.float() @ router.projection.weight.float().T))
+        expected = scores.gather(-1, route.expert_indices)
+        expected = expected / expected.sum(dim=-1, keepdim=True)
+        torch.testing.assert_close(route.selected_probabilities, expected, rtol=1e-6, atol=1e-7)
+
+    def test_top1_is_refused_because_the_weight_would_carry_no_gradient(self) -> None:
+        with self.assertRaises(ValueError):
+            SwitchTopKRouter(16, 6, init_std=0.02, top_k=1, scoring="sqrt_softplus")
+        with self.assertRaises(ValueError):
+            self._sqrt_softplus_config(top_k=1)
+
+    def test_softmax_z_loss_is_refused_with_elementwise_affinities(self) -> None:
+        with self.assertRaises(ValueError):
+            self._sqrt_softplus_config(router_z_loss_coefficient=1e-4)
+
+    def test_quantile_balancing_fails_closed_until_it_is_specified(self) -> None:
+        with self.assertRaises(ValueError):
+            self._sqrt_softplus_config(load_balancing="quantile")
+
+    def test_router_matrix_has_no_weight_decay_in_version_three_only(self) -> None:
+        accepted = initialize_moe_model(MoESmallLLM(self._sqrt_softplus_config()), "normal")
+        routing = classify_moe_parameters(accepted).routing
+        router_names = [n for n in routing.all_names if n.endswith("router.projection.weight")]
+        self.assertTrue(router_names)
+        for name in router_names:
+            self.assertIn(name, routing.adamw_no_decay)
+            self.assertNotIn(name, routing.adamw_decay)
+
+        frozen = initialize_moe_model(MoESmallLLM(MoEModelConfig.smoke()), "normal")
+        frozen_routing = classify_moe_parameters(frozen).routing
+        frozen_router = [n for n in frozen_routing.all_names if n.endswith("router.projection.weight")]
+        self.assertTrue(frozen_router)
+        for name in frozen_router:
+            self.assertIn(name, frozen_routing.adamw_decay)
+
+    def test_end_to_end_step_under_the_accepted_contract(self) -> None:
+        config = self._sqrt_softplus_config()
+        model = initialize_moe_model(MoESmallLLM(config), "normal")
+        optimizer = build_moe_optimizer(
+            model, TrainerConfig(optimizer="hybrid_muon_adamw", precision="fp32")
+        )
+        ids = torch.randint(0, config.semantic_vocab_size, (2, 8))
+        logits, aux = model.forward_with_aux(ids)
+        self.assertEqual(float(aux.z_loss), 0.0)
+        F.cross_entropy(logits.reshape(-1, logits.shape[-1]), ids.reshape(-1)).backward()
+        optimizer.step()
+        self.assertIsNotNone(model.blocks[0].ffn.router.projection.weight.grad)
+        for name, parameter in model.named_parameters():
+            self.assertTrue(bool(torch.isfinite(parameter).all()), name)
 
 
 class TestBatchedExpertGemm(unittest.TestCase):
