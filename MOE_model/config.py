@@ -104,7 +104,7 @@ class MoEModelConfig:
             raise ValueError("first MoE router must compute logits/probabilities in FP32")
         if self.router_jitter != 0.0:
             raise ValueError("first MoE experiment forbids routing jitter")
-        if self.load_balancing not in {"none", "loss_free_sign"}:
+        if self.load_balancing not in {"none", "loss_free_sign", "quantile"}:
             raise ValueError("unsupported load-balancing controller")
         if not math.isfinite(self.balancing_step_size) or self.balancing_step_size < 0:
             raise ValueError("balancing_step_size must be finite and non-negative")
@@ -120,14 +120,8 @@ class MoEModelConfig:
             raise ValueError("router_z_loss_coefficient must be finite and non-negative")
         if self.version == 2 and self.router_z_loss_coefficient <= 0:
             raise ValueError("version 2 requires a positive router z-loss coefficient")
-        if self.load_balancing == "quantile":
-            # Accepted by the owner's router ADR, but its estimator and update semantics
-            # are explicitly listed there as still to be specified. Fail closed rather
-            # than ship an invented controller.
-            raise ValueError(
-                "quantile balancing is accepted but not yet specified; see the router "
-                "contract decision before enabling it"
-            )
+        if self.load_balancing == "quantile" and self.version < 3:
+            raise ValueError("quantile balancing belongs to configuration version 3")
 
     @classmethod
     def substantive(cls, **dense_overrides: object) -> "MoEModelConfig":
@@ -167,6 +161,7 @@ class MoEModelConfig:
             "router_scoring": "sqrt_softplus",
             "router_init_std": 0.02,
             "router_z_loss_coefficient": 0.0,
+            "load_balancing": "quantile",
             "version": 3,
         }
         moe_fields.update(

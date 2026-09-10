@@ -40,6 +40,7 @@ class SwitchTopKRouter(nn.Module):
     def __init__(
         self, d_model: int, num_experts: int, *, init_std: float,
         balancing_step_size: float = 0.0, top_k: int = 1, scoring: str = "softmax",
+        balancing: str = "none",
     ) -> None:
         super().__init__()
         if d_model <= 0 or num_experts <= 1 or init_std <= 0:
@@ -49,6 +50,12 @@ class SwitchTopKRouter(nn.Module):
         if scoring == "sqrt_softplus" and int(top_k) < 2:
             raise ValueError("sqrt_softplus affinities require top_k >= 2")
         self.scoring = scoring
+        if balancing not in {"none", "loss_free_sign", "quantile"}:
+            raise ValueError("unsupported balancing controller")
+        self.balancing = balancing
+        # Transient within one logical optimizer step; never checkpoint state.
+        self._quantile_target: int | None = None
+        self._score_frontier: Tensor | None = None
         if not 1 <= int(top_k) <= int(num_experts):
             raise ValueError("top_k must be between 1 and num_experts")
         self.d_model = int(d_model)
@@ -64,6 +71,36 @@ class SwitchTopKRouter(nn.Module):
         self.register_buffer("expert_updates", torch.zeros(num_experts, dtype=torch.long))
         self.reset_router_parameters()
 
+    def begin_step(self, expected_tokens: int) -> None:
+        """Open one logical optimizer step for Quantile Balancing.
+
+        The controller needs the exact per-expert score quantile at rate K/E over the
+        whole step, so the target rank is fixed up front from the step's token count and
+        one frontier of the top-ranked scores is carried across gradient-accumulation
+        microbatches. Keeping exactly that many scores makes the merge exact: an element
+        of the final top-M of the union survives every intermediate top-M.
+        """
+
+        if self.balancing != "quantile":
+            return
+        if expected_tokens <= 0:
+            raise ValueError("a logical step must route at least one token")
+        target = round(expected_tokens * self.top_k / self.num_experts)
+        self._quantile_target = max(1, min(int(expected_tokens), int(target)))
+        self._score_frontier = None
+
+    @torch.no_grad()
+    def _observe_scores(self, scores: Tensor) -> None:
+        if self.balancing != "quantile" or self._quantile_target is None or not self.training:
+            return
+        incoming = scores.detach().float().transpose(0, 1)
+        merged = (
+            incoming if self._score_frontier is None
+            else torch.cat((self._score_frontier, incoming), dim=1)
+        )
+        keep = min(self._quantile_target, int(merged.shape[1]))
+        self._score_frontier = merged.topk(keep, dim=1).values
+
     @torch.no_grad()
     def commit_load(self, counts: Tensor) -> None:
         """Commit one successful full batch; never called by forward/evaluation."""
@@ -71,6 +108,21 @@ class SwitchTopKRouter(nn.Module):
             raise ValueError("load must contain one int64 count per expert")
         self.token_exposure.add_(counts)
         self.expert_updates.add_(counts > 0)
+        if self.balancing == "quantile":
+            # Exact Quantile Balancing: for each expert take the quantile of its own
+            # scores at the target selection rate K/E over the whole step, and set the
+            # bias to the mean-centred negative of that threshold. An expert whose scores
+            # sit high is pushed down until it is selected at the target rate. The bias is
+            # recomputed from absolute scores each step, never accumulated.
+            frontier = self._score_frontier
+            if frontier is None or self._quantile_target is None:
+                raise RuntimeError("quantile balancing committed without observing a step")
+            rank = min(self._quantile_target, int(frontier.shape[1]))
+            threshold = frontier[:, rank - 1]
+            self.selection_bias.copy_(threshold.mean() - threshold)
+            self._quantile_target = None
+            self._score_frontier = None
+            return
         if self.balancing_step_size:
             # Eq. 3 / Algorithm 1, arXiv:2408.15664v1, applied to softmax.
             # The Appendix C proportional-error controller is a different variant.
@@ -118,6 +170,7 @@ class SwitchTopKRouter(nn.Module):
             expert_counts = torch.bincount(
                 expert_indices.reshape(-1), minlength=self.num_experts
             )
+            self._observe_scores(scores)
         return TopKRouting(
             logits=logits.detach(),
             expert_indices=expert_indices,

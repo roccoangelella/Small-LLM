@@ -7,7 +7,7 @@ superseded_by: []
 
 # 0173 — Wire the accepted 64-expert Top-2 geometry with a batched expert GEMM
 
-## Context
+## Context and problem statement
 
 The owner fixed the architecture on 2026-09-09: **64 routed experts per block, Top-2, no shared
 expert**, on a base of 8 layers, width 256, SwiGLU experts of width 352 and an 8,000-entry tied
@@ -24,7 +24,19 @@ regime the measurement says is launch-bound. Wiring the geometry without address
 hand the pilot a known bottleneck, and ADR 0168 on `main` already requires the many-expert path to
 be benchmarked before any long sparse run.
 
-## Decision
+## Considered options
+
+- Widen the version-2 constraints in place, letting one configuration serve both the frozen M0
+  identity and the new geometry. Rejected: it would put the frozen pilot one typo away from drift.
+- Keep one module per expert and rely on the existing per-expert loop. Rejected on measurement: at
+  64 experts the loop is what makes the geometry slower than the pilot it replaces.
+- Stack the expert weights and evaluate them with a padded batched GEMM, keeping the loop as a
+  measurement control. Chosen.
+- For Muon, either exclude stacked weights from orthogonalisation or teach it to treat a parameter
+  as a batch of matrices. The first would silently change the optimizer contract for most of the
+  model's parameters, so the second was chosen.
+
+## Decision outcome
 
 Introduce **configuration version 3**, which opens exactly two axes — expert count and `top_k` —
 and decouples expert width from the dense FFN width. Version 2 keeps every one of its constraints,

@@ -65,6 +65,7 @@ class TestAcceptedConfiguration(unittest.TestCase):
         self.assertEqual(config.dispatch, "dropless_padded_batched_gemm")
         # The owner's accepted router contract.
         self.assertEqual(config.router_scoring, "sqrt_softplus")
+        self.assertEqual(config.load_balancing, "quantile")
         self.assertEqual(config.router_z_loss_coefficient, 0.0)
         self.assertEqual(config.router_init_std, 0.02)
 
@@ -200,9 +201,72 @@ class TestAcceptedRouterContract(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._sqrt_softplus_config(router_z_loss_coefficient=1e-4)
 
-    def test_quantile_balancing_fails_closed_until_it_is_specified(self) -> None:
-        with self.assertRaises(ValueError):
-            self._sqrt_softplus_config(load_balancing="quantile")
+    def test_quantile_balancing_sets_the_mean_centred_negative_of_the_k_over_e_quantile(self) -> None:
+        torch.manual_seed(23)
+        experts, top_k, tokens = 8, 2, 400
+        router = SwitchTopKRouter(16, experts, init_std=0.02, top_k=top_k,
+                                  scoring="sqrt_softplus", balancing="quantile")
+        router.train()
+        x = torch.randn(tokens, 16)
+        router.begin_step(tokens)
+        route = router(x)
+        router.commit_load(route.expert_counts.long())
+
+        scores = torch.sqrt(F.softplus(x.float() @ router.projection.weight.float().T))
+        rank = round(tokens * top_k / experts)
+        threshold = scores.transpose(0, 1).topk(rank, dim=1).values[:, rank - 1]
+        torch.testing.assert_close(
+            router.selection_bias, threshold.mean() - threshold, rtol=1e-6, atol=1e-7
+        )
+        self.assertAlmostEqual(float(router.selection_bias.mean()), 0.0, places=5)
+
+    def test_quantile_is_exact_across_gradient_accumulation_microbatches(self) -> None:
+        x = torch.randn(360, 16, generator=torch.Generator().manual_seed(24))
+
+        def bias_for(chunks: int) -> torch.Tensor:
+            torch.manual_seed(25)
+            router = SwitchTopKRouter(16, 6, init_std=0.02, top_k=2,
+                                      scoring="sqrt_softplus", balancing="quantile")
+            router.train()
+            router.begin_step(x.shape[0])
+            counts = torch.zeros(6, dtype=torch.long)
+            for piece in x.chunk(chunks):
+                counts += router(piece).expert_counts.long()
+            router.commit_load(counts)
+            return router.selection_bias.clone()
+
+        torch.testing.assert_close(bias_for(1), bias_for(4), rtol=0, atol=0)
+        torch.testing.assert_close(bias_for(1), bias_for(9), rtol=0, atol=0)
+
+    def test_the_bias_moves_selection_towards_the_target_rate(self) -> None:
+        torch.manual_seed(26)
+        experts, top_k, tokens = 8, 2, 600
+        router = SwitchTopKRouter(16, experts, init_std=0.5, top_k=top_k,
+                                  scoring="sqrt_softplus", balancing="quantile")
+        router.train()
+        x = torch.randn(tokens, 16)
+        before = router(x).expert_counts.float()
+        router.begin_step(tokens)
+        route = router(x)
+        router.commit_load(route.expert_counts.long())
+        after = router(x).expert_counts.float()
+
+        target = tokens * top_k / experts
+        self.assertLess(
+            float((after - target).abs().mean()), float((before - target).abs().mean())
+        )
+        self.assertEqual(int(after.sum()), tokens * top_k)
+
+    def test_no_balancing_update_without_an_open_step(self) -> None:
+        torch.manual_seed(27)
+        router = SwitchTopKRouter(16, 6, init_std=0.02, top_k=2,
+                                  scoring="sqrt_softplus", balancing="quantile")
+        router.eval()
+        router.begin_step(50)
+        route = router(torch.randn(50, 16))
+        with self.assertRaises(RuntimeError):
+            router.commit_load(route.expert_counts.long())
+        self.assertTrue(bool((router.selection_bias == 0).all()))
 
     def test_router_matrix_has_no_weight_decay_in_version_three_only(self) -> None:
         accepted = initialize_moe_model(MoESmallLLM(self._sqrt_softplus_config()), "normal")

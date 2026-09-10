@@ -166,6 +166,10 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
         input_ids, labels = _ordered_batch_tensors(batch)
         size = engine.config.microbatch_size
         total_positions = int(input_ids.numel())
+        # Quantile Balancing needs the step's token count before the microbatch loop:
+        # its target rank is K/E of the whole logical step, not of one microbatch.
+        for block in engine.model.blocks:
+            block.ffn.router.begin_step(total_positions)
         if total_positions <= 0:
             raise RuntimeError("MoE training block has no input positions")
 

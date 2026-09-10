@@ -132,6 +132,7 @@ class DroplessTopKMoE(nn.Module):
             balancing_step_size=config.balancing_step_size,
             top_k=config.top_k,
             scoring=config.router_scoring,
+            balancing=config.load_balancing,
         )
 
     def forward(self, x: Tensor) -> tuple[Tensor, Tensor, LayerMoETelemetry]:
