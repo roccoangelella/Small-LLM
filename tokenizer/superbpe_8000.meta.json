@@ -1,0 +1,6 @@
+{
+  "word_merges": 6949,
+  "supermerges": 800,
+  "byte_map_mismatches_vs_hf": 0,
+  "source_model": "superbpe_8000_final.model"
+}

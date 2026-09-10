@@ -1,0 +1,22 @@
+[
+ {
+  "name": "superbpe_8000",
+  "vocab": 8000,
+  "bytes_per_token": 4.1725,
+  "tokens_per_doc": 684.3,
+  "superword_token_share_pct": 7.19,
+  "roundtrip_failures": 0,
+  "encode_MB_per_s": 13.3,
+  "vs_gpt2_4.665": "-10.6%"
+ },
+ {
+  "name": "bpe_8000",
+  "vocab": 8000,
+  "bytes_per_token": 3.887,
+  "tokens_per_doc": 734.5,
+  "superword_token_share_pct": 0.0,
+  "roundtrip_failures": 0,
+  "encode_MB_per_s": 11.3,
+  "vs_gpt2_4.665": "-16.7%"
+ }
+]
