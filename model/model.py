@@ -165,16 +165,23 @@ class SmallLLM(nn.Module):
             raise AttributeError("tied embedding must expose logits(hidden) or weight")
         return torch.nn.functional.linear(hidden, weight[:semantic])
 
+    def hidden_states(self, input_ids: Tensor) -> Tensor:
+        """Final-normed hidden states [batch, sequence, d_model], before the
+        tied output projection. The training step scores these in chunks so
+        the full [tokens, vocabulary] logits are never materialized."""
+
+        hidden = self.token_embedding(input_ids)
+        for block in self.blocks:
+            hidden = block(hidden)
+        return self.final_norm(hidden)
+
     def forward(self, input_ids: Tensor, cache: ModelCache | None = None) -> Tensor:
         if cache is not None:
             raise NotImplementedError(
                 "unified cached decoding is not implemented until MHA and GDN-2 "
                 "state advancement share one cache contract"
             )
-        hidden = self.token_embedding(input_ids)
-        for block in self.blocks:
-            hidden = block(hidden)
-        return self._logits(self.final_norm(hidden))
+        return self._logits(self.hidden_states(input_ids))
 
 
 __all__ = ["DecoderBlock", "GDN2Cache", "ModelCache", "SmallLLM"]

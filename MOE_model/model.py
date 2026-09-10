@@ -157,7 +157,10 @@ class MoESmallLLM(nn.Module):
             raise AttributeError("tied embedding must expose logits(hidden) or weight")
         return torch.nn.functional.linear(hidden, weight[:semantic])
 
-    def forward_with_aux(self, input_ids: Tensor) -> tuple[Tensor, MoEForwardAux]:
+    def hidden_states_with_aux(self, input_ids: Tensor) -> tuple[Tensor, MoEForwardAux]:
+        """Final-normed hidden states plus router aux, before the tied output
+        projection; the MoE training step scores them in chunks."""
+
         hidden = self.token_embedding(input_ids)
         z_losses: list[Tensor] = []
         telemetry: list[LayerMoETelemetry] = []
@@ -168,8 +171,11 @@ class MoESmallLLM(nn.Module):
         if len(z_losses) != self.config.n_layers:
             raise RuntimeError("MoE forward did not produce one router z-loss per layer")
         z_loss = torch.stack(z_losses).mean()
-        logits = self._logits(self.final_norm(hidden))
-        return logits, MoEForwardAux(z_loss=z_loss, layers=tuple(telemetry))
+        return self.final_norm(hidden), MoEForwardAux(z_loss=z_loss, layers=tuple(telemetry))
+
+    def forward_with_aux(self, input_ids: Tensor) -> tuple[Tensor, MoEForwardAux]:
+        hidden, aux = self.hidden_states_with_aux(input_ids)
+        return self._logits(hidden), aux
 
     def forward(self, input_ids: Tensor, cache: Any | None = None) -> Tensor:
         if cache is not None:
