@@ -1,11 +1,13 @@
 # Training execution efficiency
 
-_Last reviewed: 2026-09-10_
+_Last reviewed: 2026-09-10 (second pass)_
 
 Contracts and mechanisms that govern how fast one training update executes, as distinct from what
 it computes. The recipe (model, data, optimizer arithmetic, schedule) is owned by the other
 reference documents and by ADRs; this document owns the execution path and its measurement rules.
 Baseline evidence: [`../evidence/moe_execution_profile_rtx4090_2026-09-08.md`](../evidence/moe_execution_profile_rtx4090_2026-09-08.md).
+Measured effects: [M0 A/B](../evidence/moe_execution_ab_modal_a10_2026-09-10.md) and
+[accepted geometry](../evidence/moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md).
 
 ## Measured effect of the implemented contracts (2026-09-10)
 
@@ -52,16 +54,19 @@ identity, recipe identity, evaluation code paths.
 
 ## Remaining systems work, in priority order
 
-1. **Profile the accepted many-expert geometry on the target GPU** with the largest microbatch that
+1. ~~**Profile the accepted many-expert geometry**~~ — done on a Modal A10; the target-GPU
+   (4090-class) number is still missing, and the extrapolation in the evidence record is an
+   expenditure comparison, not a benchmark. Original item: **profile the accepted geometry** with the largest microbatch that
    fits. The 2026-09-10 A/B measured the 8-expert M0, not the accepted 64-expert design, where the
    Newton–Schulz share and the dispatch launch count both scale with expert count and the batched
    paths should therefore matter more. Required by ADR 0168 (main) before any 100B sparse run.
    Report the four clocks separately (update, allocated, device, calendar) and never a single
    tokens/s. Set microbatch from a memory fit, since microbatch 4 was worth +13.2 % here.
-2. **Batched expert GEMM**: pad each expert's sorted slice to the batch maximum and run one `bmm` per
-   layer (composes with ADR 0172; wastes FLOPs proportional to load imbalance; needs the maximum
-   count on host, which the single boundary read already provides). Alternative: a grouped-GEMM
-   kernel where the library supports the target architecture.
+2. ~~**Batched expert GEMM**~~ — **done and measured** (ADR 0173). On the accepted 64-expert
+   geometry it is +504 % at microbatch 2 and +126 % at matched microbatch 8, with launches down 82 %.
+   Without it that geometry runs *slower* than the M0 pilot it replaces, because it multiplies the
+   number of expert groups. Remaining refinement: a real grouped-GEMM kernel would remove the
+   padding waste, which grows with routing imbalance.
 3. **CUDA graphs / `torch.compile`** on the fixed-shape parts after the dispatch is static enough;
    dropless routing with variable expert counts recompiles unless shapes are bucketed.
 4. **Telemetry cost**: per-parameter statistics remain on-device reductions; the `before` snapshot

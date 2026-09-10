@@ -22,7 +22,9 @@ dispatch), CPU-equivalent, GPU-unmeasured. Before any many-expert 100B run (ADR 
    expert loop dominating; then CUDA graphs on static shapes. FP8 last. TF32 for the FP32
    Newton–Schulz matmuls is measured at +3.5 % and is a *recipe* change: it needs a learning
    comparison before adoption, not a throughput number.
-3. **Router contract to settle with the `main` owner**: the 2026-09-10 `main` history records two
+3. **Router score function to settle with the `main` owner** — now the top blocker, because the
+   geometry itself is wired and measured (ADR 0173) and everything else in the execution path is
+   done. Original item: **router contract to settle with the `main` owner**: the 2026-09-10 `main` history records two
    accepted contracts for the same experiment — sigmoid expert scores (commit `433039d`) and
    `sqrt(softplus(z))` scores (commit `e0621b6`, later) — both with Top-K over `s + b`, Quantile
    Balancing bias for selection only, unbiased normalized mixture weights, FP32 router on AdamW, no
