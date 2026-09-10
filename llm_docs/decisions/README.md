@@ -137,3 +137,4 @@ Historical omnibus registers live under [`../archive/decision_registers/`](../ar
 - [0169 — Seed the Triton cache per provider lane](0169-seed-the-triton-cache-per-provider-lane.md) (this MoE branch).
 - [0170 — Batch Muon Newton–Schulz by matrix shape](0170-batch-muon-newton-schulz-by-matrix-shape.md) (this MoE branch; `main` uses 0169/0170 for other decisions).
 - [0171 — Fused scaled-dot-product attention and chunked output loss](0171-fused-attention-and-chunked-output-loss.md) (this MoE branch).
+- [0172 — Sorted single-sync MoE dispatch](0172-sorted-single-sync-moe-dispatch.md) (this MoE branch).

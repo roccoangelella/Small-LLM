@@ -54,22 +54,29 @@ class DroplessTop1MoE(nn.Module):
             raise ValueError("MoE FFN expects [batch, sequence, d_model]")
         flat = x.reshape(-1, self.d_model)
         route = self.router(flat)
-        combined = torch.zeros_like(flat)
         selected_probability_sum = route.selected_probabilities.sum().detach()
+        # Sorted dispatch: one stable argsort groups tokens by expert (ascending
+        # token order inside each group, exactly as the previous per-expert
+        # ``nonzero`` scan produced), one host sync reads the E group
+        # boundaries, every expert runs on a contiguous slice, and the outputs
+        # are written back once with an in-place ``index_copy_`` over a
+        # permutation (unique rows, no summation, no full-buffer copies).
+        order = torch.argsort(route.expert_indices, stable=True)
+        sorted_inputs = flat.index_select(0, order)
+        sorted_gates = route.selected_probabilities.index_select(0, order)
+        boundaries = route.expert_counts.cumsum(0).tolist()
+        pieces: list[Tensor] = []
+        start = 0
         for expert_id, expert in enumerate(self.experts):
-            token_indices = torch.nonzero(
-                route.expert_indices == expert_id, as_tuple=False
-            ).flatten()
-            if token_indices.numel() == 0:
-                continue
-            expert_inputs = flat.index_select(0, token_indices)
-            expert_outputs = expert(expert_inputs)
-            gates = route.selected_probabilities.index_select(
-                0, token_indices
-            ).to(dtype=expert_outputs.dtype).unsqueeze(-1)
-            combined = combined.index_copy(
-                0, token_indices, (expert_outputs * gates).to(dtype=combined.dtype)
-            )
+            stop = int(boundaries[expert_id])
+            if stop > start:
+                expert_outputs = expert(sorted_inputs[start:stop])
+                gates = sorted_gates[start:stop].to(dtype=expert_outputs.dtype).unsqueeze(-1)
+                pieces.append((expert_outputs * gates).to(dtype=flat.dtype))
+            start = stop
+        combined = torch.zeros_like(flat)
+        if pieces:
+            combined = combined.index_copy_(0, order, torch.cat(pieces, dim=0))
         telemetry = LayerMoETelemetry(
             expert_counts=route.expert_counts.detach(),
             selected_probability_sum=selected_probability_sum,
