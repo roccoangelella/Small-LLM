@@ -7,6 +7,23 @@ it computes. The recipe (model, data, optimizer arithmetic, schedule) is owned b
 reference documents and by ADRs; this document owns the execution path and its measurement rules.
 Baseline evidence: [`../evidence/moe_execution_profile_rtx4090_2026-09-08.md`](../evidence/moe_execution_profile_rtx4090_2026-09-08.md).
 
+## Measured effect of the implemented contracts (2026-09-10)
+
+Paired A/B on one Modal A10, same container, same data, same seed, code tree as the only variable
+([evidence](../evidence/moe_execution_ab_modal_a10_2026-09-10.md)):
+
+| | warm targets/s | peak allocated | launches/update | host syncs/update |
+|---|---:|---:|---:|---:|
+| old (`d71c3fd`) | 8,990.7 | 14.31 GiB | 532,955 | 12,770 |
+| new (`eb264b6`) | 10,750.0 | 12.43 GiB | 418,796 | 4,398 |
+| new, microbatch 4 | 12,167.6 | 17.28 GiB | — | — |
+
+**+19.6 % throughput, −1.89 GiB, −21 % launches, −66 % synchronizations, `nonzero` eliminated.** The
+freed memory is what admits microbatch 4, worth a further +13.2 %: the old arm cannot run it, dying
+on the 1.54 GiB FP32 logits tensor the chunked loss removed. TF32 on the FP32 Newton–Schulz matmuls
+adds +3.5 % but changes optimizer numerics; 8 CPU threads add +1.5 %, inside the between-run spread.
+Microbatch 8 exceeds 24 GB in both arms.
+
 ## Regime
 
 On the measured RTX 4090 baseline the GPU executes useful matmul for ~7 % of the update and any
@@ -36,9 +53,11 @@ identity, recipe identity, evaluation code paths.
 ## Remaining systems work, in priority order
 
 1. **Profile the accepted many-expert geometry on the target GPU** with the largest microbatch that
-   fits (the E64/Top-2 model with optimizer state is ≈ 1.7 GB; a 24 GB card leaves the rest to
-   activations). Required by ADR 0168 (main) before any 100B sparse run. Report the four clocks
-   separately (update, allocated, device, calendar) and never a single tokens/s.
+   fits. The 2026-09-10 A/B measured the 8-expert M0, not the accepted 64-expert design, where the
+   Newton–Schulz share and the dispatch launch count both scale with expert count and the batched
+   paths should therefore matter more. Required by ADR 0168 (main) before any 100B sparse run.
+   Report the four clocks separately (update, allocated, device, calendar) and never a single
+   tokens/s. Set microbatch from a memory fit, since microbatch 4 was worth +13.2 % here.
 2. **Batched expert GEMM**: pad each expert's sorted slice to the batch maximum and run one `bmm` per
    layer (composes with ADR 0172; wastes FLOPs proportional to load imbalance; needs the maximum
    count on host, which the single boundary read already provides). Alternative: a grouped-GEMM

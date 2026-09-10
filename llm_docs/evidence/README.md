@@ -16,6 +16,8 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Execution profiles
 
+- [`moe_execution_ab_modal_a10_2026-09-10.md`](moe_execution_ab_modal_a10_2026-09-10.md) — paired A/B of ADRs 0170–0172 on one Modal A10, same container and data and seed: +19.6 % warm throughput, −1.89 GiB peak, −21 % kernel launches, −66 % host synchronizations, `nonzero` eliminated; microbatch 4 adds +13.2 % and is impossible for the old code.
+
 - [`moe_execution_profile_rtx4090_2026-09-08.md`](moe_execution_profile_rtx4090_2026-09-08.md) — one-RTX-4090 MoE update profile: 11,073 targets/s warm, 521,704 kernel launches and 5,120 `nonzero` syncs per update, MFU ≈ 4 %, derived Newton–Schulz share for the 64-expert geometry; baseline for ADRs 0170–0172.
 
 ## Current scaling comparison

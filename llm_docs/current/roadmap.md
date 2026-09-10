@@ -13,10 +13,15 @@ Accepted on this branch: ADRs 0170–0172 (batched Muon, fused attention + chunk
 dispatch), CPU-equivalent, GPU-unmeasured. Before any many-expert 100B run (ADR 0168 on `main`):
 
 1. **GPU profile of the accepted E64/Top-2/h352/d256/L8/V8k geometry** with the largest fitting
-   microbatch, telemetry off, four clocks reported; compare launches/syncs per token against the
-   2026-09-08 baseline. Requires explicit launch authorization and a cost cap.
+   microbatch, telemetry off, four clocks reported. The 2026-09-10 A/B settled the question for the
+   8-expert M0 (+19.6 %, +35.3 % with microbatch 4, −21 % launches, −66 % syncs) but not for the
+   accepted 64-expert design, where both the Newton–Schulz share and the dispatch launch count scale
+   with expert count. Requires explicit launch authorization and a cost cap; Modal works, Vast does
+   not (no ssh from the team account).
 2. **Batched expert GEMM** (pad sorted slices, one `bmm` per layer) after the profile shows the
-   expert loop dominating; then CUDA graphs on static shapes. FP8 last.
+   expert loop dominating; then CUDA graphs on static shapes. FP8 last. TF32 for the FP32
+   Newton–Schulz matmuls is measured at +3.5 % and is a *recipe* change: it needs a learning
+   comparison before adoption, not a throughput number.
 3. **Router contract to settle with the `main` owner**: the 2026-09-10 `main` history records two
    accepted contracts for the same experiment — sigmoid expert scores (commit `433039d`) and
    `sqrt(softplus(z))` scores (commit `e0621b6`, later) — both with Top-K over `s + b`, Quantile
