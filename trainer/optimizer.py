@@ -235,6 +235,50 @@ def _newton_schulz_orthogonalize(update: Tensor, *, target_rms: float) -> Tensor
     return value
 
 
+def _newton_schulz_orthogonalize_batched(updates: Tensor, *, target_rms: float) -> Tensor:
+    """Batched whole-matrix Muon update: one Newton-Schulz run for a stack of
+    same-shape logical matrices, with per-matrix normalization and output RMS.
+
+    Slice i of the result equals ``_newton_schulz_orthogonalize(updates[i])`` up
+    to floating-point summation order. Batching changes the number of kernel
+    launches (one per iteration for the whole stack), never the per-matrix
+    arithmetic contract: every matrix keeps its own norm, its own zero-update
+    short circuit and its own RMS rescale.
+    """
+
+    if updates.ndim != 3:
+        raise ValueError("batched Muon accepts a stack of complete rank-2 logical matrices")
+    value = updates.float()
+    if not bool(torch.isfinite(value).all()):
+        raise FloatingPointError("Muon received a non-finite gradient")
+    norms = torch.linalg.vector_norm(value, dim=(-2, -1), keepdim=True)
+    nonzero = norms > 0.0
+    value = value / norms.clamp_min(torch.finfo(torch.float32).eps)
+
+    transposed = value.shape[-2] > value.shape[-1]
+    if transposed:
+        value = value.transpose(-2, -1)
+    coefficients = (
+        (_AGGRESSIVE_COEFFICIENTS,) * 8
+        + (_STABILIZING_COEFFICIENTS,) * 2
+    )
+    for a, b, c in coefficients:
+        gram = torch.bmm(value, value.transpose(-2, -1))
+        value = a * value + torch.bmm(b * gram + c * torch.bmm(gram, gram), value)
+    if transposed:
+        value = value.transpose(-2, -1)
+
+    rms = value.square().mean(dim=(-2, -1), keepdim=True).sqrt()
+    valid = torch.isfinite(rms) & (rms > 0.0)
+    if not bool((valid | ~nonzero).all()):
+        raise FloatingPointError("Muon Newton-Schulz produced an invalid update RMS")
+    value = value * (float(target_rms) / rms.clamp_min(torch.finfo(torch.float32).tiny))
+    value = torch.where(nonzero, value, torch.zeros_like(value))
+    if not bool(torch.isfinite(value).all()):
+        raise FloatingPointError("Muon Newton-Schulz produced non-finite values")
+    return value
+
+
 class HybridMuonAdamW(Optimizer):
     """One optimizer for whole-matrix Muon and AdamW exception groups.
 
@@ -365,6 +409,78 @@ class HybridMuonAdamW(Optimizer):
         self._apply_weight_decay(parameter, lr=lr, decay=decay)
         parameter.add_(update.to(dtype=parameter.dtype), alpha=-lr)
 
+    def _on_muon_update(
+        self, parameter: nn.Parameter, *, before: Tensor | None, direction: Tensor
+    ) -> None:
+        """Hook for subclasses that record per-matrix update statistics."""
+
+    _snapshot_before_muon_update = False
+
+    def _muon_group_step(self, group: Mapping[str, object]) -> None:
+        """Apply Muon to a parameter group, batching same-shape matrices.
+
+        Matrices are bucketed by (shape, device). Each bucket runs one batched
+        Newton-Schulz instead of one per matrix, and momentum / weight updates
+        use horizontally fused foreach kernels. The per-matrix contract is the
+        one of ``_muon_step``; only the launch count changes. Within a bucket
+        every gradient is validated before any state is mutated.
+        """
+
+        buckets: dict[tuple[tuple[int, ...], torch.device], list[nn.Parameter]] = {}
+        for parameter in group["params"]:
+            gradient = parameter.grad
+            if gradient is None:
+                continue
+            if gradient.is_sparse:
+                raise RuntimeError("Muon does not support sparse gradients")
+            if parameter.ndim != 2:
+                raise RuntimeError("Muon group contains a non-matrix parameter")
+            buckets.setdefault((tuple(parameter.shape), parameter.device), []).append(parameter)
+
+        beta = float(self.config.muon_momentum)
+        lr = float(group["lr"])
+        decay = float(group["weight_decay"])
+        factor = 1.0 - lr * decay
+        if factor < 0.0:
+            raise ValueError("optimizer learning rate times weight decay must not exceed 1")
+        target_rms = float(self.config.muon_update_rms)
+
+        for parameters in buckets.values():
+            grads = [parameter.grad.detach().float() for parameter in parameters]
+            stacked_grads = torch.stack(grads)
+            if not bool(torch.isfinite(stacked_grads).all()):
+                raise FloatingPointError("Muon received a non-finite gradient")
+            momenta: list[Tensor] = []
+            for parameter, grad in zip(parameters, grads):
+                state = self.state[parameter]
+                momentum = state.get("momentum_buffer")
+                if momentum is None:
+                    momentum = torch.zeros_like(grad, dtype=torch.float32)
+                    state["momentum_buffer"] = momentum
+                if not isinstance(momentum, Tensor) or momentum.dtype != torch.float32:
+                    raise RuntimeError("Muon momentum state must be an FP32 tensor")
+                momenta.append(momentum)
+            torch._foreach_mul_(momenta, beta)
+            torch._foreach_add_(momenta, grads)
+            # Same expression as the per-matrix path (grad + beta * momentum via
+            # add(alpha=)), so rounding matches the reference bit for bit.
+            nesterov = stacked_grads.add(torch.stack(momenta), alpha=beta)
+            updates = _newton_schulz_orthogonalize_batched(nesterov, target_rms=target_rms)
+            befores: list[Tensor | None] = [
+                parameter.detach().clone() if self._snapshot_before_muon_update else None
+                for parameter in parameters
+            ]
+            if decay:
+                torch._foreach_mul_(list(parameters), factor)
+            directions = list(updates.unbind(0))
+            torch._foreach_add_(
+                list(parameters),
+                [direction.to(dtype=parameter.dtype) for direction, parameter in zip(directions, parameters)],
+                alpha=-lr,
+            )
+            for parameter, before, direction in zip(parameters, befores, directions):
+                self._on_muon_update(parameter, before=before, direction=direction)
+
     def _adamw_step(self, parameter: nn.Parameter, group: Mapping[str, object]) -> None:
         gradient = parameter.grad
         if gradient is None:
@@ -422,8 +538,7 @@ class HybridMuonAdamW(Optimizer):
         for group in self.param_groups:
             role = group.get("optimizer_role")
             if role == "muon":
-                for parameter in group["params"]:
-                    self._muon_step(parameter, group)
+                self._muon_group_step(group)
             elif role in {"adamw_decay", "adamw_no_decay"}:
                 for parameter in group["params"]:
                     self._adamw_step(parameter, group)
