@@ -124,7 +124,9 @@ class MoEModelConfig:
 
         dense_fields = {
             "semantic_vocab_size": 8_000, "padded_vocab_size": 8_000, "max_seq_len": 2_048,
-            "d_model": 256, "n_layers": 8, "d_ff": 352, "n_heads": 4, "head_dim": 64,
+            # dense d_ff=704 is the reference the owner's granularity ADR matches
+            # (K*h = 2*352 = 704); experts are decoupled from it via expert_type="swiglu".
+            "d_model": 256, "n_layers": 8, "d_ff": 704, "n_heads": 4, "head_dim": 64,
             "gdn_num_key_heads": 4, "gdn_num_value_heads": 4,
             "gdn_key_dim": 64, "gdn_value_dim": 64,
             "gdn_conv_kernel_size": 4, "gdn_chunk_size": 32,
