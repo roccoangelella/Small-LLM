@@ -1,6 +1,6 @@
 # Optimizer strategy
 
-_Last reviewed: 2026-09-08_
+_Last reviewed: 2026-09-10_
 
 ## Current pretraining optimizer
 
@@ -23,6 +23,17 @@ Muon momentum / orthogonalization state: FP32
 ```
 
 The exact Newton-Schulz coefficients and routed parameter-name list are serialized by the implementation/checkpoint recipe and must match on resume.
+
+### Execution: batched by shape (ADR 0170)
+
+The step applies Muon per parameter group through `_muon_group_step`: matrices with gradients are
+bucketed by `(shape, device)`, each bucket runs one batched Newton–Schulz, and momentum/weight
+updates use `torch._foreach_*` kernels. This changes launch counts only: every matrix keeps its own
+norm, zero-update short circuit, RMS rescale and momentum entry, and the recipe identity is
+unchanged. Newton–Schulz cost scales with stored matrices, not with active parameters — with
+131,072 targets per update every expert matrix has a gradient every update — so for the accepted
+64-expert geometry it is ≈ 25 % of training FLOPs (1,536 matrices, 1.93 TFLOP per update). Details
+and the remaining priorities: [`training_execution_efficiency.md`](training_execution_efficiency.md).
 
 ### AdamW branch
 

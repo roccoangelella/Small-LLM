@@ -14,6 +14,10 @@ Evidence records completed observations: measured results, verification reports,
 - [`rsft_r0_12306_training_completion_2026-08-19.md`](rsft_r0_12306_training_completion_2026-08-19.md) — frozen 12,306-row corpus identity, 361-block one-pass training completion, Hugging Face step-361 publication, old R-SFT namespace cleanup, and preserved future-adaptation state.
 - [`rsft_r0_delimiter_pilot_2026-08-18.md`](rsft_r0_delimiter_pilot_2026-08-18.md) — historical matched atomic/textual 630-example delimiter pilot evidence.
 
+## Execution profiles
+
+- [`moe_execution_profile_rtx4090_2026-09-08.md`](moe_execution_profile_rtx4090_2026-09-08.md) — one-RTX-4090 MoE update profile: 11,073 targets/s warm, 521,704 kernel launches and 5,120 `nonzero` syncs per update, MFU ≈ 4 %, derived Newton–Schulz share for the 64-expert geometry; baseline for ADRs 0170–0172.
+
 ## Current scaling comparison
 
 - [`scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md) — verifies Bucket step 70,250 versus stale legacy model-repository step 61,500, diagnoses the Kaggle rewind, and records the Bucket-first restore repair.
