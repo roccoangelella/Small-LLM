@@ -19,7 +19,13 @@ from trainer.optimizer import (
 from trainer.optimizer_telemetry import InstrumentedHybridMuonAdamW
 
 
+_STACKED_EXPERT_SUFFIXES = (".ffn.gate_weight", ".ffn.up_weight", ".ffn.down_weight")
+
+
 def _is_expert_matrix(name: str, parameter: nn.Parameter) -> bool:
+    if name.endswith(_STACKED_EXPERT_SUFFIXES) and parameter.ndim == 3:
+        # One stacked parameter per projection: a batch of per-expert matrices.
+        return True
     expert_path = ".ffn.experts." in name or name.startswith("ffn.experts.")
     return (
         parameter.ndim == 2

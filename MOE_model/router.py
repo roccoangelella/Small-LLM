@@ -1,4 +1,14 @@
-"""FP32 Switch-style Top-1 routing for the first MoE experiment."""
+"""FP32 Switch-style routing: Top-1 for the frozen M0 identity, Top-k for version 3.
+
+Top-1 behaviour is preserved exactly. With ``top_k == 1`` the selection is `topk(1)`,
+which returns the same element as `argmax` including its lowest-index tie-break, and the
+combine weight is the selected softmax probability, unnormalised — byte-for-byte the M0
+contract. With ``top_k > 1`` the k selected probabilities are renormalised so the mixture
+weights sum to one, which is the only point on which the two competing router ADRs in the
+`main` history agree; the score function itself (softmax here, versus sigmoid or
+sqrt-softplus there) remains an open owner decision and does not affect shapes, dispatch
+or any systems measurement.
+"""
 
 from __future__ import annotations
 
@@ -11,28 +21,34 @@ from torch.nn import functional as F
 
 
 @dataclass(frozen=True, slots=True)
-class Top1Routing:
+class TopKRouting:
     logits: Tensor
-    expert_indices: Tensor
-    selected_probabilities: Tensor
+    expert_indices: Tensor          # [tokens, k]
+    selected_probabilities: Tensor  # [tokens, k], mixture weights
     z_loss: Tensor
     entropy_sum: Tensor
     token_count: int
-    expert_counts: Tensor
+    expert_counts: Tensor           # [num_experts], assignments not tokens
 
 
-class SwitchTop1Router(nn.Module):
-    """Bias-free Top-1 router with differentiable selected softmax probability."""
+Top1Routing = TopKRouting
+
+
+class SwitchTopKRouter(nn.Module):
+    """Bias-free router with differentiable selected softmax probabilities."""
 
     def __init__(
         self, d_model: int, num_experts: int, *, init_std: float,
-        balancing_step_size: float = 0.0,
+        balancing_step_size: float = 0.0, top_k: int = 1,
     ) -> None:
         super().__init__()
         if d_model <= 0 or num_experts <= 1 or init_std <= 0:
-            raise ValueError("invalid Top-1 router geometry")
+            raise ValueError("invalid router geometry")
+        if not 1 <= int(top_k) <= int(num_experts):
+            raise ValueError("top_k must be between 1 and num_experts")
         self.d_model = int(d_model)
         self.num_experts = int(num_experts)
+        self.top_k = int(top_k)
         self.init_std = float(init_std)
         if not math.isfinite(balancing_step_size) or balancing_step_size < 0:
             raise ValueError("balancing_step_size must be finite and non-negative")
@@ -63,28 +79,66 @@ class SwitchTop1Router(nn.Module):
             self.token_exposure.zero_()
             self.expert_updates.zero_()
 
-    def forward(self, x: Tensor) -> Top1Routing:
+    def forward(self, x: Tensor) -> TopKRouting:
         if x.ndim != 2 or x.shape[-1] != self.d_model:
             raise ValueError("router expects [tokens, d_model]")
         device_type = x.device.type
         with torch.autocast(device_type=device_type, enabled=False):
             logits = F.linear(x.float(), self.projection.weight.float())
             probabilities = torch.softmax(logits, dim=-1)
-            expert_indices = (probabilities + self.selection_bias).argmax(dim=-1)
-            selected_probabilities = probabilities.gather(
-                -1, expert_indices.unsqueeze(-1)
-            ).squeeze(-1)
+            # The bias steers selection only; the returned weights stay unbiased.
+            expert_indices = (probabilities + self.selection_bias).topk(self.top_k, dim=-1).indices
+            selected = probabilities.gather(-1, expert_indices)
+            if self.top_k > 1:
+                selected = selected / selected.sum(dim=-1, keepdim=True).clamp_min(
+                    torch.finfo(selected.dtype).tiny
+                )
             log_z = torch.logsumexp(logits, dim=-1)
             z_loss = log_z.square().mean()
             entropy = -(probabilities * probabilities.clamp_min(1e-12).log()).sum(dim=-1)
             entropy_sum = entropy.sum()
-            expert_counts = torch.bincount(expert_indices, minlength=self.num_experts)
-        return Top1Routing(
+            expert_counts = torch.bincount(
+                expert_indices.reshape(-1), minlength=self.num_experts
+            )
+        return TopKRouting(
             logits=logits.detach(),
             expert_indices=expert_indices,
-            selected_probabilities=selected_probabilities,
+            selected_probabilities=selected,
             z_loss=z_loss,
             entropy_sum=entropy_sum,
             token_count=int(x.shape[0]),
             expert_counts=expert_counts,
         )
+
+
+class SwitchTop1Router(SwitchTopKRouter):
+    """The frozen M0 router: the Top-k router pinned to k = 1, with the M0 return shapes.
+
+    Selection, weights and counts are those of the general router at k = 1; only the
+    trailing singleton axis is dropped, because the M0 identity returns one index and one
+    probability per token and its consumers and tests depend on that shape.
+    """
+
+    def __init__(
+        self, d_model: int, num_experts: int, *, init_std: float,
+        balancing_step_size: float = 0.0,
+    ) -> None:
+        super().__init__(
+            d_model, num_experts, init_std=init_std,
+            balancing_step_size=balancing_step_size, top_k=1,
+        )
+
+    def forward(self, x: Tensor) -> TopKRouting:
+        route = super().forward(x)
+        return TopKRouting(
+            logits=route.logits,
+            expert_indices=route.expert_indices.squeeze(-1),
+            selected_probabilities=route.selected_probabilities.squeeze(-1),
+            z_loss=route.z_loss,
+            entropy_sum=route.entropy_sum,
+            token_count=route.token_count,
+            expert_counts=route.expert_counts,
+        )
+
+
+__all__ = ["SwitchTop1Router", "SwitchTopKRouter", "Top1Routing", "TopKRouting"]

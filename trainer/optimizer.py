@@ -20,6 +20,10 @@ _MUON_WEIGHT_SUFFIXES = (
     ".ffn.gate.weight",
     ".ffn.up.weight",
     ".ffn.down.weight",
+    # Stacked expert weights: one [experts, in, out] parameter per projection.
+    ".ffn.gate_weight",
+    ".ffn.up_weight",
+    ".ffn.down_weight",
     ".mixer.q_proj.weight",
     ".mixer.k_proj.weight",
     ".mixer.v_proj.weight",
@@ -73,7 +77,10 @@ class _ClassifiedParameters:
 
 
 def _is_muon_parameter(name: str, parameter: nn.Parameter) -> bool:
-    return parameter.ndim == 2 and name.endswith(_MUON_WEIGHT_SUFFIXES)
+    # A stacked expert weight is a batch of logical matrices, not a tensor of its own:
+    # Muon orthogonalises each [in, out] slice independently, exactly as it would if the
+    # experts were separate modules.
+    return parameter.ndim in (2, 3) and name.endswith(_MUON_WEIGHT_SUFFIXES)
 
 
 def _is_known_adamw_parameter(name: str) -> bool:
@@ -417,25 +424,27 @@ class HybridMuonAdamW(Optimizer):
     _snapshot_before_muon_update = False
 
     def _muon_group_step(self, group: Mapping[str, object]) -> None:
-        """Apply Muon to a parameter group, batching same-shape matrices.
+        """Apply Muon to a parameter group, batching same-shape logical matrices.
 
-        Matrices are bucketed by (shape, device). Each bucket runs one batched
-        Newton-Schulz instead of one per matrix, and momentum / weight updates
-        use horizontally fused foreach kernels. The per-matrix contract is the
-        one of ``_muon_step``; only the launch count changes. Within a bucket
-        every gradient is validated before any state is mutated.
+        Every parameter is viewed as a batch of [m, n] matrices: a plain weight is one
+        matrix, a stacked expert weight is as many as it has experts. Matrices are bucketed
+        by (m, n, device), each bucket runs one batched Newton-Schulz, and momentum and
+        weight updates use horizontally fused foreach kernels. The per-matrix contract is
+        the one of ``_muon_step``; only the launch count changes. Within a bucket every
+        gradient is validated before any state is mutated.
         """
 
-        buckets: dict[tuple[tuple[int, ...], torch.device], list[nn.Parameter]] = {}
+        buckets: dict[tuple[int, int, torch.device], list[nn.Parameter]] = {}
         for parameter in group["params"]:
             gradient = parameter.grad
             if gradient is None:
                 continue
             if gradient.is_sparse:
                 raise RuntimeError("Muon does not support sparse gradients")
-            if parameter.ndim != 2:
+            if parameter.ndim not in (2, 3):
                 raise RuntimeError("Muon group contains a non-matrix parameter")
-            buckets.setdefault((tuple(parameter.shape), parameter.device), []).append(parameter)
+            rows, columns = int(parameter.shape[-2]), int(parameter.shape[-1])
+            buckets.setdefault((rows, columns, parameter.device), []).append(parameter)
 
         beta = float(self.config.muon_momentum)
         lr = float(group["lr"])
@@ -445,9 +454,9 @@ class HybridMuonAdamW(Optimizer):
             raise ValueError("optimizer learning rate times weight decay must not exceed 1")
         target_rms = float(self.config.muon_update_rms)
 
-        for parameters in buckets.values():
+        for (rows, columns, _), parameters in buckets.items():
             grads = [parameter.grad.detach().float() for parameter in parameters]
-            stacked_grads = torch.stack(grads)
+            stacked_grads = torch.cat([g.reshape(-1, rows, columns) for g in grads])
             if not bool(torch.isfinite(stacked_grads).all()):
                 raise FloatingPointError("Muon received a non-finite gradient")
             momenta: list[Tensor] = []
@@ -462,20 +471,28 @@ class HybridMuonAdamW(Optimizer):
                 momenta.append(momentum)
             torch._foreach_mul_(momenta, beta)
             torch._foreach_add_(momenta, grads)
-            # Same expression as the per-matrix path (grad + beta * momentum via
-            # add(alpha=)), so rounding matches the reference bit for bit.
-            nesterov = stacked_grads.add(torch.stack(momenta), alpha=beta)
+            # Same expression, same order as the per-matrix path: grad + beta * momentum.
+            # Computing beta * momentum first instead would round one ULP differently.
+            nesterov = stacked_grads.add(
+                torch.cat([momentum.reshape(-1, rows, columns) for momentum in momenta]),
+                alpha=beta,
+            )
             updates = _newton_schulz_orthogonalize_batched(nesterov, target_rms=target_rms)
+            sizes = [parameter.numel() // (rows * columns) for parameter in parameters]
+            directions = [
+                piece.reshape(parameter.shape)
+                for piece, parameter in zip(torch.split(updates, sizes), parameters)
+            ]
             befores: list[Tensor | None] = [
                 parameter.detach().clone() if self._snapshot_before_muon_update else None
                 for parameter in parameters
             ]
             if decay:
                 torch._foreach_mul_(list(parameters), factor)
-            directions = list(updates.unbind(0))
             torch._foreach_add_(
                 list(parameters),
-                [direction.to(dtype=parameter.dtype) for direction, parameter in zip(directions, parameters)],
+                [direction.to(dtype=parameter.dtype)
+                 for direction, parameter in zip(directions, parameters)],
                 alpha=-lr,
             )
             for parameter, before, direction in zip(parameters, befores, directions):

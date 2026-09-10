@@ -30,7 +30,7 @@ class MoETrainerEngine(TrainerEngine):
         optimizer = build_moe_optimizer(model, config)
         super().__init__(model, config, device=resolved, optimizer=optimizer)
         self.parameter_accounting = count_moe_parameters(
-            model, num_experts=model.config.num_experts
+            model, num_experts=model.config.num_experts, top_k=model.config.top_k
         )
 
     def train_batch(self, batch: object):
