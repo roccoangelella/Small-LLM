@@ -42,7 +42,7 @@ dispatch), CPU-equivalent, GPU-unmeasured. Before any many-expert 100B run (ADR 
 
 ## Current position
 
-- ADR-0178-authorized production of the public 100B SuperBPE dataset is active on `moe-8e-top1`; this dataset operation does not change the separate prohibition on 50B/100B-token model pretraining.
+- ADR-0178-authorized public 100B SuperBPE dataset production is active via a direct VPS process on `moe-8e-top1`; this does not change the separate prohibition on 50B/100B-token model pretraining.
 - The 20M scaling series through 2B is complete.
 - 100M/2B pretraining is complete at 2,001,000,448 consumed target tokens.
 - 100M/10B deep-decay pretraining is complete at `step-00076294` / 10,000,007,168 consumed target tokens.
