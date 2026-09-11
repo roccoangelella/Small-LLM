@@ -60,18 +60,30 @@ class ModalLaunchPackagingTest(unittest.TestCase):
         self.assertNotIn("run_root=RUN_ROOT,", segment)
 
     def test_local_source_mounts_are_last_image_mutations(self) -> None:
+        base_assignment = next(
+            node
+            for node in self.tree.body
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "IMAGE_BASE" for target in node.targets)
+        )
+        base_segment = ast.get_source_segment(self.source, base_assignment) or ""
+        self.assertIn(".env(", base_segment)
+        self.assertNotIn(".add_local_", base_segment)
+
+        mount_segment = self._function_segment("_with_local_repo")
+        python_source_pos = mount_segment.find(".add_local_python_source(")
+        local_dir_pos = mount_segment.find(".add_local_dir(")
+        self.assertGreaterEqual(python_source_pos, 0)
+        self.assertGreater(local_dir_pos, python_source_pos)
+
         image_assignment = next(
             node
             for node in self.tree.body
             if isinstance(node, ast.Assign)
             and any(isinstance(target, ast.Name) and target.id == "IMAGE" for target in node.targets)
         )
-        segment = ast.get_source_segment(self.source, image_assignment) or ""
-        env_pos = segment.find(".env(")
-        python_source_pos = segment.find(".add_local_python_source(")
-        local_dir_pos = segment.find(".add_local_dir(")
-        self.assertGreater(python_source_pos, env_pos)
-        self.assertGreater(local_dir_pos, python_source_pos)
+        image_segment = ast.get_source_segment(self.source, image_assignment) or ""
+        self.assertIn("_with_local_repo(IMAGE_BASE)", image_segment)
 
 
 if __name__ == "__main__":

@@ -186,6 +186,7 @@ class MoE100BProfileTests(unittest.TestCase):
     def test_modal_producer_targets_and_verifies_a_public_bucket(self) -> None:
         source = (ROOT / "modal" / "moe_100b_dataset.py").read_text(encoding="utf-8")
         self.assertIn("dataset_bucket_id: str", source)
+        self.assertIn('_REMOTE_REPO_ROOT = Path("/root/small-llm")', source)
         self.assertIn("_base._with_local_repo(", source)
         self.assertIn("_base.IMAGE_BASE.uv_pip_install(", source)
         self.assertIn("private=False", source)
