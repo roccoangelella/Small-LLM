@@ -1,6 +1,6 @@
 # Optimizer strategy
 
-_Last reviewed: 2026-08-13_
+_Last reviewed: 2026-09-10_
 
 ## Current pretraining optimizer
 
@@ -24,6 +24,17 @@ Muon momentum / orthogonalization state: FP32
 
 The exact Newton-Schulz coefficients and routed parameter-name list are serialized by the implementation/checkpoint recipe and must match on resume.
 
+### Execution: batched by shape (ADR 0170)
+
+The step applies Muon per parameter group through `_muon_group_step`: matrices with gradients are
+bucketed by `(shape, device)`, each bucket runs one batched Newton–Schulz, and momentum/weight
+updates use `torch._foreach_*` kernels. This changes launch counts only: every matrix keeps its own
+norm, zero-update short circuit, RMS rescale and momentum entry, and the recipe identity is
+unchanged. Newton–Schulz cost scales with stored matrices, not with active parameters — with
+131,072 targets per update every expert matrix has a gradient every update — so for the accepted
+64-expert geometry it is ≈ 25 % of training FLOPs (1,536 matrices, 1.93 TFLOP per update). Details
+and the remaining priorities: [`training_execution_efficiency.md`](training_execution_efficiency.md).
+
 ### AdamW branch
 
 AdamW receives roles that should not be matrix-orthogonalized, including:
@@ -38,7 +49,7 @@ AdamW first/second moments remain FP32. Current weight decay is 0.1 subject to t
 
 ## Shared update contract
 
-Both optimizer branches belong to one atomic optimizer object/update boundary:
+Both optimizer branches belong to one optimizer object and successful-update boundary:
 
 1. accumulate the full prepared block;
 2. resolve FP16 scaling/non-finite state;
@@ -47,7 +58,14 @@ Both optimizer branches belong to one atomic optimizer object/update boundary:
 5. update Muon and AdamW branches together;
 6. commit scheduler/tokens/dataset cursor only after success.
 
-A partial Muon-only or AdamW-only update is illegal.
+A partial Muon-only or AdamW-only update must never be accepted. This is not an
+optimizer rollback guarantee: the implementation mutates parameters and state
+in-place, so a late exception may leave earlier matrices changed. Current callers
+propagate that exception without retrying or acknowledging the block; abort the
+process and reload the last complete joint checkpoint. Do not checkpoint or reuse
+the failed live state. Ordinary AMP overflow retries skip optimizer mutation and
+are a separate path. The engine/session failure boundary is covered by
+`tests/test_trainer_session.py` for both dense and MoE.
 
 ## Schedule and LR
 

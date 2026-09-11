@@ -11,6 +11,7 @@ These documents define the **current** system in detail. They answer “what is 
 - [`100m_10b_incremental_dataset.md`](100m_10b_incremental_dataset.md) — current ADR-0058 incremental producer/consumer contract.
 - [`training_system.md`](training_system.md)
 - [`optimizer_strategy.md`](optimizer_strategy.md)
+- [`training_execution_efficiency.md`](training_execution_efficiency.md) — execution path contracts (ADRs 0170–0172), launch/sync regime, remaining systems priorities, measurement rules.
 - [`fp16_overflow_recovery.md`](fp16_overflow_recovery.md)
 - [`training_and_evaluation.md`](training_and_evaluation.md)
 - [`eval_core_v1_design.md`](eval_core_v1_design.md)

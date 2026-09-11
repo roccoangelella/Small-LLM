@@ -59,6 +59,11 @@ Every fourth layer is full causal gated MHA. The current attention contract uses
 
 The 20M geometry uses 4 heads × 64 dimensions; the 100M geometry uses 8 × 64.
 
+Execution (ADR 0171): attention runs through `torch.nn.functional.scaled_dot_product_attention`
+(`is_causal=True`; an explicit boolean mask for the opt-in sliding window), so no [B, H, T, T]
+score tensor is materialized and the softmax runs inside the fused kernel with FP32 accumulation.
+`GatedMultiheadAttention.reference_mix` keeps the unfused FP32-score path as the test oracle.
+
 ## Feed-forward network
 
 Every block uses dense SwiGLU:

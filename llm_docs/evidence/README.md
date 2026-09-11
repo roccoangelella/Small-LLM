@@ -14,6 +14,15 @@ Evidence records completed observations: measured results, verification reports,
 - [`rsft_r0_12306_training_completion_2026-08-19.md`](rsft_r0_12306_training_completion_2026-08-19.md) — frozen 12,306-row corpus identity, 361-block one-pass training completion, Hugging Face step-361 publication, old R-SFT namespace cleanup, and preserved future-adaptation state.
 - [`rsft_r0_delimiter_pilot_2026-08-18.md`](rsft_r0_delimiter_pilot_2026-08-18.md) — historical matched atomic/textual 630-example delimiter pilot evidence.
 
+## Execution profiles
+
+- [`moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md`](moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md) — first measurement of the accepted 64-expert Top-2 geometry: batched expert GEMM against the per-expert loop over identical weights, 60,657 versus 7,240 warm targets/s, launches down 82 %, and the run-cost projections that follow.
+- [`moe_execution_ab_modal_a10_2026-09-10.md`](moe_execution_ab_modal_a10_2026-09-10.md) — paired A/B of ADRs 0170-0172 on one Modal A10: +19.6 % throughput, -1.89 GiB, and microbatch 4 unlocked because the old code dies on the 1.54 GiB logits tensor.
+
+- [`moe_execution_ab_modal_a10_2026-09-10.md`](moe_execution_ab_modal_a10_2026-09-10.md) — paired A/B of ADRs 0170–0172 on one Modal A10, same container and data and seed: +19.6 % warm throughput, −1.89 GiB peak, −21 % kernel launches, −66 % host synchronizations, `nonzero` eliminated; microbatch 4 adds +13.2 % and is impossible for the old code.
+
+- [`moe_execution_profile_rtx4090_2026-09-08.md`](moe_execution_profile_rtx4090_2026-09-08.md) — one-RTX-4090 MoE update profile: 11,073 targets/s warm, 521,704 kernel launches and 5,120 `nonzero` syncs per update, MFU ≈ 4 %, derived Newton–Schulz share for the 64-expert geometry; baseline for ADRs 0170–0172.
+
 ## Current scaling comparison
 
 - [`scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md`](scaling/100m_10b_kaggle_stale_model_repo_resume_2026-08-31.md) — verifies Bucket step 70,250 versus stale legacy model-repository step 61,500, diagnoses the Kaggle rewind, and records the Bucket-first restore repair.

@@ -1,0 +1,216 @@
+{
+  "date": "2026-09-08",
+  "source_commit": "be7357b8212f8b3e460749cabfaeb0a64190adee",
+  "source_tree_sha256": "d8a439e52714a71ed86d6344c0d28f793cec1c5d66488995a7131d3c9ce38b63",
+  "runtime": {
+    "gpu": "H100 80GB",
+    "torch": "2.10.0+cu128",
+    "fla_core": "0.5.2"
+  },
+  "recipe": {
+    "initialization": "canonical normal",
+    "optimizer": "hybrid_muon_adamw",
+    "learning_rate": 0.0003,
+    "schedule": "constant, qualification only",
+    "gdn_chunk_size": 32,
+    "effective_batch_sequences": 64,
+    "context": 2048,
+    "moe_experts": 8,
+    "top_k": 1,
+    "M1_gamma": 0.001
+  },
+  "data": {
+    "bucket": "roccoangelella/small-llm-100b-datasets",
+    "shard": "run/100b-b64-dataset-001/train/train-000000.bin",
+    "sha256": "0f52dc53c407a86557f9e8ebcb95ba6b4bf73c2f81994b827deab6cd2a437d2a",
+    "selection": "first full 64-sequence block; qualification only"
+  },
+  "results": [
+    {
+      "arm": "D",
+      "precision": "fp16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 101252280,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.903883934020996,
+      "peak_memory_bytes": 37663919104,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.0005935660000204734
+    },
+    {
+      "arm": "M0",
+      "precision": "fp16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 404110520,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.983131408691406,
+      "peak_memory_bytes": 42398509568,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.01913861099998826
+    },
+    {
+      "arm": "M1",
+      "precision": "fp16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 404110520,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.983131408691406,
+      "peak_memory_bytes": 42398509568,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.019115567000000055
+    },
+    {
+      "arm": "D",
+      "precision": "bf16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 101252280,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.903911590576172,
+      "peak_memory_bytes": 37663918080,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.0007105709999848386
+    },
+    {
+      "arm": "M0",
+      "precision": "bf16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 404110520,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.98318099975586,
+      "peak_memory_bytes": 42398498304,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.025382677999999714
+    },
+    {
+      "arm": "M1",
+      "precision": "bf16",
+      "microbatch": 8,
+      "shape": [
+        64,
+        2048
+      ],
+      "seed": 17,
+      "stored_parameters": 404110520,
+      "status": "pass",
+      "step": 1,
+      "target_tokens": 131072,
+      "consumed_tokens": 131072,
+      "loss": 10.98318099975586,
+      "peak_memory_bytes": 42398498304,
+      "overflow_retries": 0,
+      "expert_statistics_seconds": 0.023464679999989357
+    }
+  ],
+  "microbatch16": {
+    "arm": "M0",
+    "precision": "bf16",
+    "status": "OOM",
+    "requested_allocation_GiB": 6.14,
+    "free_GiB": 5.71
+  },
+  "regression": {
+    "tests": 582,
+    "failures": 113,
+    "errors": 43,
+    "skips": 4,
+    "new_failure_or_error_ids_vs_recorded_baseline": [],
+    "runbook_passed": 40,
+    "runbook_cuda_skip": 1,
+    "separate_cuda_fp16_bf16_sanity": "pass"
+  },
+  "limits": [
+    "single update is not a learning or throughput comparison",
+    "first-update times include unequal compilation costs and are not compared",
+    "initial v1 probe omitted canonical initialization; excluded from these results",
+    "full real-data manifest/schedule integration, resume and intrinsic evaluation are not qualified by this artifact"
+  ],
+  "resume_smoke": {
+    "status": "pass",
+    "exact_tensor_equality": true,
+    "compared_tensors": 766,
+    "max_abs_difference": 0.0,
+    "mismatches": [],
+    "mismatch_count": 0,
+    "consumed_tokens": 260,
+    "global_step": 2,
+    "cuda_rng_keys": [
+      "cuda_rng_states"
+    ],
+    "prepare_container": "ta-01M20R6E4NY90N27V7BS74WWGR",
+    "resume_container": "ta-01M20RFM0HF50XYZCR57BSJNJR",
+    "probe_and_profile_oracles": "pass",
+    "scope": "smoke BF16 real CLI, synthetic fixture; not full-shape real-data resume"
+  },
+  "resume_independent_checks": {
+    "cursor_exact": true,
+    "next_block_id": 2,
+    "gradient_accumulation_position": 0,
+    "checkpoint_identities_equal": true,
+    "step2_probes_bitwise_equal": true,
+    "target_mask_count": 130
+  },
+  "observation_warm": {
+    "scope": "smoke BF16 2x65; production observation methods, fixed step1 checkpoint, warmed kernels",
+    "exact_state_equality": true,
+    "repeats_per_condition": 2,
+    "wall_seconds_ranges": {
+      "off": [
+        0.4721875129999944,
+        0.5672667460000014
+      ],
+      "telemetry": [
+        0.45183140199998206,
+        0.5960712720000174
+      ],
+      "profile": [
+        20.60284525999998,
+        23.308817016999996
+      ]
+    },
+    "trace_bytes_range": [
+      99496520,
+      99829534
+    ],
+    "limits": "two repeats per condition; excludes startup, checkpoint/probe saving and real-data/full-geometry overhead; not a statistical performance claim"
+  }
+}

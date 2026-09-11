@@ -1,8 +1,10 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-05
+Last reviewed: 2026-09-10
 
-MoE branch: the paired M0/M1 pilot is governed by [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md); no MoE GPU result is claimed yet.
+MoE branch execution efficiency (2026-09-10, local commits `b5e3ffb`, `8f195ee`, `fbe4ef2`, not pushed): ADR 0170 batches Muon Newton–Schulz by matrix shape, ADR 0171 fuses attention (SDPA) and scores the output loss in 4,096-token chunks with recompute, ADR 0172 sorts MoE dispatch with one host sync per layer. Equivalence to the previous implementations is proven on CPU (bit-identical for Muon and dispatch; FP32-rounding tolerance for attention and loss) by 18 new tests; the full suite (623 tests) shows no failing test id that was not already failing in the 2026-09-08 baseline log. Measured baseline motivating the work: [RTX 4090 profile](../evidence/moe_execution_profile_rtx4090_2026-09-08.md) — 11,073 targets/s, MFU ≈ 4 %, 521,704 launches and 5,120 `nonzero` syncs per update. **Measured on GPU the same day** by a paired A/B on one Modal A10 (same container, same data, same seed, code tree the only variable): **+19.6 % warm throughput** (8,990.7 → 10,750.0 targets/s), **−1.89 GiB peak** (14.31 → 12.43 GiB), **−21 % kernel launches**, **−66 % host synchronizations**, `nonzero` eliminated. The freed memory admits microbatch 4 for a further +13.2 % (**+35.3 % total**), which the old code cannot run: it dies on the 1.54 GiB FP32 logits tensor the chunked loss removes. The old arm reproduces the 2026-09-08 A10 figure to 0.5 %, validating the measurement chain. [Evidence](../evidence/moe_execution_ab_modal_a10_2026-09-10.md); contracts and remaining priorities in [`training_execution_efficiency.md`](../reference/training_execution_efficiency.md). Vast was unusable for this (no ssh from the team account).
+
+MoE branch: the paired M0/M1 pilot is governed by [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md); H100 single-update qualification passes for D/M0/M1 at microbatch8 in FP16/BF16; M0 microbatch16 fails with OOM in BF16. [Measured scope](../evidence/2026-09-08-modal-moe-qualification.json). Scientific pilot results remain unavailable.
 
 ## Repository and protocol state
 
@@ -141,3 +143,5 @@ The current optimization intentionally does not use `torch.nn.DataParallel`; dua
 `lm-evaluation-harness==0.4.12` is pinned in `requirements-eval.txt` rather
 than the training lock. Evaluation tooling must not perturb the training
 environment.
+
+Cache integration (2026-09-08): ADR0169 now wires reviewed Triton seed restore/harvest into both pilot wrappers. Local lifecycle tests cover failure and publication paths; GPU cache-hit/durability/savings checks are pending the next authorized useful run. No dedicated cache build or new GPU run was launched.

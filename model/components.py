@@ -200,25 +200,46 @@ class GatedMultiheadAttention(nn.Module):
         q = self.rotary(self.q_norm(q), positions)
         k = self.rotary(self.k_norm(k), positions)
 
-        # [B, T, H, D] -> [B, H, T, D] for the attention contraction.
-        # Keep the score calculation in FP32.  This reference path favors
-        # stable, obvious masking semantics over a fused attention kernel.
-        scores = torch.einsum("bthd,bshd->bhts", q.float(), k.float()) / math.sqrt(
-            self.config.head_dim
-        )
-        token_indices = torch.arange(sequence, device=x.device)
+        # Fused scaled-dot-product attention: no [B, H, T, T] score tensor is
+        # materialized and the softmax runs inside one kernel (FP32 accumulation
+        # in the CUDA kernels). Full causal attention uses ``is_causal``; the
+        # sliding window passes an explicit boolean mask. The unfused FP32
+        # reference is kept in ``reference_mix`` for equivalence tests.
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        if self.config.attention_window is None:
+            mixed = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        else:
+            mixed = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=self.allowed_mask(sequence, x.device)
+            )
+        mixed = mixed.transpose(1, 2).reshape(batch, sequence, self.config.d_model)
+        gated = mixed * torch.sigmoid(self.gate_proj(x))
+        return self.out_proj(gated)
+
+    def allowed_mask(self, sequence: int, device: torch.device) -> Tensor:
+        """Boolean [T, T] mask: True where a query may attend to a key."""
+
+        token_indices = torch.arange(sequence, device=device)
         allowed = token_indices[:, None] >= token_indices[None, :]
         if self.config.attention_window is not None:
             allowed = allowed & (
                 token_indices[:, None] - token_indices[None, :] < self.config.attention_window
             )
+        return allowed
+
+    def reference_mix(self, q: Tensor, k: Tensor, v: Tensor) -> Tensor:
+        """Unfused FP32-score reference for [B, T, H, D] inputs (tests only)."""
+
+        sequence = q.shape[1]
+        scores = torch.einsum("bthd,bshd->bhts", q.float(), k.float()) / math.sqrt(
+            self.config.head_dim
+        )
+        allowed = self.allowed_mask(sequence, q.device)
         scores = scores.masked_fill(~allowed.view(1, 1, sequence, sequence), float("-inf"))
         attention = F.softmax(scores, dim=-1).to(dtype=v.dtype)
-        mixed = torch.einsum("bhts,bshd->bthd", attention, v).reshape(
-            batch, sequence, self.config.d_model
-        )
-        gated = mixed * torch.sigmoid(self.gate_proj(x))
-        return self.out_proj(gated)
+        return torch.einsum("bhts,bshd->bthd", attention, v)
 
 
 # Compatibility spelling for callers that used the earlier descriptive name.

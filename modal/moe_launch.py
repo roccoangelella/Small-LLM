@@ -99,6 +99,7 @@ def train_pilot_h100(
 
     return _pilot.run_provider_payload(
         payload, provider="modal", run_root=RUN_ROOT, volume_commit=RUN_VOLUME.commit,
+        cache_root=CACHE_ROOT, cache_commit=CACHE_VOLUME.commit,
     )
 
 

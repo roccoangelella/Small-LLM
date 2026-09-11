@@ -33,6 +33,7 @@ This directory is the repository's system of record and uses progressive disclos
 - [`reference/100m_10b_incremental_dataset.md`](reference/100m_10b_incremental_dataset.md)
 - [`reference/training_system.md`](reference/training_system.md)
 - [`reference/optimizer_strategy.md`](reference/optimizer_strategy.md)
+- [`reference/training_execution_efficiency.md`](reference/training_execution_efficiency.md)
 - [`reference/training_and_evaluation.md`](reference/training_and_evaluation.md)
 - [`reference/eval_core_v1_design.md`](reference/eval_core_v1_design.md)
 - [`reference/post_training_sft.md`](reference/post_training_sft.md)

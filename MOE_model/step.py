@@ -7,6 +7,7 @@ import time
 import torch
 from torch.nn import functional as F
 
+from model.fused_loss import chunked_cross_entropy_sum
 from trainer.precision import autocast_context
 from trainer.step import (
     _backoff_scaler_after_nonfinite_gradient,
@@ -18,7 +19,7 @@ from trainer.step import (
     _optimizer_step_statistics,
     _ordered_batch_tensors,
 )
-from trainer.types import TokenBatch
+from trainer.types import IGNORE_INDEX, TokenBatch
 
 from .metrics import MoEStepMetrics
 
@@ -108,6 +109,33 @@ def _finalize_telemetry(engine: object, accumulator: list[dict[str, object]]) ->
     }
 
 
+def _moe_cross_entropy_sum(model, inputs: torch.Tensor, labels: torch.Tensor):
+    """Summed CE plus router aux. Models exposing ``hidden_states_with_aux`` are
+    scored in token chunks without materializing [tokens, vocabulary] logits;
+    other models keep the full-logits path."""
+
+    scorer = getattr(model, "hidden_states_with_aux", None)
+    if callable(scorer):
+        hidden, aux = scorer(inputs)
+        if hidden.ndim != 3 or hidden.shape[:2] != labels.shape:
+            raise RuntimeError("MoE hidden states do not match training labels")
+        ce_sum = chunked_cross_entropy_sum(
+            hidden,
+            model.token_embedding.weight,
+            labels,
+            semantic_vocab_size=model.config.semantic_vocab_size,
+            ignore_index=IGNORE_INDEX,
+        )
+        return ce_sum, aux
+    logits, aux = model.forward_with_aux(inputs)
+    if logits.ndim != 3 or logits.shape[:2] != labels.shape:
+        raise RuntimeError("MoE logits do not match training labels")
+    ce_sum = F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]), labels.reshape(-1), reduction="sum"
+    )
+    return ce_sum, aux
+
+
 def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
     if batch.split != "train" or batch.sequence_count <= 0:
         raise ValueError("training requires a non-empty train-split block")
@@ -138,6 +166,10 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
         input_ids, labels = _ordered_batch_tensors(batch)
         size = engine.config.microbatch_size
         total_positions = int(input_ids.numel())
+        # Quantile Balancing needs the step's token count before the microbatch loop:
+        # its target rank is K/E of the whole logical step, not of one microbatch.
+        for block in engine.model.blocks:
+            block.ffn.router.begin_step(total_positions)
         if total_positions <= 0:
             raise RuntimeError("MoE training block has no input positions")
 
@@ -152,14 +184,7 @@ def moe_train_step(engine: object, batch: TokenBatch) -> MoEStepMetrics:
             )
             position_fraction = float(micro_inputs.numel()) / float(total_positions)
             with _profile_region(engine, "forward_ce"), autocast_context(engine.config.precision, engine.device):
-                logits, aux = engine.model.forward_with_aux(micro_inputs)
-                if logits.ndim != 3 or logits.shape[:2] != micro_labels.shape:
-                    raise RuntimeError("MoE logits do not match training labels")
-                ce_sum = F.cross_entropy(
-                    logits.reshape(-1, logits.shape[-1]),
-                    micro_labels.reshape(-1),
-                    reduction="sum",
-                )
+                ce_sum, aux = _moe_cross_entropy_sum(engine.model, micro_inputs, micro_labels)
                 objective = (
                     ce_sum / batch.target_token_count
                     + z_coefficient * aux.z_loss * position_fraction

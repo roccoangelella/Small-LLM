@@ -1,9 +1,48 @@
 import unittest
+from unittest.mock import Mock, patch
 import torch
 from trainer import LiveBlockConsumer, TrainerConfig, TrainerEngine, TrainingSession, generate_token_ids
 from tests.trainer_fixtures import Coordinator, PreparedBlock, TinyLM, batch, payload
 
 class TrainerSessionTests(unittest.TestCase):
+    def test_late_optimizer_failure_is_not_retried_or_acknowledged(self):
+        from MOE_model.engine import MoETrainerEngine
+        from MOE_model.model import MoESmallLLM
+        from tests.test_moe_model import _tiny_moe_config
+
+        for kind in ("dense", "moe"):
+            with self.subTest(kind=kind):
+                model = TinyLM() if kind == "dense" else MoESmallLLM(_tiny_moe_config())
+                engine_type = TrainerEngine if kind == "dense" else MoETrainerEngine
+                engine = engine_type(model, TrainerConfig(precision="fp32",
+                    optimizer="adamw" if kind == "dense" else "hybrid_muon_adamw",
+                    microbatch_size=1, weight_decay=0.0), device="cpu")
+                source = Mock()
+                source.next_batch.return_value = batch(0)
+                session = TrainingSession(engine, source)
+                parameter = next(model.parameters())
+                before = parameter.detach().clone()
+
+                def fail_after_mutation(*args, **kwargs):
+                    with torch.no_grad():
+                        parameter.add_(1)
+                    raise FloatingPointError("late optimizer failure")
+
+                with patch.object(engine.optimizer, "step", side_effect=fail_after_mutation) as step:
+                    with self.assertRaisesRegex(FloatingPointError, "late optimizer failure"):
+                        session.step()
+                step.assert_called_once()
+                source.acknowledge.assert_not_called()
+                self.assertFalse(torch.equal(parameter, before))
+                self.assertEqual(engine.global_step, 0)
+                self.assertEqual(engine.consumed_tokens, 0)
+                self.assertEqual(engine.scheduler.committed_tokens, 0)
+                self.assertEqual(engine.overflow_events, 0)
+                if kind == "moe":
+                    for block in model.blocks:
+                        self.assertEqual(int(block.ffn.router.token_exposure.sum()), 0)
+                        self.assertEqual(int(block.ffn.router.expert_updates.sum()), 0)
+
     def test_joint_checkpoint_cursor_and_generation(self):
         blocks = [PreparedBlock(0,"train",2,8,payload([[1,2,3,4],[2,3,4,5]])),
                   PreparedBlock(1,"train",2,8,payload([[2,3,4,5],[3,4,5,6]]))]

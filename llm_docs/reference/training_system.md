@@ -1,6 +1,6 @@
 # Training system
 
-_Last reviewed: 2026-08-29_
+_Last reviewed: 2026-09-10_
 
 ## Core optimizer-step contract
 
@@ -16,6 +16,13 @@ A block is acknowledged only after the synchronized optimizer update succeeds. F
 ## Model execution
 
 Production CUDA GDN-2 uses `fla-core==0.5.2`, FP32 master parameters, and CUDA FP16 autocast. Saved model config uses `gdn_chunk_size=32`; FLA's internal runtime chunk is 64. The adaptive PyTorch recurrence and reference chunkwise implementations remain correctness/fallback tools, not the selected production CUDA path.
+
+Training loss (ADR 0171): the steps call `hidden_states` / `hidden_states_with_aux` and score the
+final-normed hidden states with `model.fused_loss.chunked_cross_entropy_sum` (4,096-token chunks,
+recompute in backward), so the [tokens, vocabulary] logits are never held for backward; models
+without the entry point fall back to full logits. MoE dispatch (ADR 0172) sorts tokens by expert
+once and performs one host synchronization per layer instead of one `nonzero` per expert. Execution
+contracts and the measured baseline: [`training_execution_efficiency.md`](training_execution_efficiency.md).
 
 ## Optimizer and schedule
 

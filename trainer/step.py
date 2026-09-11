@@ -1,4 +1,8 @@
-"""One atomic prepared-block optimizer update."""
+"""One prepared-block update; commit progress only after optimizer success.
+
+Late optimizer exceptions propagate: the live state may be partially mutated and
+must be discarded or reloaded, not retried as an ordinary gradient overflow.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from torch.optim import Optimizer
 from .metrics import StepMetrics
 from .precision import autocast_context
 from .types import IGNORE_INDEX, TokenBatch
+from model.fused_loss import chunked_cross_entropy_sum
 
 
 def _profile_region(engine: object, name: str):
@@ -140,6 +145,31 @@ def _microbatch_to_device(
     )
 
 
+def _cross_entropy_sum(model, inputs: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Summed training CE. Models exposing ``hidden_states`` are scored in token
+    chunks without materializing [tokens, vocabulary] logits; other models keep
+    the full-logits path."""
+
+    scorer = getattr(model, "hidden_states", None)
+    if callable(scorer):
+        hidden = scorer(inputs)
+        if hidden.ndim != 3 or hidden.shape[:2] != labels.shape:
+            raise RuntimeError("model hidden states do not match training labels")
+        return chunked_cross_entropy_sum(
+            hidden,
+            model.token_embedding.weight,
+            labels,
+            semantic_vocab_size=model.config.semantic_vocab_size,
+            ignore_index=IGNORE_INDEX,
+        )
+    logits = model(inputs)
+    if logits.ndim != 3 or logits.shape[:2] != labels.shape:
+        raise RuntimeError("model logits do not match training labels")
+    return F.cross_entropy(
+        logits.reshape(-1, logits.shape[-1]), labels.reshape(-1), reduction="sum"
+    )
+
+
 def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
     if batch.split != "train" or batch.sequence_count <= 0:
         raise ValueError("training requires a non-empty train-split block")
@@ -174,14 +204,7 @@ def train_step(engine: object, batch: TokenBatch) -> StepMetrics:
                 device=engine.device,
             )
             with _profile_region(engine, "forward_ce"), autocast_context(engine.config.precision, engine.device):
-                logits = engine.model(microbatch_inputs)
-                if logits.ndim != 3 or logits.shape[:2] != microbatch_labels.shape:
-                    raise RuntimeError("model logits do not match training labels")
-                loss_sum = F.cross_entropy(
-                    logits.reshape(-1, logits.shape[-1]),
-                    microbatch_labels.reshape(-1),
-                    reduction="sum",
-                )
+                loss_sum = _cross_entropy_sum(engine.model, microbatch_inputs, microbatch_labels)
             if not torch.isfinite(loss_sum):
                 engine.scheduler.cancel_step()
                 engine.optimizer.zero_grad(set_to_none=True)

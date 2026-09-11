@@ -57,7 +57,11 @@ def _build_training_optimizer(model: nn.Module, config: TrainerConfig) -> Optimi
 
 
 class TrainerEngine:
-    """Train one prepared block as one atomic optimizer update."""
+    """Train a prepared block and commit progress after optimizer success.
+
+    On a late optimizer exception, abort and reload a complete checkpoint; the
+    underlying in-place optimizer does not roll back partial mutations.
+    """
 
     STATE_VERSION = 1
 

@@ -19,7 +19,13 @@ from trainer.optimizer import (
 from trainer.optimizer_telemetry import InstrumentedHybridMuonAdamW
 
 
+_STACKED_EXPERT_SUFFIXES = (".ffn.gate_weight", ".ffn.up_weight", ".ffn.down_weight")
+
+
 def _is_expert_matrix(name: str, parameter: nn.Parameter) -> bool:
+    if name.endswith(_STACKED_EXPERT_SUFFIXES) and parameter.ndim == 3:
+        # One stacked parameter per projection: a batch of per-expert matrices.
+        return True
     expert_path = ".ffn.experts." in name or name.startswith("ffn.experts.")
     return (
         parameter.ndim == 2
@@ -36,6 +42,7 @@ def _is_router_matrix(name: str, parameter: nn.Parameter) -> bool:
 
 
 def classify_moe_parameters(model: nn.Module) -> _ClassifiedParameters:
+    router_without_decay = int(getattr(getattr(model, "config", None), "version", 2)) >= 3
     exclusions = optimizer_no_weight_decay_parameter_names(model)
     muon_names: list[str] = []
     adamw_decay_names: list[str] = []
@@ -59,8 +66,15 @@ def classify_moe_parameters(model: nn.Module) -> _ClassifiedParameters:
             muon_names.append(name)
             muon.append(parameter)
         elif _is_router_matrix(name, parameter):
-            adamw_decay_names.append(name)
-            adamw_decay.append(parameter)
+            # The version-3 router contract puts the router matrix on AdamW with
+            # weight_decay = 0 and no router-specific learning-rate multiplier. The
+            # frozen version-2 identity keeps it in the decaying group.
+            if router_without_decay:
+                adamw_no_decay_names.append(name)
+                adamw_no_decay.append(parameter)
+            else:
+                adamw_decay_names.append(name)
+                adamw_decay.append(parameter)
         elif _is_known_adamw_parameter(name):
             if name in exclusions:
                 adamw_no_decay_names.append(name)

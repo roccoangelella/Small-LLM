@@ -65,6 +65,15 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
 
         return copy.deepcopy(self._last_step_statistics)
 
+    _snapshot_before_muon_update = True
+
+    def _on_muon_update(
+        self, parameter: nn.Parameter, *, before: Tensor | None, direction: Tensor
+    ) -> None:
+        if before is None:
+            raise RuntimeError("optimizer telemetry requires the pre-update weight snapshot")
+        self._record_update(parameter, before=before, role="muon", direction=direction)
+
     def _record_update(
         self,
         parameter: nn.Parameter,
@@ -280,8 +289,7 @@ class InstrumentedHybridMuonAdamW(HybridMuonAdamW):
             for group in self.param_groups:
                 role = group.get("optimizer_role")
                 if role == "muon":
-                    for parameter in group["params"]:
-                        self._muon_step(parameter, group)
+                    self._muon_group_step(group)
                 elif role in {"adamw_decay", "adamw_no_decay"}:
                     for parameter in group["params"]:
                         self._adamw_step(parameter, group)
