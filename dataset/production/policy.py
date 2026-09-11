@@ -41,6 +41,26 @@ class ProductionPolicy:
         return asdict(self)
 
 
+def tokenizer_contract() -> dict[str, object]:
+    """Return the active corpus tokenization identity.
+
+    Legacy GPT-2 production does not install any dynamic fields and therefore
+    retains the historical defaults.  The accepted MoE producer installs the
+    frozen SuperBPE identity before any configuration/schema hashes are made.
+    """
+
+    return {
+        "source_tokenizer_id": getattr(config, "CORPUS_SOURCE_TOKENIZER_ID", config.TOKENIZER_ID),
+        "output_tokenizer_id": getattr(config, "CORPUS_OUTPUT_TOKENIZER_ID", config.TOKENIZER_ID),
+        "tokenizer_artifact": getattr(config, "CORPUS_TOKENIZER_ARTIFACT", None),
+        "tokenizer_sha256": getattr(config, "CORPUS_TOKENIZER_SHA256", None),
+        "semantic_vocab_size": int(
+            getattr(config, "CORPUS_SEMANTIC_VOCAB_SIZE", config.VOCAB_SIZE)
+        ),
+        "eod_token_id": int(config.EOD_TOKEN_ID),
+    }
+
+
 def stream_config_dict(value: StreamCacheConfig) -> dict[str, object]:
     return {
         "context_length": value.context_length,
@@ -65,6 +85,7 @@ def stream_config_dict(value: StreamCacheConfig) -> dict[str, object]:
         "reader_batch_source_tokens": value.reader_batch_source_tokens,
         "reader_batch_documents": value.reader_batch_documents,
         "reader_batch_max_bytes": value.reader_batch_max_bytes,
+        "tokenizer": tokenizer_contract(),
     }
 
 
@@ -82,6 +103,7 @@ def configuration_hash(policy: ProductionPolicy, stream: StreamCacheConfig, plan
 
 
 def schema_hash(stream: StreamCacheConfig) -> str:
+    contract = tokenizer_contract()
     return stable_hash({
         "stream_cache_schema_version": STREAM_CACHE_SCHEMA_VERSION,
         "sequence_format": "context_plus_one",
@@ -90,7 +112,7 @@ def schema_hash(stream: StreamCacheConfig) -> str:
         "sequences_per_block": stream.sequences_per_block,
         "int_type": config.INT_TYPE,
         "byte_order": config.BYTE_ORDER,
-        "eod_token_id": config.EOD_TOKEN_ID,
+        "tokenizer": contract,
     })
 
 
@@ -102,11 +124,12 @@ def incorporated_source_tokens(producer: StreamCacheProducer) -> int:
     )
 
 
-def reader_configuration(stream: StreamCacheConfig) -> dict[str, int]:
+def reader_configuration(stream: StreamCacheConfig) -> dict[str, object]:
     return {
         "reader_workers": stream.reader_workers,
         "max_in_flight_work_items": stream.max_in_flight_work_items,
         "reader_batch_source_tokens": stream.reader_batch_source_tokens,
         "reader_batch_documents": stream.reader_batch_documents,
         "reader_batch_max_bytes": stream.reader_batch_max_bytes,
+        "tokenizer": tokenizer_contract(),
     }
