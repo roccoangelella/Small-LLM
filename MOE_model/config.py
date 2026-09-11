@@ -109,7 +109,7 @@ class MoEModelConfig:
         if not math.isfinite(self.balancing_step_size) or self.balancing_step_size < 0:
             raise ValueError("balancing_step_size must be finite and non-negative")
         if self.load_balancing != "loss_free_sign" and self.balancing_step_size != 0:
-            raise ValueError("M0 requires balancing_step_size=0")
+            raise ValueError("only loss_free_sign accepts a non-zero balancing_step_size")
         if self.capacity_factor is not None or self.dropped_tokens_allowed:
             raise ValueError("first MoE experiment is strictly dropless")
         if self.shared_expert:
@@ -129,17 +129,17 @@ class MoEModelConfig:
 
     @classmethod
     def accepted(cls, **overrides: object) -> "MoEModelConfig":
-        """The geometry the owner fixed on 2026-09-09: 64 experts, Top-2, no shared.
+        """Accepted production geometry: 64 experts, Top-2, no shared expert.
 
         Eight decoder layers in the frozen (gdn, gdn, gdn, mha) pattern give six GDN-2
         blocks and two gated-MHA blocks; width 256 with four 64-wide heads; SwiGLU experts
-        of width 352; an 8,192-entry tied vocabulary. Counting these parameters must give
-        144,074,648 stored and 9,987,992 active per token, which is the independent check
-        against the architecture options document.
+        of width 352. The frozen tokenizer exposes exactly 8,000 semantic IDs while the
+        tied embedding tensor is physically padded to 8,192 rows for alignment. The extra
+        rows are storage only and must never become corpus IDs or output classes.
         """
 
         dense_fields = {
-            "semantic_vocab_size": 8_192, "padded_vocab_size": 8_192, "max_seq_len": 2_048,
+            "semantic_vocab_size": 8_000, "padded_vocab_size": 8_192, "max_seq_len": 2_048,
             # dense d_ff=704 is the reference the owner's granularity ADR matches
             # (K*h = 2*352 = 704); experts are decoupled from it via expert_type="swiglu".
             "d_model": 256, "n_layers": 8, "d_ff": 704, "n_heads": 4, "head_dim": 64,
@@ -155,9 +155,8 @@ class MoEModelConfig:
             "router_combine": "normalised_topk_softmax",
             "dispatch": "dropless_padded_batched_gemm",
             "moe_layer_indices": tuple(range(int(dense_fields["n_layers"]))),
-            # The owner's accepted router contract: sqrt-softplus affinities, no softmax
-            # z-loss, router init 0.02. Load balancing stays off until Quantile Balancing
-            # has a specified estimator.
+            # Accepted router contract: sqrt-softplus affinities, no classical softmax
+            # z-loss, router init 0.02, and Quantile Balancing for selection only.
             "router_scoring": "sqrt_softplus",
             "router_init_std": 0.02,
             "router_z_loss_coefficient": 0.0,
