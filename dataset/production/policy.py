@@ -42,12 +42,7 @@ class ProductionPolicy:
 
 
 def tokenizer_contract() -> dict[str, object]:
-    """Return the active corpus tokenization identity.
-
-    Legacy GPT-2 production does not install any dynamic fields and therefore
-    retains the historical defaults.  The accepted MoE producer installs the
-    frozen SuperBPE identity before any configuration/schema hashes are made.
-    """
+    """Return the active corpus tokenization identity."""
 
     return {
         "source_tokenizer_id": getattr(config, "CORPUS_SOURCE_TOKENIZER_ID", config.TOKENIZER_ID),
@@ -61,8 +56,19 @@ def tokenizer_contract() -> dict[str, object]:
     }
 
 
+def _legacy_gpt2_contract(contract: Mapping[str, object]) -> bool:
+    return (
+        contract.get("source_tokenizer_id") == config.TOKENIZER_ID
+        and contract.get("output_tokenizer_id") == config.TOKENIZER_ID
+        and contract.get("tokenizer_artifact") is None
+        and contract.get("tokenizer_sha256") is None
+        and contract.get("semantic_vocab_size") == config.VOCAB_SIZE
+        and contract.get("eod_token_id") == 50_256
+    )
+
+
 def stream_config_dict(value: StreamCacheConfig) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "context_length": value.context_length,
         "sequences_per_block": value.sequences_per_block,
         "target_shard_bytes": value.target_shard_bytes,
@@ -85,8 +91,11 @@ def stream_config_dict(value: StreamCacheConfig) -> dict[str, object]:
         "reader_batch_source_tokens": value.reader_batch_source_tokens,
         "reader_batch_documents": value.reader_batch_documents,
         "reader_batch_max_bytes": value.reader_batch_max_bytes,
-        "tokenizer": tokenizer_contract(),
     }
+    contract = tokenizer_contract()
+    if not _legacy_gpt2_contract(contract):
+        result["tokenizer"] = contract
+    return result
 
 
 def stable_hash(value: Mapping[str, object]) -> str:
@@ -104,6 +113,19 @@ def configuration_hash(policy: ProductionPolicy, stream: StreamCacheConfig, plan
 
 def schema_hash(stream: StreamCacheConfig) -> str:
     contract = tokenizer_contract()
+    if _legacy_gpt2_contract(contract):
+        # Preserve the historical hash input exactly so already-started GPT-2
+        # dataset producers remain resumable after this feature lands.
+        return stable_hash({
+            "stream_cache_schema_version": STREAM_CACHE_SCHEMA_VERSION,
+            "sequence_format": "context_plus_one",
+            "context_length": stream.context_length,
+            "stored_sequence_tokens": stream.context_length + 1,
+            "sequences_per_block": stream.sequences_per_block,
+            "int_type": config.INT_TYPE,
+            "byte_order": config.BYTE_ORDER,
+            "eod_token_id": 50_256,
+        })
     return stable_hash({
         "stream_cache_schema_version": STREAM_CACHE_SCHEMA_VERSION,
         "sequence_format": "context_plus_one",
@@ -125,11 +147,14 @@ def incorporated_source_tokens(producer: StreamCacheProducer) -> int:
 
 
 def reader_configuration(stream: StreamCacheConfig) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "reader_workers": stream.reader_workers,
         "max_in_flight_work_items": stream.max_in_flight_work_items,
         "reader_batch_source_tokens": stream.reader_batch_source_tokens,
         "reader_batch_documents": stream.reader_batch_documents,
         "reader_batch_max_bytes": stream.reader_batch_max_bytes,
-        "tokenizer": tokenizer_contract(),
     }
+    contract = tokenizer_contract()
+    if not _legacy_gpt2_contract(contract):
+        result["tokenizer"] = contract
+    return result
