@@ -21,7 +21,7 @@ from dataset.src.workplan import build_work_plan, load_work_plan, save_work_plan
 
 from .builder import build_production_cache
 from .incremental_builder import build_incremental_production_cache
-from .policy import DEFAULT_CHECKPOINT_SOURCE_TOKENS, ProductionPolicy
+from .policy import DEFAULT_CHECKPOINT_SOURCE_TOKENS, ProductionPolicy, tokenizer_contract
 from .remote import DURABILITY_MANIFEST_FILENAME
 from .safety import preflight_disk, preflight_remote_shard_disk
 
@@ -78,6 +78,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--allow-local-only", action="store_true")
     parser.add_argument("--allow-unsafe-low-disk", action="store_true")
+    parser.add_argument(
+        "--tokenizer-contract",
+        choices=("gpt2", "superbpe_8000"),
+        default="gpt2",
+        help=(
+            "Token representation counted by scheduling and written to shards. "
+            "superbpe_8000 decodes each accepted GPT-2 source document and re-encodes "
+            "it with tokenizer/superbpe_8000.json before stratification."
+        ),
+    )
     parser.add_argument(
         "--evict-remote-shards",
         action="store_true",
@@ -148,7 +158,14 @@ def main(
 ) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
+    tokenizer_installation = None
     try:
+        if args.tokenizer_contract == "superbpe_8000":
+            from dataset.superbpe_retokenization import install_superbpe_retokenization
+
+            tokenizer_installation = install_superbpe_retokenization(
+                Path(__file__).resolve().parents[2]
+            )
         if args.allow_local_only and args.evict_remote_shards:
             raise RuntimeError("--evict-remote-shards requires HF bucket durability")
         if args.incremental_frontier:
@@ -284,8 +301,13 @@ def main(
                 evict_remote_shards=args.evict_remote_shards,
             )
 
+        active_tokenizer = tokenizer_contract()
         manifest["sequences_per_block"] = stream.sequences_per_block
         manifest["target_shard_bytes"] = stream.target_shard_bytes
+        manifest["tokenizer"] = active_tokenizer
+        manifest["semantic_vocab_size"] = int(active_tokenizer["semantic_vocab_size"])
+        manifest["eod_token_id"] = int(active_tokenizer["eod_token_id"])
+        manifest["source_token_unit"] = str(active_tokenizer["output_tokenizer_id"])
         manifest["remote_transport"] = {
             "backend": "hf_bucket" if not args.allow_local_only else "local_only",
             "evict_local_finalized_shards": bool(args.evict_remote_shards),
@@ -323,3 +345,6 @@ def main(
     except Exception as error:  # noqa: BLE001 - concise CLI failure boundary
         sys.stderr.write(f"production dataset error: {type(error).__name__}: {error}\n")
         return 1
+    finally:
+        if tokenizer_installation is not None:
+            tokenizer_installation.restore()
