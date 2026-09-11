@@ -28,9 +28,11 @@ def _load_existing_launcher():
 
 _base = _load_existing_launcher()
 _modal = _base.modal
-DATASET_IMAGE = _base.IMAGE.uv_pip_install(
-    "tiktoken==0.14.0",
-    "tokenizers==0.23.2",
+DATASET_IMAGE = _base._with_local_repo(
+    _base.IMAGE_BASE.uv_pip_install(
+        "tiktoken==0.14.0",
+        "tokenizers==0.23.2",
+    )
 )
 app = _modal.App("small-llm-moe-100b-superbpe-dataset", image=DATASET_IMAGE)
 

@@ -38,7 +38,7 @@ RUN_VOLUME = modal.Volume.from_name("small-llm-runs", create_if_missing=True)
 CACHE_VOLUME = modal.Volume.from_name("small-llm-cache", create_if_missing=True)
 TRAINING_SECRET = modal.Secret.from_name("small-llm-training")
 
-IMAGE = (
+IMAGE_BASE = (
     modal.Image.from_registry("nvidia/cuda:12.8.1-devel-ubuntu24.04", add_python="3.13")
     .apt_install("git")
     .uv_pip_install(
@@ -59,14 +59,19 @@ IMAGE = (
             "PYTHONUNBUFFERED": "1",
         }
     )
-    .add_local_python_source("profiles")
-    .add_local_dir(
+)
+
+
+def _with_local_repo(image: modal.Image) -> modal.Image:
+    return image.add_local_python_source("profiles").add_local_dir(
         LOCAL_REPO,
         remote_path=str(REMOTE_REPO),
         copy=False,
         ignore=[".git/**", ".venv/**", ".pytest_cache/**", "**/__pycache__/**", "*.pyc"],
     )
-)
+
+
+IMAGE = _with_local_repo(IMAGE_BASE)
 app = modal.App(APP_NAME, image=IMAGE)
 
 
