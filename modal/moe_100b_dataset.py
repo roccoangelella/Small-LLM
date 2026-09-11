@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -39,6 +40,21 @@ TRAINING_SECRET = _base.TRAINING_SECRET
 REMOTE_REPO = _base.REMOTE_REPO
 
 
+def _hf_bucket_identity() -> tuple[str, str]:
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("HF_TOKEN is required for the 100B dataset producer")
+    explicit = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
+    if explicit:
+        return explicit, token
+    repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID", "").strip()
+    if not repo_id:
+        raise RuntimeError(
+            "SMALL_LLM_HF_DATASET_BUCKET_ID or SMALL_LLM_HF_REPO_ID is required"
+        )
+    return f"{repo_id}-datasets", token
+
+
 @app.function(
     cpu=8,
     memory=32768,
@@ -58,7 +74,6 @@ def produce_superbpe_100b(
     from dataset.incremental_frontier import SHARD_FRONTIER_FILENAME
     from dataset.moe_100b import main as production_main
     from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
-    import runtime as base_runtime
 
     output = CACHE_ROOT / "producer" / RUN_ID
     output.mkdir(parents=True, exist_ok=True)
@@ -80,11 +95,10 @@ def produce_superbpe_100b(
         raise RuntimeError(f"100B SuperBPE producer exited with status {code}")
     CACHE_VOLUME.commit()
 
-    explicit = __import__("os").environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
-    bucket_id = explicit or f"{base_runtime._hf_model_repo_id()}-datasets"
+    bucket_id, token = _hf_bucket_identity()
     store = HuggingFaceBucketShardStore(
         bucket_id,
-        token=base_runtime._hf_token(),
+        token=token,
         private=True,
         create_bucket=False,
     )
