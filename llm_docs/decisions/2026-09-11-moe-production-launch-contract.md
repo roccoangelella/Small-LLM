@@ -39,13 +39,24 @@ Status: Accepted; production wiring implemented on `moe-8e-top1`, exact GPU qual
 
 ## Wiring status
 
-Implemented on branch `moe-8e-top1` through head `d8bd2ca3880a10b05a133f75a32c2ad322c5fb47`:
+MoE model production wiring was implemented on branch `moe-8e-top1` through `d8bd2ca3880a10b05a133f75a32c2ad322c5fb47`:
 
-- `MoEModelConfig.accepted()` now uses `semantic_vocab_size=8000`, `padded_vocab_size=8192`, 64 experts, Top-2, width-352 experts, sqrt-softplus routing, Quantile Balancing, and batched dropless expert GEMM.
+- `MoEModelConfig.accepted()` uses `semantic_vocab_size=8000`, `padded_vocab_size=8192`, 64 experts, Top-2, width-352 experts, sqrt-softplus routing, Quantile Balancing, and batched dropless expert GEMM.
 - `python -m MOE_model --model-size accepted` is an explicit production identity. The generic balancing CLI no longer defaults the accepted path to `none`; attempts to downgrade accepted routing to `none` or `loss_free_sign` are rejected.
 - Production telemetry reports the configured Top-K instead of the historical hard-coded Top-1 value.
 - Dedicated provider-neutral production execution plus separate Modal H100 and Beam RTX4090 production launchers were added. Historical M0/M1 pilot launchers remain unchanged for reproducibility.
 - Production commands pin GDN chunk size 32 so generic precision-dependent CLI defaults cannot silently mutate the accepted checkpoint-visible model configuration.
-- Regression contracts now cover the 8,000/8,192 semantic-vs-physical vocabulary split, intrinsic Quantile selection, failed-attempt Quantile rollback semantics, production Top-K telemetry, fixed provider command identity, and the corpus-token bound (`7999` accepted; `8000` rejected).
+- Regression contracts cover the 8,000/8,192 semantic-vs-physical vocabulary split, intrinsic Quantile selection, failed-attempt Quantile rollback semantics, production Top-K telemetry, fixed provider command identity, and the corpus-token bound (`7999` accepted; `8000` rejected).
 
-No GitHub Actions workflow is attached to the branch head, and the exact 64E/Top-2 GPU qualification has **not yet been executed**. Therefore the wiring is implemented but is not yet authorized for the long production run. The accepted SuperBPE retokenization pipeline may be wired and qualified in parallel, but the long MoE training launch remains gated on the exact GPU qualification.
+The accepted SuperBPE 100B data path was subsequently wired on `moe-8e-top1` through head `c3863a0c4ba644320c6d28fe8f259e0243b5c87f`:
+
+- `dataset/superbpe_retokenization.py` converts accepted ClimbMix records at the document boundary: optional terminal GPT-2 EOD removal -> exact GPT-2 byte decode -> strict UTF-8 reconstruction -> frozen SuperBPE encode. The converted token tuple is what the existing `SourceDocument` and deficit scheduler see.
+- Ordinary pretraining source text can emit only SuperBPE BPE IDs `0..7991`. Reserved/control strings such as literal `<think>` are not interpreted as control tokens during corpus encoding; EOD `7992` is inserted only by the existing packer.
+- The producer fails closed if the frozen tokenizer artifact no longer matches Git blob `a4daaa638a4d9db10270a65e8a6b55a9b94a9fd4`, validates the exact special-token inventory, records a runtime SHA-256, and includes tokenizer/vocab/EOD identity in SuperBPE configuration/schema/resume hashes.
+- Legacy GPT-2 production hash inputs are preserved exactly so this new feature does not invalidate historical GPT-2 producer resume state.
+- The final manifest records the tokenizer contract, `semantic_vocab_size=8000`, `eod_token_id=7992`, and SuperBPE as the source-token accounting unit. Full shard verification uses the manifest semantic-vocabulary bound rather than the historical GPT-2 size.
+- `dataset/moe_100b.py` freezes a dedicated `moe-100b-superbpe-b64-dataset-001` profile at 100B SuperBPE source tokens, 90B/110B min/max, context 2048, 64 sequences/block, 1 GiB shards, 500M-source-token durable checkpoints, incremental READY publication and existing HF Storage Bucket durability.
+- `modal/moe_100b_dataset.py` is a CPU-only resumable producer entrypoint using the same production pipeline and HF upload/frontier machinery; it does not launch the MoE training job.
+- Targeted regression tests were added for retokenization-before-accounting, literal reserved-token text, EOD replacement, tokenizer-dependent resume hashes, semantic-vocabulary verification and the frozen 100B profile.
+
+No GitHub Actions workflow/status checks are attached to branch head `c3863a0c4ba644320c6d28fe8f259e0243b5c87f`. A local clean-checkout test attempt from the assistant sandbox could not run because that environment could not resolve `github.com`; therefore the new tests are **written but not yet executed in a qualified project environment**. No 100B corpus production has been launched yet. The exact 64E/Top-2 GPU qualification also remains pending, so the long MoE training launch is still gated.
