@@ -92,10 +92,12 @@ def produce_superbpe_100b(
     weights = REMOTE_REPO / "dataset" / "climbmix_code_free_weights.json"
     if not weights.is_file():
         raise RuntimeError(f"missing production weights: {weights}")
+    bucket_id, token = _hf_bucket_identity(dataset_bucket_id)
 
     args = [
         "--weights-file", str(weights),
         "--output-dir", str(output),
+        "--hf-bucket-id", bucket_id,
         "--reader-workers", str(reader_workers),
         "--max-in-flight-work-items", str(max_in_flight_work_items),
     ]
@@ -107,7 +109,6 @@ def produce_superbpe_100b(
         raise RuntimeError(f"100B SuperBPE producer exited with status {code}")
     CACHE_VOLUME.commit()
 
-    bucket_id, token = _hf_bucket_identity(dataset_bucket_id)
     store = HuggingFaceBucketShardStore(
         bucket_id,
         token=token,

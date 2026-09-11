@@ -189,6 +189,7 @@ class MoE100BProfileTests(unittest.TestCase):
         self.assertIn('_REMOTE_REPO_ROOT = Path("/root/small-llm")', source)
         self.assertIn("_base._with_local_repo(", source)
         self.assertIn("_base.IMAGE_BASE.uv_pip_install(", source)
+        self.assertIn('"--hf-bucket-id", bucket_id', source)
         self.assertIn("private=False", source)
         self.assertIn("store.verify_bucket_visibility()", source)
 
