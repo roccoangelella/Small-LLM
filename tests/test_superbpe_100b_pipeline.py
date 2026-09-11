@@ -44,6 +44,20 @@ def _stream() -> StreamCacheConfig:
     )
 
 
+def _plan() -> WorkPlan:
+    return WorkPlan(
+        schema_version=config.WORK_PLAN_SCHEMA_VERSION,
+        dataset="repo",
+        revision="rev",
+        source_glob="part_*.jsonl",
+        selection_seed="seed",
+        region_bytes=1,
+        source_files=(),
+        work_items=(),
+        hash="a" * 64,
+    )
+
+
 class SuperBPERetokenizationTests(unittest.TestCase):
     def _source_record(self, text: str) -> ParsedRecord:
         import tiktoken
@@ -110,15 +124,7 @@ class SuperBPERetokenizationTests(unittest.TestCase):
 
     def test_superbpe_identity_changes_hashes_but_restore_recovers_legacy(self) -> None:
         stream = _stream()
-        plan = WorkPlan(
-            repository="repo",
-            revision="rev",
-            region_bytes=1,
-            seed="seed",
-            source_files=(),
-            work_items=(),
-            hash="a" * 64,
-        )
+        plan = _plan()
         policy = ProductionPolicy("unit-test", target_source_tokens=10,
                                   minimum_source_tokens=9, maximum_source_tokens=11,
                                   checkpoint_source_tokens=2, remote_required=False)
