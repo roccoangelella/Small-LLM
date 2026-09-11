@@ -113,13 +113,29 @@ def _load_target_tokenizer(path: Path):
     if not isinstance(vocab, dict):
         raise RuntimeError("frozen SuperBPE tokenizer has no BPE vocabulary")
     ids = sorted(value for value in vocab.values() if isinstance(value, int) and not isinstance(value, bool))
-    if ids != list(range(TARGET_SOURCE_VOCAB_SIZE)):
+    if ids != list(range(TARGET_SEMANTIC_VOCAB_SIZE)):
         raise RuntimeError(
-            "frozen SuperBPE BPE vocabulary must be exactly IDs 0..7991 before specials"
+            "frozen SuperBPE BPE vocabulary must be exactly semantic IDs 0..7999"
+        )
+    model_specials = {
+        token_id: token
+        for token, token_id in vocab.items()
+        if token_id >= TARGET_SOURCE_VOCAB_SIZE
+    }
+    if model_specials != EXPECTED_SPECIAL_TOKENS:
+        raise RuntimeError(
+            f"unexpected SuperBPE model special-token inventory: {model_specials!r}"
         )
 
     source_text_payload = dict(payload)
     source_text_payload["added_tokens"] = []
+    source_text_model = dict(model)
+    source_text_model["vocab"] = {
+        token: token_id
+        for token, token_id in vocab.items()
+        if token_id < TARGET_SOURCE_VOCAB_SIZE
+    }
+    source_text_payload["model"] = source_text_model
     tokenizer = Tokenizer.from_str(
         json.dumps(source_text_payload, ensure_ascii=False, separators=(",", ":"))
     )

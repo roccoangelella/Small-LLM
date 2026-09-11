@@ -40,11 +40,13 @@ TRAINING_SECRET = _base.TRAINING_SECRET
 REMOTE_REPO = _base.REMOTE_REPO
 
 
-def _hf_bucket_identity() -> tuple[str, str]:
+def _hf_bucket_identity(explicit_bucket_id: str = "") -> tuple[str, str]:
     token = os.environ.get("HF_TOKEN", "").strip()
     if not token:
         raise RuntimeError("HF_TOKEN is required for the 100B dataset producer")
-    explicit = os.environ.get("SMALL_LLM_HF_DATASET_BUCKET_ID", "").strip()
+    explicit = explicit_bucket_id.strip() or os.environ.get(
+        "SMALL_LLM_HF_DATASET_BUCKET_ID", ""
+    ).strip()
     if explicit:
         return explicit, token
     repo_id = os.environ.get("SMALL_LLM_HF_REPO_ID", "").strip()
@@ -65,6 +67,7 @@ def _hf_bucket_identity() -> tuple[str, str]:
     volumes={str(CACHE_ROOT): CACHE_VOLUME},
 )
 def produce_superbpe_100b(
+    dataset_bucket_id: str,
     reader_workers: int = 8,
     max_in_flight_work_items: int = 32,
 ) -> dict[str, object]:
@@ -95,13 +98,14 @@ def produce_superbpe_100b(
         raise RuntimeError(f"100B SuperBPE producer exited with status {code}")
     CACHE_VOLUME.commit()
 
-    bucket_id, token = _hf_bucket_identity()
+    bucket_id, token = _hf_bucket_identity(dataset_bucket_id)
     store = HuggingFaceBucketShardStore(
         bucket_id,
         token=token,
-        private=True,
+        private=False,
         create_bucket=False,
     )
+    store.verify_bucket_visibility()
     frontier = store._read_json(store.object_key(RUN_ID, SHARD_FRONTIER_FILENAME))
     if not isinstance(frontier, dict) or frontier.get("producer_complete") is not True:
         raise RuntimeError("producer returned without a completed remote READY frontier")
@@ -118,17 +122,20 @@ def produce_superbpe_100b(
 
 @app.local_entrypoint()
 def main(
+    dataset_bucket_id: str = "",
     reader_workers: int = 8,
     max_in_flight_work_items: int = 32,
     dry_run: bool = False,
 ) -> None:
     if reader_workers <= 0 or max_in_flight_work_items <= 0:
         raise ValueError("reader worker counts must be positive")
+    resolved_bucket_id, _ = _hf_bucket_identity(dataset_bucket_id)
     source_commit = _base._local_source_commit()
     payload = {
         "run_id": RUN_ID,
         "source_commit": source_commit,
         "provider": "modal",
+        "dataset_bucket_id": resolved_bucket_id,
         "work": "CPU GPT-2 decode -> SuperBPE encode -> stratify -> schema-v2 -> HF READY",
         "reader_workers": reader_workers,
         "max_in_flight_work_items": max_in_flight_work_items,
@@ -137,7 +144,11 @@ def main(
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:
         return
-    result = produce_superbpe_100b.remote(reader_workers, max_in_flight_work_items)
+    result = produce_superbpe_100b.remote(
+        resolved_bucket_id,
+        reader_workers,
+        max_in_flight_work_items,
+    )
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
 
 

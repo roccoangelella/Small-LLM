@@ -164,6 +164,7 @@ class MoE100BProfileTests(unittest.TestCase):
         self.assertEqual(args[args.index("--target-tokens") + 1], str(TARGET_SOURCE_TOKENS))
         self.assertEqual(args[args.index("--sequences-per-block") + 1], "64")
         self.assertEqual(args[args.index("--target-shard-bytes") + 1], str(1024**3))
+        self.assertIn("--public-hf-bucket", args)
         self.assertIn("--evict-remote-shards", args)
         self.assertIn("--incremental-frontier", args)
         self.assertEqual(args[args.index("--nominal-training-tokens") + 1], str(100_000_000_000))
@@ -174,11 +175,19 @@ class MoE100BProfileTests(unittest.TestCase):
             "--target-tokens",
             "--run-id",
             "--context-length",
+            "--public-hf-bucket",
         ):
             with self.subTest(flag=flag), self.assertRaises(SystemExit):
-                production_arguments(
-                    ["--weights-file", "weights.json", "--output-dir", "out", flag, "bad"]
-                )
+                supplied = ["--weights-file", "weights.json", "--output-dir", "out", flag]
+                if flag != "--public-hf-bucket":
+                    supplied.append("bad")
+                production_arguments(supplied)
+
+    def test_modal_producer_targets_and_verifies_a_public_bucket(self) -> None:
+        source = (ROOT / "modal" / "moe_100b_dataset.py").read_text(encoding="utf-8")
+        self.assertIn("dataset_bucket_id: str", source)
+        self.assertIn("private=False", source)
+        self.assertIn("store.verify_bucket_visibility()", source)
 
 
 if __name__ == "__main__":

@@ -114,9 +114,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--hf-bucket-id",
         default=_default_hf_dataset_bucket(),
         help=(
-            "Private HF Storage Bucket; defaults to SMALL_LLM_HF_DATASET_BUCKET_ID "
+            "HF Storage Bucket; defaults to SMALL_LLM_HF_DATASET_BUCKET_ID "
             "or <SMALL_LLM_HF_REPO_ID>-datasets."
         ),
+    )
+    parser.add_argument(
+        "--public-hf-bucket",
+        action="store_true",
+        help="Create/use the HF dataset bucket as public rather than private.",
     )
     parser.add_argument("--hf-token-env", default="HF_TOKEN")
     parser.add_argument("--target-tokens", type=int, default=config.TARGET_ACCEPTED_SOURCE_TOKENS)
@@ -262,7 +267,7 @@ def main(
             hf_store = HuggingFaceBucketShardStore(
                 args.hf_bucket_id,
                 token=token,
-                private=True,
+                private=not args.public_hf_bucket,
                 create_bucket=True,
             )
             remote_store = hf_store
@@ -312,6 +317,7 @@ def main(
             "backend": "hf_bucket" if not args.allow_local_only else "local_only",
             "evict_local_finalized_shards": bool(args.evict_remote_shards),
             "hf_bucket_id": args.hf_bucket_id if hf_store is not None else None,
+            "hf_bucket_private": None if hf_store is None else not args.public_hf_bucket,
             "incremental_frontier": bool(args.incremental_frontier),
         }
         manifest_path = output_dir / config.MANIFEST_FILENAME

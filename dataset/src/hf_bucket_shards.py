@@ -64,6 +64,18 @@ class HuggingFaceBucketShardStore:
             )
         return method
 
+    def verify_bucket_visibility(self) -> None:
+        info = self._require_method("bucket_info")(
+            bucket_id=self.bucket_id,
+            **self._kwargs(),
+        )
+        observed = getattr(info, "private", None)
+        if not isinstance(observed, bool) or observed != self.private:
+            expected = "private" if self.private else "public"
+            raise RuntimeError(
+                f"Hugging Face dataset bucket visibility mismatch: expected {expected}"
+            )
+
     def ensure_bucket(self) -> None:
         self._require_method("create_bucket")(
             bucket_id=self.bucket_id,
@@ -71,6 +83,7 @@ class HuggingFaceBucketShardStore:
             exist_ok=True,
             **self._kwargs(),
         )
+        self.verify_bucket_visibility()
 
     @staticmethod
     def object_key(run_id: str, logical_name: str) -> str:
