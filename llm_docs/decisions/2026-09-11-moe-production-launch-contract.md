@@ -1,7 +1,7 @@
 # MoE production launch contract
 
 Date: 2026-09-11  
-Status: Accepted
+Status: Accepted; production wiring implemented on `moe-8e-top1`, exact GPU qualification pending
 
 ## Decisions
 
@@ -22,4 +22,21 @@ Status: Accepted
 
 6. After the production wiring and qualification are ready, the next data operation is to **retokenize the full 100B pretraining corpus with the frozen `tokenizer/superbpe_8000.json` tokenizer**. GPT-2-tokenized corpus artifacts are not valid inputs for this MoE line.
 
-7. Wiring the accepted code changes remains subject to the project comprehension gate: implementation proceeds only after the remaining Quantile-Balancing update semantics have been explained in the owner's own words.
+7. The Quantile-Balancing comprehension gate was completed on 2026-09-11. The accepted controller semantics are:
+   - During all gradient-accumulation microbatches of one logical optimizer step, keep the currently committed selection bias fixed and accumulate the per-expert raw-score frontier needed for the exact `K/E` quantile.
+   - On a successful optimizer step, compute each expert threshold `q_e` and replace the selection bias with `mean(q) - q_e`. Experts with a higher natural score threshold therefore receive a lower bias and become less likely to enter Top-K on the following step.
+   - The balancing bias affects **Top-K selection only**. Mixture weights are computed from the selected experts' original unbiased scores.
+   - If an optimizer attempt is skipped/retried because of overflow or another non-finite update, its transient score frontier is discarded and the previously committed bias remains unchanged. The failed attempt must have no persistent influence on later routing.
+
+## Wiring status
+
+Implemented on branch `moe-8e-top1` through head `d8bd2ca3880a10b05a133f75a32c2ad322c5fb47`:
+
+- `MoEModelConfig.accepted()` now uses `semantic_vocab_size=8000`, `padded_vocab_size=8192`, 64 experts, Top-2, width-352 experts, sqrt-softplus routing, Quantile Balancing, and batched dropless expert GEMM.
+- `python -m MOE_model --model-size accepted` is an explicit production identity. The generic balancing CLI no longer defaults the accepted path to `none`; attempts to downgrade accepted routing to `none` or `loss_free_sign` are rejected.
+- Production telemetry reports the configured Top-K instead of the historical hard-coded Top-1 value.
+- Dedicated provider-neutral production execution plus separate Modal H100 and Beam RTX4090 production launchers were added. Historical M0/M1 pilot launchers remain unchanged for reproducibility.
+- Production commands pin GDN chunk size 32 so generic precision-dependent CLI defaults cannot silently mutate the accepted checkpoint-visible model configuration.
+- Regression contracts now cover the 8,000/8,192 semantic-vs-physical vocabulary split, intrinsic Quantile selection, failed-attempt Quantile rollback semantics, production Top-K telemetry, fixed provider command identity, and the corpus-token bound (`7999` accepted; `8000` rejected).
+
+No GitHub Actions workflow is attached to the branch head, and the exact 64E/Top-2 GPU qualification has **not yet been executed**. Therefore the wiring is implemented but is not yet authorized for the long production run. The next gate is the short exact-configuration GPU qualification; only after that should the full 100B corpus retokenization/production-data path proceed.
