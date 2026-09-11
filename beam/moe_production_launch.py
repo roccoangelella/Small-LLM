@@ -73,7 +73,7 @@ def train_production_rtx4090(payload: dict[str, object]) -> dict[str, object]:
     return _production.run_provider_payload(
         payload,
         run_root=RUN_ROOT,
-        repo_root=_base.REMOTE_REPO,
+        repo_root=_base._repo_root(),
         volume_commit=_base.NOOP_VOLUME.commit,
     )
 
