@@ -28,6 +28,9 @@ SOURCE_TOKENIZER_ID = "gpt2"
 SOURCE_EOD_TOKEN_ID = 50_256
 TARGET_TOKENIZER_ID = "superbpe_8000"
 TARGET_TOKENIZER_RELATIVE_PATH = "tokenizer/superbpe_8000.json"
+# Git blob identity reported for the frozen tokenizer artifact on moe-8e-top1.
+# This is intentionally independent of the runtime SHA-256 recorded in manifests.
+EXPECTED_TOKENIZER_GIT_BLOB_SHA1 = "a4daaa638a4d9db10270a65e8a6b55a9b94a9fd4"
 TARGET_SEMANTIC_VOCAB_SIZE = 8_000
 TARGET_SOURCE_VOCAB_SIZE = 7_992
 TARGET_EOD_TOKEN_ID = 7_992
@@ -53,6 +56,15 @@ _DYNAMIC_CONFIG_FIELDS = (
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _git_blob_sha1(path: Path) -> str:
+    digest = hashlib.sha1()  # noqa: S324 - Git object identity, not security
+    digest.update(f"blob {path.stat().st_size}\0".encode("ascii"))
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
@@ -125,6 +137,12 @@ class SuperBPERetokenizer:
                 "SuperBPE corpus production requires tiktoken==0.14.0"
             ) from error
         self.tokenizer_path = tokenizer_path.resolve(strict=True)
+        self.tokenizer_git_blob_sha1 = _git_blob_sha1(self.tokenizer_path)
+        if self.tokenizer_git_blob_sha1 != EXPECTED_TOKENIZER_GIT_BLOB_SHA1:
+            raise RuntimeError(
+                "frozen SuperBPE tokenizer artifact changed: expected Git blob "
+                f"{EXPECTED_TOKENIZER_GIT_BLOB_SHA1}, got {self.tokenizer_git_blob_sha1}"
+            )
         self.tokenizer_sha256 = _sha256(self.tokenizer_path)
         self._gpt2 = tiktoken.get_encoding("gpt2")
         self._target = _load_target_tokenizer(self.tokenizer_path)
@@ -136,6 +154,7 @@ class SuperBPERetokenizer:
             "source_eod_token_id": SOURCE_EOD_TOKEN_ID,
             "output_tokenizer_id": TARGET_TOKENIZER_ID,
             "tokenizer_artifact": TARGET_TOKENIZER_RELATIVE_PATH,
+            "tokenizer_git_blob_sha1": self.tokenizer_git_blob_sha1,
             "tokenizer_sha256": self.tokenizer_sha256,
             "semantic_vocab_size": TARGET_SEMANTIC_VOCAB_SIZE,
             "source_text_vocab_size": TARGET_SOURCE_VOCAB_SIZE,
@@ -214,6 +233,8 @@ def install_superbpe_retokenization(
 ) -> InstalledSuperBPERetokenization:
     """Install the accepted MoE corpus tokenizer contract for one producer process."""
 
+    if getattr(config, "CORPUS_OUTPUT_TOKENIZER_ID", None) is not None:
+        raise RuntimeError("a corpus tokenizer contract is already active in this process")
     root = Path(repo_root).resolve()
     tokenizer_path = root / TARGET_TOKENIZER_RELATIVE_PATH
     retokenizer = SuperBPERetokenizer(tokenizer_path)
@@ -239,6 +260,7 @@ def install_superbpe_retokenization(
 
 __all__ = [
     "EXPECTED_SPECIAL_TOKENS",
+    "EXPECTED_TOKENIZER_GIT_BLOB_SHA1",
     "SOURCE_EOD_TOKEN_ID",
     "SOURCE_TOKENIZER_ID",
     "TARGET_EOD_TOKEN_ID",
