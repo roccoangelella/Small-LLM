@@ -60,7 +60,8 @@ class TestAcceptedConfiguration(unittest.TestCase):
         self.assertEqual(
             (config.dense.n_layers, config.dense.d_model, config.expert_d_ff), (8, 256, 352)
         )
-        self.assertEqual(config.semantic_vocab_size, 8_192)
+        self.assertEqual(config.semantic_vocab_size, 8_000)
+        self.assertEqual(config.padded_vocab_size, 8_192)
         self.assertEqual(config.dense.layer_pattern.count("gdn"), 3)
         self.assertEqual(config.dispatch, "dropless_padded_batched_gemm")
         # The owner's accepted router contract.
@@ -68,6 +69,13 @@ class TestAcceptedConfiguration(unittest.TestCase):
         self.assertEqual(config.load_balancing, "quantile")
         self.assertEqual(config.router_z_loss_coefficient, 0.0)
         self.assertEqual(config.router_init_std, 0.02)
+
+    def test_accepted_logits_expose_only_semantic_tokens(self) -> None:
+        config = MoEModelConfig.accepted()
+        model = initialize_moe_model(MoESmallLLM(config), "normal")
+        self.assertEqual(tuple(model.token_embedding.weight.shape), (8_192, 256))
+        logits = model(torch.tensor([[0, 7_999]], dtype=torch.long))
+        self.assertEqual(tuple(logits.shape), (1, 2, 8_000))
 
     def test_version_two_stays_frozen_on_every_opened_axis(self) -> None:
         dense = MoEModelConfig.substantive().dense
@@ -96,9 +104,10 @@ class TestAcceptedParameterCounts(unittest.TestCase):
         config = MoEModelConfig.accepted()
         model = initialize_moe_model(MoESmallLLM(config), "normal")
         counts = count_moe_parameters(model, num_experts=64, top_k=2)
-        # The 2026-09-09 architecture document computed 144,025,496 / 9,938,840 at an
-        # 8,000-entry vocabulary; the owner fixed 8,192 on 2026-09-10, which adds
-        # 192 * 256 = 49,152 tied parameters to both totals.
+        # The architecture document computed 144,025,496 / 9,938,840 with exactly
+        # 8,000 embedding rows. Production keeps the same 8,000 semantic classes but
+        # physically pads storage to 8,192 rows, adding 192 * 256 parameters to both
+        # stored and active-accounting totals without creating semantic token IDs.
         self.assertEqual(counts.total, 144_025_496 + 192 * 256)
         self.assertEqual(counts.active_per_token, 9_938_840 + 192 * 256)
         self.assertEqual(counts.experts_stored, 3 * 8 * 256 * 64 * 352)
