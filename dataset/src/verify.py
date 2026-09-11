@@ -62,8 +62,13 @@ def verify(output_dir: Path, *, full_scan: bool = False) -> VerifyReport:
     return _verify_stream_cache(output_dir, manifest, full_scan=full_scan)
 
 
-def _scan_uint16_ranges(path: Path, *, chunk_bytes: int = 16 * 1024 * 1024) -> str | None:
-    """Return a problem if any stored uint16 token lies outside the GPT-2 vocabulary."""
+def _scan_uint16_ranges(
+    path: Path,
+    *,
+    semantic_vocab_size: int,
+    chunk_bytes: int = 16 * 1024 * 1024,
+) -> str | None:
+    """Return a problem if any stored uint16 token lies outside the manifest vocabulary."""
 
     with path.open("rb") as handle:
         while block := handle.read(chunk_bytes):
@@ -73,9 +78,12 @@ def _scan_uint16_ranges(path: Path, *, chunk_bytes: int = 16 * 1024 * 1024) -> s
             values.frombytes(block)
             if sys.byteorder != "little":
                 values.byteswap()
-            invalid = next((token for token in values if token >= config.VOCAB_SIZE), None)
+            invalid = next((token for token in values if token >= semantic_vocab_size), None)
             if invalid is not None:
-                return f"token id {invalid} outside vocabulary in {path.name}"
+                return (
+                    f"token id {invalid} outside semantic vocabulary "
+                    f"0..{semantic_vocab_size - 1} in {path.name}"
+                )
     return None
 
 
@@ -95,6 +103,23 @@ def _verify_stream_cache(
         problems.append("invalid context length")
     elif stored_tokens != context_length + 1:
         problems.append("context-plus-one geometry is inconsistent")
+
+    semantic_vocab_size = manifest.get("semantic_vocab_size", config.VOCAB_SIZE)
+    if (
+        isinstance(semantic_vocab_size, bool)
+        or not isinstance(semantic_vocab_size, int)
+        or not 0 < semantic_vocab_size <= 65_536
+    ):
+        problems.append("invalid semantic_vocab_size")
+        semantic_vocab_size = config.VOCAB_SIZE
+    eod_token_id = manifest.get("eod_token_id", config.EOD_TOKEN_ID)
+    if (
+        isinstance(eod_token_id, bool)
+        or not isinstance(eod_token_id, int)
+        or not 0 <= eod_token_id < semantic_vocab_size
+    ):
+        problems.append("EOD token is outside the semantic vocabulary")
+
     shards = manifest.get("shards")
     if not isinstance(shards, list):
         problems.append("streaming manifest shards must be a list")
@@ -132,7 +157,10 @@ def _verify_stream_cache(
         if sha256_file(path) != entry.get("checksum"):
             problems.append(f"checksum mismatch for {path.name}")
         if full_scan:
-            range_problem = _scan_uint16_ranges(path)
+            range_problem = _scan_uint16_ranges(
+                path,
+                semantic_vocab_size=semantic_vocab_size,
+            )
             if range_problem is not None:
                 problems.append(range_problem)
 
