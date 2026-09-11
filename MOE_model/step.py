@@ -1,4 +1,4 @@
-"""Z-loss-aware atomic optimizer step for the Top-1 MoE experiment."""
+"""Atomic optimizer step for the versioned Top-k MoE experiments."""
 
 from __future__ import annotations
 
@@ -58,6 +58,7 @@ def _accumulate_telemetry(
 
 def _finalize_telemetry(engine: object, accumulator: list[dict[str, object]]) -> dict[str, object]:
     num_experts = int(engine.model.config.num_experts)
+    top_k = int(engine.model.config.top_k)
     global_counts = torch.zeros(num_experts, dtype=torch.long, device=engine.device)
     layer_payload: dict[str, object] = {}
     dead_slots = 0
@@ -101,7 +102,7 @@ def _finalize_telemetry(engine: object, accumulator: list[dict[str, object]]) ->
             "global_min_load_fraction": float(global_fractions.min().item()),
             "dead_layer_expert_slots": int(dead_slots),
             "dropped_tokens": 0,
-            "top_k": 1,
+            "top_k": top_k,
             "num_experts": num_experts,
         },
         "layers": layer_payload,
