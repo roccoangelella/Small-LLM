@@ -17,22 +17,55 @@ from .initialization import initialize_moe_model
 from .model import MoESmallLLM
 
 
-def setup(args: object):
-    seed_everything(args.seed)
-    factory = (
-        MoEModelConfig.smoke
-        if args.model_size == "smoke"
-        else MoEModelConfig.substantive
-    )
+def _model_config_from_args(args: object) -> MoEModelConfig:
+    """Resolve an explicit MoE identity without silently changing accepted production settings."""
+
     dense_overrides: dict[str, object] = {"architecture": args.architecture}
     if args.gdn_chunk_size is not None:
         dense_overrides["gdn_chunk_size"] = args.gdn_chunk_size
-    model_config = factory(**dense_overrides)
-    model_config = replace(
-        model_config,
-        load_balancing=getattr(args, "load_balancing", "none"),
-        balancing_step_size=getattr(args, "balancing_step_size", 0.0),
-    )
+
+    if args.model_size == "smoke":
+        model_config = MoEModelConfig.smoke(**dense_overrides)
+    elif args.model_size == "substantive":
+        model_config = MoEModelConfig.substantive(**dense_overrides)
+    elif args.model_size == "accepted":
+        model_config = MoEModelConfig.accepted(**dense_overrides)
+    else:
+        raise ValueError(f"unsupported MoE model size {args.model_size!r}")
+
+    requested_balancing = getattr(args, "load_balancing", None)
+    balancing_step_size = float(getattr(args, "balancing_step_size", 0.0))
+
+    if args.model_size == "accepted":
+        # Quantile Balancing is checkpoint-visible architecture, not a launch default.
+        # A generic CLI option may confirm it but must never silently replace it.
+        if requested_balancing not in {None, "quantile"}:
+            raise ValueError(
+                "the accepted production MoE is frozen to Quantile Balancing; "
+                "omit --load-balancing or pass --load-balancing quantile"
+            )
+        if balancing_step_size != 0.0:
+            raise ValueError(
+                "the accepted Quantile Balancing controller does not use --balancing-step-size"
+            )
+        return model_config
+
+    if requested_balancing == "quantile":
+        raise ValueError("Quantile Balancing is available only on the version-3 accepted model")
+    if requested_balancing is not None:
+        model_config = replace(
+            model_config,
+            load_balancing=requested_balancing,
+            balancing_step_size=balancing_step_size,
+        )
+    elif balancing_step_size != 0.0:
+        raise ValueError("--balancing-step-size requires --load-balancing loss_free_sign")
+    return model_config
+
+
+def setup(args: object):
+    seed_everything(args.seed)
+    model_config = _model_config_from_args(args)
 
     model = MoESmallLLM(model_config)
     initialize_moe_model(model, args.initialization)
@@ -113,4 +146,4 @@ def validation_reader(args: object, model_config: MoEModelConfig) -> SchemaV2Sha
     )
 
 
-__all__ = ["setup", "validation_reader"]
+__all__ = ["setup", "validation_reader", "_model_config_from_args"]
