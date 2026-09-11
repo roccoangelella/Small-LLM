@@ -28,6 +28,15 @@ Status: Accepted; production wiring implemented on `moe-8e-top1`, exact GPU qual
    - The balancing bias affects **Top-K selection only**. Mixture weights are computed from the selected experts' original unbiased scores.
    - If an optimizer attempt is skipped/retried because of overflow or another non-finite update, its transient score frontier is discarded and the previously committed bias remains unchanged. The failed attempt must have no persistent influence on later routing.
 
+8. The 100B MoE corpus reuses the existing deterministic ClimbMix stratification/sharding/Hugging Face durability pipeline, but retokenization happens **before token-count scheduling** at the document boundary:
+   - Read each original ClimbMix JSONL record as GPT-2 token IDs plus its existing `cluster_id` and stable source identity.
+   - Remove a terminal GPT-2 EOD token when present, decode the document through the canonical GPT-2 byte-level tokenizer, then encode the resulting text with the frozen `tokenizer/superbpe_8000.json` artifact.
+   - Build `SourceDocument` from the **SuperBPE IDs** while preserving the original cluster, source identity and deterministic train/validation split. Therefore deficit scheduling, rolling mixture checks, queue accounting and corpus stopping limits are all measured in the model's SuperBPE-token unit rather than inherited GPT-2 token counts.
+   - The stream contract for this corpus uses semantic vocabulary size **8,000** and SuperBPE `<|endoftext|>` ID **7992**. GPT-2 EOD `50256` must never be emitted into the final shards.
+   - Existing context+1 packing, immutable uint16 schema-v2 shards, crash-safe resume, READY frontier and Hugging Face upload/durability logic are retained.
+   - The new tokenizer identity/hash, semantic vocabulary and EOD identity are part of production dataset configuration/schema identity so GPT-2 and SuperBPE corpora cannot be mistaken for one another or resumed across configurations.
+   - The target corpus size is counted directly in **SuperBPE source tokens**; it is not inferred from the old GPT-2 token count.
+
 ## Wiring status
 
 Implemented on branch `moe-8e-top1` through head `d8bd2ca3880a10b05a133f75a32c2ad322c5fb47`:
@@ -39,4 +48,4 @@ Implemented on branch `moe-8e-top1` through head `d8bd2ca3880a10b05a133f75a32c2a
 - Production commands pin GDN chunk size 32 so generic precision-dependent CLI defaults cannot silently mutate the accepted checkpoint-visible model configuration.
 - Regression contracts now cover the 8,000/8,192 semantic-vs-physical vocabulary split, intrinsic Quantile selection, failed-attempt Quantile rollback semantics, production Top-K telemetry, fixed provider command identity, and the corpus-token bound (`7999` accepted; `8000` rejected).
 
-No GitHub Actions workflow is attached to the branch head, and the exact 64E/Top-2 GPU qualification has **not yet been executed**. Therefore the wiring is implemented but is not yet authorized for the long production run. The next gate is the short exact-configuration GPU qualification; only after that should the full 100B corpus retokenization/production-data path proceed.
+No GitHub Actions workflow is attached to the branch head, and the exact 64E/Top-2 GPU qualification has **not yet been executed**. Therefore the wiring is implemented but is not yet authorized for the long production run. The accepted SuperBPE retokenization pipeline may be wired and qualified in parallel, but the long MoE training launch remains gated on the exact GPU qualification.
