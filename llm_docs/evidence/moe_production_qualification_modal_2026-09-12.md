@@ -158,3 +158,15 @@ USD on the Modal H100 at microbatch 64; calendar 6.0 days against 2.9.** Beam fu
 `timeout=-1`, so a 4090 run needs no 23-hour segments. The RTX 5090 arm did not obtain capacity on
 the first attempt ("GPU capacity for RTX5090 is currently low"); a retry is pending. GPU cost of the
 4090 arm ≈ 0.25 USD.
+
+## Addendum — H100 pass 2 after the review fixes (source `a474340`+, same day)
+
+- **Compiled production CLI, continuous and resumed (`--compile blocks`)**: both exit 0; the first
+  post-resume loss is identical to the continuous run (step 4: 8.953735 / 8.953735) and the first
+  resumed *update* differs by 2.0e-5 (step 5), inside the 7.5e-5 run-to-run band of the A10
+  control. The compile lane's checkpoint/resume is therefore qualified to the same standard as
+  eager. Compiled versus eager per-step losses stay at rounding level (step 6: 8.881857 vs 8.881739).
+- **Backward autocast pinned to the eager contract** (`backward_pass_autocast="off"`, ADR 0180):
+  throughput unchanged — 397,404 targets/s at microbatch 64 (397,698 before the pin), peak
+  27.42 GiB; eager at microbatch 64 288,654. CUDA graphs fail as before.
+- Modal cost of pass 2 ≈ 0.68 USD (617 s local, two containers). No containers left running.
