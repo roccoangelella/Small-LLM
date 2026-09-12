@@ -24,7 +24,7 @@ same shard with `MoEModelConfig.accepted()` untouched.
 | resume from step 3 in a copied directory, 3 updates | exit 0 | exit 0 | exit 0 |
 | **step-4 loss, continuous vs resumed** | 8.953839 / 8.953839 | 8.953787 / 8.953787 | 8.953843 / 8.953843 |
 | step-6 loss, continuous vs resumed | 8.881924 / 8.881876 | 8.881861 / 8.881750 | 8.881914 / 8.881945 |
-| validation at step 6, continuous vs resumed | 8.846 / 8.846 | 8.846 / 8.846 | 8.846 / 8.846 |
+| validation at step 6, continuous vs resumed (differs at 8e-5) | 8.846 / 8.846 | 8.846 / 8.846 | 8.846 / 8.846 |
 | step-6 `trainer_state.pkl` byte-identical | no: 412/430 tensors, max abs 1.0e-3 | no: 412/430, 5.3e-4 | no: 412/430, 5.8e-4 |
 | fp16 (production default), 3 updates | finite, loss 8.984588 at step 3 | finite | finite |
 | checkpoint bytes / local save seconds | 1,161,781,264 / 2.3–2.4 | same / 1.6–1.9 | same / 2.3–2.5 |
@@ -33,7 +33,7 @@ same shard with `MoEModelConfig.accepted()` untouched.
 
 **Reading of the resume check.** The first update after resume reproduces the continuous update to
 all six printed decimals on every GPU, and validation is identical: model, optimizer, scheduler,
-Quantile selection bias, RNG and data cursor are restored exactly. The state divergence appears only
+Quantile selection bias, RNG and data cursor were restored with no defect detectable within the CUDA noise measured by the control below. The state divergence appears only
 from the second post-resume update at the 1e-5 loss level, and its largest tensor is the recomputed
 `selection_bias` (1e-3 on a score scale of order 1). This is the signature of non-deterministic
 CUDA kernels (no `use_deterministic_algorithms` anywhere in the trainer) amplified by Muon, not of a
@@ -142,7 +142,7 @@ Same protocol on Beam (serverless function, `LEGACY_SERVERLESS_IMAGE`, torch 2.1
 staged in the Beam `small-llm-data` volume). Production CLI: continuous exit 0, resume exit 0,
 step-4 loss identical (8.953808 / 8.953808), step-5 within nondeterminism (3.0e-5), state differs on
 412/430 tensors with max 6.9e-4; fp16 finite; checkpoint 1,161,776,976 bytes; cold first update
-≈ 250 s.
+214.6 s (the 250 s phase time includes process start).
 
 | microbatch | compile | median update s (steps 4–8) | targets/s | peak allocated |
 |---:|---|---:|---:|---:|
@@ -202,3 +202,21 @@ SuperBPE corpus. Cost ≈ 0.55 USD (441 s plus a skipped first attempt).
   64; on a 24 GB card the same 1.9× spike over a 9.5 GiB base (microbatch 16) still fits, a
   microbatch-32 base (≈ 19 GiB) would not. **Keep ≥ 2× headroom over the typical peak on the
   chosen GPU.**
+
+## Addendum — corrections from the final external review (Astra high, same day)
+
+- "Identical validation" holds at the printed 3 decimals only: continuous-vs-resumed validation loss
+  differs by 7–8e-5 (H100 8.392e-5, Beam 8.297e-5, compiled H100 7.272e-5), the same order as the
+  per-step CUDA noise.
+- The A10 control shows the resumed step-5 loss slightly *below* both scratch runs; the claim is
+  therefore "the resume difference (4.3e-5) is smaller than the scratch-to-scratch difference
+  (7.5e-5)", not "inside the interval".
+- Routing normalisation: the CLI telemetry divides per-layer counts by tokens (uniform 2/64), the
+  probe's cumulative fractions divide by assignments (uniform 1/64); the 2.2× figure is on the
+  latter. Bias saturation, unverified at 12 updates, is now measured over 500 (previous addendum).
+- The 397,698 figure is the first pass; 397,404 is the pass with the pinned backward autocast and
+  the one to quote.
+- Modal bills host CPU/RAM on top of the GPU; the 4-core/32-GiB shape used by the qualification
+  adds ≈ 0.44 USD/h, so the H100 compiled run is 276–307 USD, Beam 4090 161–287 USD depending on
+  the tariff basis (1.11 USD/h from listed components, 1.77 USD/h example for a 2-core/16-GiB
+  shape, ≈ 1.98 USD/h for this launcher's shape by the listed increments).
