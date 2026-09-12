@@ -220,3 +220,26 @@ SuperBPE corpus. Cost ≈ 0.55 USD (441 s plus a skipped first attempt).
   adds ≈ 0.44 USD/h, so the H100 compiled run is 276–307 USD, Beam 4090 161–287 USD depending on
   the tariff basis (1.11 USD/h from listed components, 1.77 USD/h example for a 2-core/16-GiB
   shape, ≈ 1.98 USD/h for this launcher's shape by the listed increments).
+
+## Addendum — lifecycle of the real production launcher on Modal H100 (source `d9f12d7`, same day)
+
+`modal run modal/moe_production_launch.py --run-id test-lifecycle-002 --steps 8 --precision bf16
+--microbatch-size 32 --checkpoint-every-steps 3 --keep-last-checkpoints 2 --compile-mode blocks
+--validation-blocks 5`, twice, on the staged qualification corpus (WSD derived from its contract):
+
+1. First invocation with `--max-wall-seconds 300`: the CPU gate passed (the new completeness
+   preflight accepted 4,157 train blocks ≥ 8 and 5 validation blocks), the H100 container drained
+   after update 1 (332 s elapsed including the cold start), saved `step-00000001`, the parent
+   committed the run volume behind that event, returned `status: drained, steps_reached: 1`,
+   exit 0.
+2. Second invocation without an explicit resume: `resumed_from: step-00000001` resolved
+   automatically from the volume in a **new container**, updates 2–8 ran, checkpoints 3, 6 and 8
+   were each committed, retention kept the last 2 and the protected best/resume checkpoints and
+   removed `step-00000003`, the result reported `status: complete, steps_reached: 8`, exit 0.
+
+Two launcher defects were found and fixed on the way, both of which would have blocked any run:
+the launcher resolved the repository root as `/` inside the container (`/modal/launch.py` not
+found; the dataset launcher already had the right pattern), and it must be run through the
+`modal` console script from a venv that also has torch, because `python -m modal` from the
+repository root imports the repository's own `modal/` package instead of the SDK. GPU cost of the
+lifecycle test ≈ 0.75 USD.
