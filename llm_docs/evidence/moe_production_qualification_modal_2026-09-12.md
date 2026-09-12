@@ -170,3 +170,35 @@ the first attempt ("GPU capacity for RTX5090 is currently low"); a retry is pend
   throughput unchanged — 397,404 targets/s at microbatch 64 (397,698 before the pin), peak
   27.42 GiB; eager at microbatch 64 288,654. CUDA graphs fail as before.
 - Modal cost of pass 2 ≈ 0.68 USD (617 s local, two containers). No containers left running.
+
+## Addendum — 500 compiled updates on H100: Quantile Balancing beyond startup (same day)
+
+Engine-level, `accepted()` untouched, `--compile blocks`, microbatch 64, BF16, constant LR 3e-4
+(probe default; the schedule is not the object here), 500 updates = 65.5 M tokens of the real
+SuperBPE corpus. Cost ≈ 0.55 USD (441 s plus a skipped first attempt).
+
+| update | loss | grad norm | layer-0 bias max / std | peak allocated |
+|---:|---:|---:|---|---:|
+| 1 | 9.047 | 0.39 | 0.033 / 0.013 | 27.4 GiB |
+| 20 | 8.310 | 1.63 | 0.260 / 0.037 | 26.0 GiB |
+| 50 | 7.262 | 0.69 | 0.797 / 0.103 | 30.4 GiB |
+| 100 | 6.497 | 0.25 | 0.762 / 0.100 | 30.1 GiB |
+| 200 | 5.698 | 0.31 | 0.687 / 0.103 | 27.4 GiB |
+| 300 | 5.103 | 0.43 | 0.664 / 0.113 | 28.0 GiB |
+| 500 | 4.434 | 0.53 | 0.820 / 0.144 | 27.9 GiB |
+
+- **Learning is real**: 9.05 → 4.43 in 500 updates. Gradient norm peaks at 1.6 around update 20
+  (clipped at 1.0) and settles below 0.6.
+- **The selection bias saturates instead of diverging**: it climbs during the first ~50 updates and
+  then stays at 0.65–0.82 (std ≈ 0.10–0.14) on a score scale of order 1 — Quantile Balancing is
+  carrying a stable, sizeable correction, not a runaway one.
+- **Loads**: cumulative per-layer max load fraction 0.023–0.035 (uniform 0.0156, i.e. 1.5–2.2×),
+  min 0.008–0.011, **zero dead expert slots** across 8 layers × 64 experts after 500 updates. The
+  cumulative figure includes the unbalanced first updates; instantaneous balance is tighter.
+- **Throughput is steady**: median 0.3296 s per update = **397,614 targets/s**, p95 0.338 s.
+- **Memory has spikes**: per-update peak (reset every update) median 28.5 GiB, p99 34.4 GiB, one
+  update (408) at **53.4 GiB** and 0.56 s — consistent with a Dynamo recompilation or a routing
+  capacity spike (`capacity = max load` sizes the padded buffer). Harmless on 80 GB at microbatch
+  64; on a 24 GB card the same 1.9× spike over a 9.5 GiB base (microbatch 16) still fits, a
+  microbatch-32 base (≈ 19 GiB) would not. **Keep ≥ 2× headroom over the typical peak on the
+  chosen GPU.**
