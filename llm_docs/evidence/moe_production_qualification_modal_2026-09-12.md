@@ -98,3 +98,20 @@ larger than the 3.5e-4 between the continuous run and its resume in that contain
 5e-4–1e-3 seen on the three GPUs above). Run-to-run kernel nondeterminism therefore fully accounts for
 the post-resume divergence; checkpoint/resume is exact to the limit the hardware allows. The 18
 identical tensors are the integer routing counters and step bookkeeping. Cost ≈ 0.12 USD.
+
+## Addendum — H100 compile lane at microbatch 64 and under CUDA graphs, same day
+
+| microbatch | compile | median update s | targets/s | peak allocated |
+|---:|---|---:|---:|---:|
+| 64 | off | 0.462 | 283,892 | 44.64 GiB |
+| **64** | **blocks** | **0.330** | **397,698** | 26.92 GiB |
+| 32 | blocks + `mode="reduce-overhead"` | failed | — | — |
+
+Microbatch 64 under the compile lane adds +3.7 % over microbatch 32 (383,506): the update is no
+longer microbatch-limited. CUDA graphs fail on the second microbatch with *"accessing tensor
+output of CUDAGraphs that has been overwritten by a subsequent run"* at the padded expert GEMM
+(`MOE_model/model.py:160`): the compiled block's outputs are consumed across microbatches without
+`torch.compiler.cudagraph_mark_step_begin()` and without cloning. Fixable, but with 7–18 graph
+breaks per block the expected gain is small; parked. Best measured production configuration:
+**H100, `--compile blocks`, microbatch 64, BF16: 100 B tokens in 2.9 update-clock days, ≈ 276 USD
+of GPU at list price.** Cost of this follow-up ≈ 0.39 USD.
