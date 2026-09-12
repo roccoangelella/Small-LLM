@@ -50,6 +50,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
+- [`0179-production-checkpoint-sequence.md`](0179-production-checkpoint-sequence.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
