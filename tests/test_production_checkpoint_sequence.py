@@ -27,6 +27,18 @@ sys.path.insert(0, str(ROOT))
 import moe_production as production  # noqa: E402
 
 
+
+def _ensure_contract(root: Path) -> None:
+    """The production command reads its WSD schedule from the corpus run contract."""
+    dataset = root / "dataset"
+    dataset.mkdir(parents=True, exist_ok=True)
+    contract = dataset / "run_contract.json"
+    if not contract.exists():
+        contract.write_text(json.dumps({
+            "version": 1, "run_id": "test", "schema_version": 2, "context_length": 2048,
+            "sequences_per_block": 64, "planned_train_blocks": 1_000_000,
+        }), encoding="utf-8")
+
 class _TrainerState:
     def __init__(self, step: int) -> None:
         self.step = step
@@ -305,6 +317,7 @@ class LocalRetentionTests(unittest.TestCase):
 
 class AutoResumeTests(unittest.TestCase):
     def _request(self, root: Path, **overrides) -> production.ProductionRequest:
+        _ensure_contract(root)
         values = {
             "run_id": "moe-prod-001",
             "dataset_dir": str(root / "dataset"),
@@ -453,6 +466,7 @@ class VolumeCommitPerCheckpointTests(unittest.TestCase):
         commits: list[int] = []
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            _ensure_contract(root)
             request = production.ProductionRequest(
                 run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=5_000,
                 precision="fp16", microbatch_size=8, source_commit="a" * 40,
@@ -475,6 +489,7 @@ class VolumeCommitPerCheckpointTests(unittest.TestCase):
         commits: list[int] = []
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            _ensure_contract(root)
             request = production.ProductionRequest(
                 run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
                 precision="fp16", microbatch_size=8, source_commit="a" * 40,
@@ -499,6 +514,7 @@ class VolumeCommitPerCheckpointTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            _ensure_contract(root)
             request = production.ProductionRequest(
                 run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
                 precision="fp16", microbatch_size=8, source_commit="a" * 40,

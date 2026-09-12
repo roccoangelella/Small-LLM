@@ -103,7 +103,7 @@ def main(
     keep_last_checkpoints: int = 3,
     milestone_every_steps: int = 0,
     max_wall_seconds: float = 23 * 60 * 60,
-    validation_blocks: int = 0,
+    validation_blocks: int = -1,
     compile_mode: str = "off",
     dry_run: bool = False,
 ) -> None:
@@ -123,14 +123,14 @@ def main(
         keep_last_checkpoints=keep_last_checkpoints,
         milestone_every_steps=milestone_every_steps,
         max_wall_seconds=max_wall_seconds,
-        validation_blocks=validation_blocks,
+        validation_blocks=None if validation_blocks < 0 else validation_blocks,
         compile_mode=compile_mode,
     )
     payload = _production.request_payload(request)
     payload["provider"] = "modal"
     payload["gpu"] = "H100"
     payload["command"] = _production.build_training_command(
-        request, run_root=RUN_ROOT
+        request, run_root=RUN_ROOT, schedule=_production.DISPLAY_SCHEDULE
     )
     print(json.dumps(payload, indent=2, sort_keys=True), flush=True)
     if dry_run:

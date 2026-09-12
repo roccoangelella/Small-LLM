@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 
+import moe_production as production_module
 from moe_production import (
     ProductionRequest,
     accepted_identity,
@@ -36,7 +37,9 @@ class TestProductionCommand(unittest.TestCase):
         return ProductionRequest(**values)
 
     def test_command_freezes_the_accepted_identity(self) -> None:
-        command = build_training_command(self._request(), run_root=Path("/runs"))
+        command = build_training_command(
+            self._request(), run_root=Path("/runs"), schedule=production_module.DISPLAY_SCHEDULE,
+        )
 
         def value(flag: str) -> str:
             return command[command.index(flag) + 1]

@@ -18,6 +18,11 @@ import sys
 from typing import Callable
 
 from MOE_model.config import MoEModelConfig
+from dataset.incremental_frontier import (
+    DEFAULT_TRAINING_VALIDATION_BLOCKS,
+    RUN_CONTRACT_FILENAME,
+    standard_wsd_plan,
+)
 from dataset.src.checkpoint_sequence import (
     CHECKPOINT_ID, complete_checkpoint, find_latest_complete_checkpoint,
 )
@@ -28,6 +33,20 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 RESUME_LATEST = "latest"
+_SCHEDULE_KEYS = ("steps", "warmup_tokens", "stable_tokens", "decay_tokens", "minimum_lr_ratio")
+# The recipe the pilot pins explicitly (moe_pilot.build_pilot_command); the trainer defaults
+# reproduce them today, but a production command must not depend on defaults.
+# Placeholder for launcher dry-run displays, where the dataset volume is not mounted;
+# the real values are read from the run contract inside the container.
+DISPLAY_SCHEDULE = {
+    "steps": 10**12, "warmup_tokens": 0, "stable_tokens": 0, "decay_tokens": 0,
+    "minimum_lr_ratio": 0.1, "validation_blocks": DEFAULT_TRAINING_VALIDATION_BLOCKS,
+}
+OPTIMIZER_RECIPE = (
+    "--learning-rate", "3e-4", "--weight-decay", "0.1", "--muon-momentum", "0.95",
+    "--muon-lr-multiplier", "1.0", "--muon-update-rms", "0.18", "--muon-weight-decay", "0.1",
+    "--max-grad-norm", "1.0",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +66,7 @@ class ProductionRequest:
     resume: str | None = None
     sequences_per_block: int | None = None
     checkpoint_every_steps: int = 1000
-    validation_blocks: int = 0
+    validation_blocks: int | None = None
     keep_last_checkpoints: int = 3
     milestone_every_steps: int = 0
     max_wall_seconds: float = 0.0
@@ -70,7 +89,7 @@ class ProductionRequest:
             raise ValueError("sequences_per_block must be positive when supplied")
         if self.checkpoint_every_steps < 0:
             raise ValueError("checkpoint_every_steps cannot be negative")
-        if self.validation_blocks < 0:
+        if self.validation_blocks is not None and self.validation_blocks < 0:
             raise ValueError("validation_blocks cannot be negative")
         if self.keep_last_checkpoints < 0 or self.keep_last_checkpoints == 1:
             raise ValueError("keep_last_checkpoints must be 0 or at least 2")
@@ -114,6 +133,41 @@ def request_from_payload(payload: dict[str, object]) -> ProductionRequest:
     return ProductionRequest(**request)  # type: ignore[arg-type]
 
 
+def resolve_schedule(dataset_dir: str | Path) -> dict[str, object]:
+    """Read the WSD schedule the corpus was produced for, from its run contract.
+
+    Rocco's producer writes the full ``trainer`` plan into ``run_contract.json``; a
+    retokenized finite corpus carries only the block geometry, from which the same
+    ``standard_wsd_plan`` (5 % warmup, 75 % stable, 20 % decay, floor 0.1) is derived.
+    """
+
+    path = Path(dataset_dir) / RUN_CONTRACT_FILENAME
+    if not path.is_file():
+        raise FileNotFoundError(f"production dataset has no {RUN_CONTRACT_FILENAME}: {path}")
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(contract, Mapping):
+        raise ValueError("run contract must be a JSON object")
+    trainer = contract.get("trainer")
+    if trainer is None:
+        blocks = contract.get("planned_train_blocks")
+        if isinstance(blocks, bool) or not isinstance(blocks, int) or blocks <= 0:
+            raise ValueError("run contract has neither a trainer plan nor planned_train_blocks")
+        trainer = standard_wsd_plan(
+            blocks,
+            context_length=int(contract["context_length"]),
+            sequences_per_block=int(contract["sequences_per_block"]),
+            validation_blocks=int(contract.get("validation_blocks", DEFAULT_TRAINING_VALIDATION_BLOCKS)),
+        )
+    if not isinstance(trainer, Mapping) or trainer.get("schedule") != "wsd":
+        raise ValueError("run contract trainer plan must be a WSD schedule")
+    missing = [key for key in _SCHEDULE_KEYS if key not in trainer]
+    if missing:
+        raise ValueError(f"run contract trainer plan is missing {missing}")
+    schedule = {key: trainer[key] for key in (*_SCHEDULE_KEYS, "validation_blocks") if key in trainer}
+    schedule.setdefault("validation_blocks", DEFAULT_TRAINING_VALIDATION_BLOCKS)
+    return schedule
+
+
 def checkpoint_dir(request: ProductionRequest, *, run_root: Path) -> Path:
     return run_root / request.run_id / "checkpoints"
 
@@ -143,9 +197,23 @@ def resolve_resume(request: ProductionRequest, *, run_root: Path) -> dict[str, o
 
 def build_training_command(
     request: ProductionRequest, *, run_root: Path, plan: Mapping[str, object] | None = None,
+    schedule: Mapping[str, object] | None = None,
 ) -> list[str]:
-    """Build a command whose architecture identity cannot fall back to an M0/M1 pilot."""
+    """Build a command whose architecture identity cannot fall back to an M0/M1 pilot.
 
+    The learning-rate schedule always comes from the corpus run contract (``schedule``
+    or ``resolve_schedule(request.dataset_dir)``), never from trainer defaults.
+    """
+
+    schedule = schedule if schedule is not None else resolve_schedule(request.dataset_dir)
+    if request.total_steps > int(schedule["steps"]):
+        raise ValueError(
+            f"total_steps {request.total_steps} exceeds the corpus plan of {schedule['steps']} updates"
+        )
+    validation_blocks = (
+        int(schedule["validation_blocks"]) if request.validation_blocks is None
+        else request.validation_blocks
+    )
     plan = plan if plan is not None else resolve_resume(request, run_root=run_root)
     remaining = int(plan["remaining_steps"])
     if remaining <= 0:
@@ -193,9 +261,22 @@ def build_training_command(
         "--max-wall-seconds",
         format(float(request.max_wall_seconds), ".17g"),
         "--validation-blocks",
-        str(request.validation_blocks),
+        str(validation_blocks),
+        "--evaluation-every-steps",
+        str(request.checkpoint_every_steps),
         "--compile",
         request.compile_mode,
+        *OPTIMIZER_RECIPE,
+        "--schedule",
+        "wsd",
+        "--warmup-tokens",
+        str(int(schedule["warmup_tokens"])),
+        "--stable-tokens",
+        str(int(schedule["stable_tokens"])),
+        "--decay-tokens",
+        str(int(schedule["decay_tokens"])),
+        "--minimum-lr-ratio",
+        format(float(schedule["minimum_lr_ratio"]), ".17g"),
     ]
     if resume:
         command += ["--resume", str(resume)]
@@ -252,8 +333,10 @@ def run_provider_payload(
 
     request = request_from_payload(payload)
     plan = resolve_resume(request, run_root=run_root)
+    schedule = resolve_schedule(request.dataset_dir)
     result: dict[str, object] = {
         "status": "complete",
+        "schedule": dict(schedule),
         "run_id": request.run_id,
         "steps_requested": request.total_steps,
         "total_steps": request.total_steps,
@@ -269,7 +352,7 @@ def run_provider_payload(
             volume_commit()
         return result
 
-    command = build_training_command(request, run_root=run_root, plan=plan)
+    command = build_training_command(request, run_root=run_root, plan=plan, schedule=schedule)
     committed: list[str] = []
     drained: Mapping[str, object] | None = None
     process = popen_factory(command, cwd=str(repo_root), text=True, bufsize=1,

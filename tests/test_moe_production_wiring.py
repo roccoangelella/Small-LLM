@@ -95,7 +95,9 @@ class TestProductionDurabilityPayload(unittest.TestCase):
             keep_last_checkpoints=3, milestone_every_steps=50_000,
             max_wall_seconds=23 * 60 * 60,
         )
-        command = production.build_training_command(request, run_root=Path("/runs"))
+        command = production.build_training_command(
+            request, run_root=Path("/runs"), schedule=production.DISPLAY_SCHEDULE,
+        )
 
         def value(flag: str) -> str:
             return command[command.index(flag) + 1]
@@ -107,7 +109,9 @@ class TestProductionDurabilityPayload(unittest.TestCase):
 
     def test_the_trainer_accepts_every_emitted_production_flag(self) -> None:
         request = self._request(milestone_every_steps=50_000, max_wall_seconds=23 * 60 * 60)
-        command = production.build_training_command(request, run_root=Path("/runs"))
+        command = production.build_training_command(
+            request, run_root=Path("/runs"), schedule=production.DISPLAY_SCHEDULE,
+        )
         args = parse_args(command[command.index("-m") + 2:] + ["--device", "cpu"])
         self.assertEqual(args.checkpoint_every_steps, 1_000)
         self.assertEqual(args.keep_last_checkpoints, 3)

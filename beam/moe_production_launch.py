@@ -97,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--milestone-every-steps", type=int, default=0)
     # The Beam GPU function has no wall-clock timeout, so draining stays off by default.
     parser.add_argument("--max-wall-seconds", type=float, default=0.0)
-    parser.add_argument("--validation-blocks", type=int, default=0)
+    # Negative means "as many as the corpus run contract plans".
+    parser.add_argument("--validation-blocks", type=int, default=-1)
     parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="off")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         keep_last_checkpoints=args.keep_last_checkpoints,
         milestone_every_steps=args.milestone_every_steps,
         max_wall_seconds=args.max_wall_seconds,
-        validation_blocks=args.validation_blocks,
+        validation_blocks=None if args.validation_blocks < 0 else args.validation_blocks,
         compile_mode=args.compile_mode,
     )
     payload = _production.request_payload(request)
@@ -124,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         **payload,
         "provider": "beam",
         "gpu": "RTX4090",
-        "command": _production.build_training_command(request, run_root=RUN_ROOT),
+        "command": _production.build_training_command(request, run_root=RUN_ROOT, schedule=_production.DISPLAY_SCHEDULE),
     }
     print(json.dumps(display, indent=2, sort_keys=True), flush=True)
     if args.dry_run:
