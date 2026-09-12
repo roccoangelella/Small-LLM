@@ -88,8 +88,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-dir", required=True)
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="fp16")
-    parser.add_argument("--microbatch-size", type=int, default=8)
+    # Qualified on RTX 4090 (2026-09-12): BF16, microbatch 16 keeps 2x headroom for capacity spikes.
+    parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="bf16")
+    parser.add_argument("--microbatch-size", type=int, default=16)
     parser.add_argument("--resume")
     parser.add_argument("--sequences-per-block", type=int)
     parser.add_argument("--checkpoint-every-steps", type=int, default=1000)
@@ -99,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-wall-seconds", type=float, default=0.0)
     # Negative means "as many as the corpus run contract plans".
     parser.add_argument("--validation-blocks", type=int, default=-1)
-    parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="off")
+    parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="blocks")
     parser.add_argument("--allow-partial-corpus", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
