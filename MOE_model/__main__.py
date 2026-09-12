@@ -7,6 +7,7 @@ from trainer.cli import main as train
 from trainer.cli_args import parse_args as parse_trainer_args
 from trainer.cli_args import parser as trainer_parser
 
+from .compile_lane import COMPILE_MODES, DEFAULT_COMPILE_MODE
 from .setup import setup, validation_reader
 
 
@@ -32,6 +33,18 @@ def parse_args(argv=None):
         ),
     )
     parser.add_argument("--balancing-step-size", type=float, default=0.0)
+    parser.add_argument(
+        "--compile",
+        dest="compile_mode",
+        choices=COMPILE_MODES,
+        default=DEFAULT_COMPILE_MODE,
+        help=(
+            "Execution lane only, never checkpoint-visible architecture. "
+            "'blocks' wraps every MoE decoder block in torch.compile after the "
+            "model is built; state-dict keys and numerics of the Quantile "
+            "Balancing bias are unchanged. Default is off."
+        ),
+    )
     args = parse_trainer_args(argv, argument_parser=parser)
     if not math.isfinite(args.balancing_step_size) or args.balancing_step_size < 0:
         parser.error("--balancing-step-size must be finite and non-negative")
