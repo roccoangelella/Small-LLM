@@ -6,7 +6,15 @@ supersedes: null
 
 # 0177 — Accepted MoE production launch contract
 
-## Decisions
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 1. The frozen SuperBPE tokenizer is the vocabulary source of truth for the production MoE model.
    - Exact semantic vocabulary: **8,000 token IDs** (`0..7999`).
@@ -51,6 +59,8 @@ Implemented on `moe-8e-top1` beginning with production-wiring head `d8bd2ca3880a
 
 The accepted production wiring is implemented but the exact 64E/Top-2 GPU qualification has not yet been executed. No GitHub Actions workflow/status checks are attached to this branch. Therefore the long production training run remains gated on the short exact-configuration GPU qualification.
 
-## Branch ownership
+## Consequences
+
+### Branch ownership
 
 This contract belongs to the MoE development line and is canonical in `llm_docs/` on `moe-8e-top1`. It must not be duplicated into `main` unless/until the MoE line is intentionally merged there.

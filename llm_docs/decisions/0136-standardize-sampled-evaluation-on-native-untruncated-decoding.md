@@ -17,6 +17,10 @@ This created avoidable protocol drift, including the final 100M/10B sampled qual
 
 The project now wants one simple, neutral sampled protocol that interferes as little as possible with the model's learned next-token distribution and is easy to remember and verify.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Effective immediately, the **standard sampled qualitative/model-comparison evaluation protocol** is:
@@ -55,7 +59,7 @@ Historical artifacts remain valid evidence under the decoding settings they actu
 
 Cross-checkpoint sampled claims must compare matching decoding configurations. If a checkpoint lacks a `1.0 / 1.0 / 0` result, rerun the sampled qualitative test rather than numerically comparing incompatible historical runs.
 
-## Operational consequence
+## Consequences
 
 Future evaluation commands, wrappers, runbooks, and default presets intended to produce the project's standard sampled comparison should explicitly resolve to:
 

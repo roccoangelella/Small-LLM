@@ -1,15 +1,20 @@
 ---
 status: accepted
 date: 2026-08-13
+supersedes: null
 ---
 
 # ADR 0068: Make plain `uv sync` install the complete project runtime
 
-## Context
+## Context and problem statement
 
 The repository split ordinary runtime dependencies across optional extras and standalone setup commands. That allowed `beam/launch.py` to exist on `main` while a normal project environment created by plain `uv sync` omitted the Beam SDK and failed immediately with `ModuleNotFoundError: No module named 'beam'`. The committed `uv.lock` had also drifted behind the dependency declarations.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Plain `uv sync` is the canonical local and VPS environment setup for Small-LLM.
 

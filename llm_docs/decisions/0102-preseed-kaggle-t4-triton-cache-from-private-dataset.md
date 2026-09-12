@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # 0102 — Preseed Kaggle T4 Triton cache from a private Dataset
 
-## Context
+## Context and problem statement
 
 Kaggle startup for the 100M/10B deep-decay lane is dominated by Triton/FLA kernel compilation and autotuning. That makes infrastructure failures expensive to discover because a notebook can spend many minutes compiling before the first real optimizer update.
 
 The Kaggle deep-decay execution contract is already unusually stable: two Tesla T4 GPUs, Python 3.13, PyTorch 2.10.0 + CUDA 12.8, Triton 3.6.0, `fla-core==0.5.2`, FP16, the frozen approximately-100M GDN-2 hybrid, context 2,048, configured GDN chunk 32, and local microbatch two. This makes a reusable device/runtime-specific cache practical.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Use a **portable, manifest-verified Triton cache preseed for the Kaggle 100M/10B dual-T4 lane**.
 

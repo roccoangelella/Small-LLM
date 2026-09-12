@@ -6,13 +6,17 @@ supersedes: null
 
 # 0171 — Stream ClimbMix detokenization for tokenizer R&D
 
-## Context
+## Context and problem statement
 
 The MoE tokenizer work needs natural-language text derived from the same ClimbMix source used by the project's pretraining corpus. Reconstructing text from the project's packed 100B `.bin` shards would require undoing context+1 packing, one-token sequence overlap, shard boundaries, and inserted EOD markers even though those transformations occur only after the original ClimbMix document records are read.
 
 The canonical source is the pinned `nvidia/Nemotron-ClimbMix` revision already frozen by the project. Its `part_*.tokenized.jsonl` records retain document boundaries, GPT-2 token IDs, `cluster_id`, and stable source identity before project-specific packing.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For tokenizer R&D, bypass the project's packed 100B HF bucket and read the pinned original ClimbMix tokenized JSONL records directly.
 

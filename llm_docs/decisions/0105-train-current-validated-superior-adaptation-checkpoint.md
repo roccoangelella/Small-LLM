@@ -6,7 +6,7 @@ supersedes: 0104
 
 # ADR 0105 — Train the current validated Superior adaptation checkpoint
 
-## Context
+## Context and problem statement
 
 ADR 0103 selected the fidelity-first Variant-D compressor for Superior instruction examples that exceed the 2,048-token atomic R-SFT context. Manual semantic curation is now complete for all 9,624 over-context candidates: 8,497 are retained, 829 are code-primary exclusions, 212 are math-primary exclusions, and 86 are safety exclusions.
 
@@ -14,7 +14,11 @@ GemRouter adaptation is only partially complete because the Gemini quota was exh
 
 A baseline-aware normalized-prompt audit found that 28 of the 4,021 accepted kept rewrites cannot safely coexist in the current training corpus. Twenty-two rewrites collapse onto a normalized prompt already present in the unchanged Superior baseline, and six additional rewrites collapse onto another accepted rewrite. Their reasoning/answer targets are not identical, so keeping both copies would create conflicting supervision for an identical model input.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Freeze and train the currently available conflict-free checkpoint rather than waiting for the remaining adaptations.
 
@@ -56,6 +60,10 @@ A local build against the completed S0 bundle verifies 361 train blocks. The tra
 ## Repository hygiene
 
 The adaptation workspace is generation state, not source code. The 170 MiB candidate cache, accepted provider batches, rejected attempts, OpenCode review state, review extracts, hand-review packs, and logs are ignored by Git. The small candidate manifest and final manual-curation JSONL remain committable audit artifacts. Local accepted batch files and the candidate cache are retained on the VPS so the remaining 4,476 kept candidates can be resumed later.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Validation
 

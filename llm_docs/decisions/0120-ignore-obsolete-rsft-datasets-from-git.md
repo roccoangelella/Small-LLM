@@ -12,6 +12,10 @@ R-SFT dataset production leaves large local source scans, intermediate pools, an
 
 A repository audit found one important exception: the frozen 16,716-row expanded corpus is still the active default input for the current Kaggle R-SFT production path and the base used by the nested 1% / 2% / 4% dataset builder. Removing it now would break those paths or silently change their semantics.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Keep only the currently active/frozen R-SFT corpora in Git:

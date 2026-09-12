@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0097 — Wire R-SFT pilot dataset production inside the R-SFT folder
@@ -10,6 +11,10 @@ date: 2026-08-18
 The R0 teacher prompts, strict teacher schema, 630-example pilot size, 90/10 reasoning-retention policy, S0 retention-source policy, reasoning-tokenizer contract, S0-to-R-SFT model transition, and dedicated Kaggle 2xT4 training entry point are already defined. The missing data-side step is to turn live Gemini output plus a completed S0 bundle into the exact immutable datasets consumed by the R-SFT trainer.
 
 The project owner requested that this production path live inside `post_training/R-SFT/` rather than creating another top-level dataset or Kaggle-specific data subsystem.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 

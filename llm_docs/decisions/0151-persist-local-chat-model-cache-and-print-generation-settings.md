@@ -1,6 +1,24 @@
+---
+status: accepted
+date: null
+# Decision date was not recorded in the original ADR.
+supersedes: null
+---
+
 # 0151 — Persist local chat model cache and print generation settings
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The previous implementation used `tempfile.TemporaryDirectory`, then explicitly cleaned it when the chat exited. That made every new local chat process download the same completed checkpoint again even when the user had just used it.
+
+Persistent verified caching removes unnecessary network transfer and startup time while preserving the existing integrity/completion gates. Printing the effective sampler configuration makes qualitative chat sessions reproducible and immediately auditable.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 `chat.py` must keep downloaded chat artifacts on disk instead of storing them in a temporary directory that is deleted when the process exits.
 
@@ -18,8 +36,6 @@ At startup, after loading the model, `chat.py` must print the effective generati
 
 This decision does not change the current sampling values. In particular, local chat remains `temperature=1.0`, `top_p=1.0`, `top_k=50`, `MAX_NEW_TOKENS=128`, and base seed `17` until a separate decision changes them.
 
-## Rationale
+## Consequences
 
-The previous implementation used `tempfile.TemporaryDirectory`, then explicitly cleaned it when the chat exited. That made every new local chat process download the same completed checkpoint again even when the user had just used it.
-
-Persistent verified caching removes unnecessary network transfer and startup time while preserving the existing integrity/completion gates. Printing the effective sampler configuration makes qualitative chat sessions reproducible and immediately auditable.
+No consequences were recorded at the time; section added for the template.

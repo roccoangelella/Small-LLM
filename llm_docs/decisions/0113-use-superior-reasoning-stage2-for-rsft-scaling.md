@@ -12,6 +12,10 @@ ADR 0104 deliberately restricted the first large R-SFT experiment to Superior Re
 
 The Superior Reasoning repository also exposes a much larger Stage 2. That availability was not previously called out in project memory because the first-large-R-SFT decisions were intentionally Stage-1-only. This omission made the available scaling headroom unnecessarily opaque.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Use **Superior Reasoning Stage 2 `instruction_following` as the next expansion source** for the ADR-0112 1% / 2% / 4% R-SFT scaling sweep.

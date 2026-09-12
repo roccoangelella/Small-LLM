@@ -1,11 +1,23 @@
 ---
 status: accepted
 date: 2026-08-25
+supersedes: null
 ---
 
 # ADR 0124: use the pretraining deep-decay policy for the 100M/2B 10% SFT run
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The 10% SFT corpus is roughly 2.5x larger than the completed 4% S0 corpus. Holding LR flat near the peak for most of that larger horizon is no longer the desired policy. A long continuous decay should progressively reduce parameter movement as instruction behavior is acquired, while the final cooldown provides a low-LR landing phase.
+
+Keeping the policy family shared with pretraining also makes scheduler behavior easier to reason about and audit across the project, while independently scaling the LR magnitude for the post-training regime.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The accepted 100M/2B 10% S0 SFT run (`100m-2b-sft-s0-10pct-001`) must not use the previous simple SFT WSD schedule with a long flat `3e-5` phase followed by a terminal cosine decay.
 
@@ -39,8 +51,6 @@ final                    5e-6              5e-7
 
 These candidate values are evidence/recommendation, not yet a separately accepted numeric freeze. Do not launch the 10% SFT run until the LR anchors are explicitly selected and wired.
 
-## Rationale
+## Consequences
 
-The 10% SFT corpus is roughly 2.5x larger than the completed 4% S0 corpus. Holding LR flat near the peak for most of that larger horizon is no longer the desired policy. A long continuous decay should progressively reduce parameter movement as instruction behavior is acquired, while the final cooldown provides a low-LR landing phase.
-
-Keeping the policy family shared with pretraining also makes scheduler behavior easier to reason about and audit across the project, while independently scaling the LR magnitude for the post-training regime.
+No consequences were recorded at the time; section added for the template.

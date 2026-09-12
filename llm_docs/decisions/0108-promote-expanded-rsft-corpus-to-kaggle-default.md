@@ -10,6 +10,10 @@ supersedes: null
 
 The expansion lane completed all 8,473 curation-v2 keepers and froze a 16,716-row reasoning corpus at SHA-256 `d13052b6fc33108ec65511b790a75f6473144855059b16b55167b046f787c405`. The Kaggle `train` launcher still defaulted to the intermediate 12,306-row checkpoint corpus used by completed run `100m-2b-rsft-r0-12306-001`.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Make `artifacts/rsft-superior-instruction-r0-expanded/reasoning.jsonl` the standard production R-SFT training corpus. Pin the detached Kaggle worktree to commit `2ae60bfa135017353f39da2ef34a6124cda465dc`, which contains the completed corpus and compatible atomic builder/trainer, and SHA-validate the expanded manifest before training.

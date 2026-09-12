@@ -1,9 +1,23 @@
+---
+status: accepted
+date: 2026-08-31
+supersedes: null
+---
+
 # 0133 — Record 100M/2B 10% SFT peak-through-3000 qualification result
 
 Date: 2026-08-31
 Status: Accepted
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Keep `100m-2b-sft-s0-10pct-peak3000-001` as the canonical 100M/2B 10% SFT checkpoint for follow-up chat and evaluation work, while recording that it is an SFT-adaptation win rather than a clean all-metric improvement over the pretrained parent.
 
@@ -48,6 +62,6 @@ The accessible W&B summary for the older no-peak `100m-2b-sft-s0-10pct-001` fini
 
 The older no-peak full evalcard was not located in the accessible repo/W&B/HF surfaces during this comparison, so eval-core retention against the older no-peak run is not asserted here. On the available shared SFT and behavior metrics, peak-through-3000 is strictly better or tied.
 
-## Operational consequence
+## Consequences
 
 Use the peak-through-3000 checkpoint for the canonical 100M/2B 10% SFT route. When reporting it externally, call out the tradeoff explicitly: it is the better SFT-adapted model so far, but it slightly worsens base eval-core loss/perplexity and top-k accuracy versus the pretrained parent.

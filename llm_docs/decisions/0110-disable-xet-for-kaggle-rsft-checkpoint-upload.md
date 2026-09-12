@@ -12,6 +12,10 @@ The first complete 16,716-row R-SFT training pass reached optimizer step 417 and
 
 The two-phase publication contract behaved correctly: small step-417 metadata files reached the repository, but the missing state blob prevented upload verification and `latest.json` remained on the fully verified step-250 checkpoint. The run is therefore resumable without accepting a partial final checkpoint.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 For the fixed 100M/2B Kaggle R-SFT launcher, set `HF_HUB_DISABLE_XET=1` and `HF_HUB_DISABLE_PROGRESS_BARS=1` in the DDP process environment. This forces Hugging Face checkpoint uploads through the classic streaming HTTP/LFS path and avoids notebook progress-bar output during large uploads.

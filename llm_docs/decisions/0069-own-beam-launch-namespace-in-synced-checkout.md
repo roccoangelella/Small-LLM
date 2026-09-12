@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-13
+supersedes: null
 ---
 
 # ADR 0069: Own the `beam.launch` namespace in the synced checkout
 
-## Context
+## Context and problem statement
 
 Beam derives a remote Function handler module from the defining source path. Running the canonical launcher as `python beam/launch.py ...` therefore registers handlers such as `beam.launch:remote_import_preflight`.
 
 The Beam worker prepends the synced user-code directory and then imports that handler module with Python import machinery. Before this decision, the repository's `beam/` directory had no `__init__.py`, so `beam.launch` resolved through Beam's installed top-level SDK package instead of the Small-LLM adapter. The installed package has no `launch` submodule, causing `ModuleNotFoundError: No module named 'beam.launch'` before the preflight function body could run. The controller then received no result and produced a secondary `NoneType` unpacking error.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Keep `python beam/launch.py ...` as the canonical Beam operator command and keep the existing launcher/training implementation in place.
 

@@ -1,6 +1,7 @@
 ---
 status: superseded
 date: 2026-08-10
+supersedes: null
 superseded_by: 0025
 ---
 
@@ -11,6 +12,10 @@ superseded_by: 0025
 The 20M / 500M post-pretraining questions-only qualitative run was launched with an explicit deterministic decoding configuration. Future model-scale and data-scale comparisons need to reuse the same generation settings so observed output differences are attributable to the checkpoint/model rather than to changes in decoding.
 
 This decision applied specifically to the repository's `trainer.post_pretraining_prompt_suite` **questions-only qualitative generation mode**. It does not replace `eval_core_v1`, teacher-forced validation, benchmark-specific settings, or intentionally separate decoding ablations.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 
@@ -49,6 +54,10 @@ fla-core==0.5.2
 ## Supersession
 
 This ADR is superseded by ADR 0025 because the user clarified that the reusable canonical post-pretraining comparison should run the **full qualitative prompt suite**, not only the questions subset. The deterministic decoding values remain useful historical context, but `questions_only: true` is no longer the canonical comparison protocol.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 

@@ -6,13 +6,17 @@ supersedes: null
 
 # 0057 — Use the standard WSD schedule for the fresh 100M / 10B run
 
-## Context
+## Context and problem statement
 
 ADR 0050 authorizes a fresh approximately-100M / 10B-token trajectory after the 100M / 2B behavioral gate, and ADR 0053 defines its rolling one-GiB Hugging Face dataset transport. ADR 0053 intentionally left the exact 10B WSD horizon policy unresolved.
 
 The existing finite-dataset qualification system uses the project's standard one-pass WSD fractions: 5% warmup, 75% stable, and 20% decay, with a 0.1 minimum LR ratio. The user has now explicitly accepted using this same standard WSD policy for the 10B run rather than introducing a special horizon rule.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Use the existing standard WSD contract for `modal-10b-b64`:
 

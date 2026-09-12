@@ -6,7 +6,7 @@ supersedes: 0057, 0071
 
 # 0092 — Resume step 15,500 with WSqD-style decay through the 10B endpoint
 
-## Context
+## Context and problem statement
 
 The controlled cooldown fork from `step-00015500` began outperforming the original flat-LR 100M/10B trajectory within roughly the first 500 cooldown updates. The user therefore authorized a replacement long-horizon trajectory that resumes from the exact uncooled step-15,500 state and uses a continuously decreasing base LR for the rest of the 10B corpus instead of returning to the original long `3e-4` WSD stable phase.
 
@@ -14,7 +14,11 @@ Recent 2026 schedule work motivates this direction. WSqD replaces WSD's long con
 
 The exact step-15,500 source has consumed `2,031,616,000` targets and still has the original model, optimizer, scaler, RNG, and data cursor. The exact 10B dataset endpoint is block-aligned at step `76,294` / `10,000,007,168` targets.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Create a new main continuation branch, `100m-10b-wsqd-from-step15500`, from exact checkpoint `100m-10b-data-001/checkpoints/step-00015500`.
 

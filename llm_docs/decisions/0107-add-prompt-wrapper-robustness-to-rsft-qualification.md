@@ -12,6 +12,10 @@ The production R-SFT R0 model was trained on assistant turns serialized through 
 
 During the first full R-SFT qualification, historical raw continuation prompts naturally showed no reasoning markers. That is expected for continuation tasks, but it exposed a useful missing diagnostic: for actual reasoning questions, does the model initiate its reasoning protocol only under the trained chat template, or does the behavior transfer to common raw question formats as well?
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Add a separate deterministic **prompt-wrapper robustness** diagnostic to the canonical R-SFT qualification.

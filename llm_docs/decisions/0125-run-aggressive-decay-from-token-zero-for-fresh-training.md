@@ -1,11 +1,20 @@
 ---
 status: accepted
 date: 2026-08-25
+supersedes: null
 ---
 
 # ADR 0125: define aggressive decay from token zero for fresh training runs
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The aggressive learning-rate policy validated through the current 100M/10B continuation must be treated as a **full-run policy for future fresh training**, not as a schedule intrinsically tied to the historical step-15,500 fork.
 
@@ -35,3 +44,6 @@ The exact LR magnitudes for SFT remain a separate numerical choice until explici
 ## Future pretraining requirement
 
 Future fresh pretraining launchers must expose the aggressive policy directly from run initialization rather than requiring a later fork/continuation command. The existing step-15,500 continuation implementation is historical/experimental evidence and compatibility machinery, not the desired architecture for the next fresh pretraining trajectory.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

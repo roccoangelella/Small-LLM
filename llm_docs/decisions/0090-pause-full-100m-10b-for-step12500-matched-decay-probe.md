@@ -6,13 +6,17 @@ supersedes: 0071
 
 # 0090 — Pause the full 100M / 10B trajectory for a step-12,500 matched-decay probe
 
-## Context
+## Context and problem statement
 
 The live 100M/10B validation curve stays in the long WSD stable phase while the completed 100M/2B endpoint received its terminal cooldown around the point where the two curves begin to separate. The earlier 20M/500M → 20M/2B experiment showed the same visual pattern: a long stable-LR plateau followed by a large cooldown loss drop, while the final extra-data gain remained modest. This makes spending the remainder of the 10B horizon before measuring the latent benefit unnecessarily expensive.
 
 The user selected step 12,500 of `100m-10b-data-001` as the counterfactual fork point.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Pause/terminate the uncapped full 100M/10B Beam trajectory once the exact local Beam Volume checkpoint `step-00012500` is confirmed durable. Preserve the original run, dataset, and checkpoints; do not delete or rewrite them.
 

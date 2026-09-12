@@ -6,7 +6,19 @@ supersedes: 0129
 
 # ADR 0130: Hold the 100M/2B 10% SFT peak through step 3000
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The user explicitly prefers substantially more time at peak LR than ADR-0129's 15% hold and a faster warmup, while retaining an aggressive decay phase. The completed 4% trajectory showed that sustained `3e-5` can remove SFT loss much more rapidly than the first 10% schedule, whereas the first 10% schedule showed better pretrained-distribution retention after decaying too early.
+
+Holding through step 3000 deliberately moves the new ablation much closer to the high-plasticity side of that tradeoff, while reserving roughly the final half of the run for a fast settle, steep calibrated power-law decay, and terminal cooldown. Peak magnitude remains unchanged so the experiment still isolates schedule shape rather than conflating peak LR and peak duration.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Supersede ADR-0129 before launching its proposed trajectory. The next 100M/2B 10% S0 rerun will use the same frozen `3e-5` peak LR and the same aggressive low-LR landmarks, but it will warm up substantially faster and hold peak LR through optimizer update 3000.
 
@@ -32,12 +44,6 @@ end:        200.10M target tokens, LR = 5e-7
 
 The calibrated power exponent is correspondingly steep (about 3.56 under the near-uniform-block approximation), so the second half of the run still performs an aggressive optimization squeeze rather than remaining at high LR until the end.
 
-## Rationale
-
-The user explicitly prefers substantially more time at peak LR than ADR-0129's 15% hold and a faster warmup, while retaining an aggressive decay phase. The completed 4% trajectory showed that sustained `3e-5` can remove SFT loss much more rapidly than the first 10% schedule, whereas the first 10% schedule showed better pretrained-distribution retention after decaying too early.
-
-Holding through step 3000 deliberately moves the new ablation much closer to the high-plasticity side of that tradeoff, while reserving roughly the final half of the run for a fast settle, steep calibrated power-law decay, and terminal cooldown. Peak magnitude remains unchanged so the experiment still isolates schedule shape rather than conflating peak LR and peak duration.
-
 ## Artifact isolation
 
 Reuse the immutable published 10% dataset:
@@ -60,3 +66,6 @@ The dedicated Kaggle runtime pins training to implementation commit `caa7fa54fe1
 ## Qualification gate
 
 Treat this as another schedule-shape ablation. After completion, compare at minimum pretrained 100M/2B, historical 4% S0, the completed first 10% aggressive S0, and this peak-through-3000 trajectory. Promotion must consider general eval-core retention, strict instruction behavior, qualitative outputs, EOS/runaway/repetition behavior, and held-out SFT loss together; a lower SFT loss alone is not sufficient.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

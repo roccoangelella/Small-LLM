@@ -1,12 +1,23 @@
 ---
 status: superseded
 date: 2026-08-11
+supersedes: null
 superseded_by: 0041
 ---
 
 # Launch 100M / 2B pretraining on Modal
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The existing 20M / 2B Kaggle trajectory is too slow for the next model-scale experiment. ADR 0039 established Modal as the canonical platform for new GPU pretraining and preserved the scientific trainer contract while allowing faster Hopper hardware. This decision authorizes the first 100M / 2B production trajectory on that path.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Launch the approximately-100M-parameter model on the existing verified 2B-token finite dataset using the canonical `modal/launch.py` path.
 
@@ -26,10 +37,6 @@ The production run keeps the accepted pretraining contract unless a later ADR ex
 
 The legacy Hugging Face dataset-keyed checkpoint publication remains disabled for this Modal run because the same 2B dataset is reused across model sizes and that namespace would collide. Modal Volume checkpoint durability is the canonical checkpoint transport for this trajectory.
 
-## Rationale
-
-The existing 20M / 2B Kaggle trajectory is too slow for the next model-scale experiment. ADR 0039 established Modal as the canonical platform for new GPU pretraining and preserved the scientific trainer contract while allowing faster Hopper hardware. This decision authorizes the first 100M / 2B production trajectory on that path.
-
 ## Launch command
 
 ```bash
@@ -39,3 +46,6 @@ modal run --detach modal/launch.py --model 100M --tokens 2B --gpu H100
 ## Supersession
 
 ADR 0041 keeps the Modal/H100 launch authorization, checkpointing, W&B, precision, optimizer, and run identity, but replaces this ADR's 16-sequence dataset/optimizer block and 4/8/16 microbatch probe with a byte-preserving block-64 Modal corpus and 16/32/48/64 probe.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

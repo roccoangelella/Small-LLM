@@ -1,11 +1,23 @@
 ---
 status: accepted
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-08-15
+supersedes: null
 ---
 
 # ADR 0084 — Require consistent, precisely worded deductive teacher problems
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+Recent test batches were substantially better after tightening the DED family definition, but exposed two residual failure modes: accidental premise inconsistency and ambiguous logical wording. These should be prevented at generation time with a small prompt-level guardrail, while deeper correctness checking remains the responsibility of the verifier/rejection pipeline rather than an increasingly prescriptive teacher prompt.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The Gemini deductive R-SFT generation prompt must explicitly require that all stated premises are mutually consistent unless the problem is intentionally about detecting a contradiction.
 
@@ -15,6 +27,6 @@ The prompt must also ask Gemini to use precise wording for quantities, threshold
 
 This refinement supplements the existing DED prompt contract: open-ended question forms are preferred when natural, answers should state the actual conclusion, problems remain self-contained, and Gemini retains freedom over the natural reasoning depth.
 
-## Rationale
+## Consequences
 
-Recent test batches were substantially better after tightening the DED family definition, but exposed two residual failure modes: accidental premise inconsistency and ambiguous logical wording. These should be prevented at generation time with a small prompt-level guardrail, while deeper correctness checking remains the responsibility of the verifier/rejection pipeline rather than an increasingly prescriptive teacher prompt.
+No consequences were recorded at the time; section added for the template.

@@ -1,9 +1,23 @@
+---
+status: accepted
+date: 2026-09-06
+supersedes: null
+---
+
 # ADR 0154 — Freeze first 8-expert Top-1 MoE experiment contract
 
 Date: 2026-09-06
 Status: Accepted, implementation pending router/load-balancing design review
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The first Small-LLM MoE experiment will be implemented on a dedicated branch and will focus only on an 8-expert, Top-1 sparse FFN architecture.
 
@@ -35,3 +49,6 @@ The following are deliberately not frozen yet and must be understood and selecte
 6. exact MoE checkpoint schema and telemetry derived from the selected routing/balancing mechanism.
 
 The implementation branch may be created before these items are frozen, but MoE routing/training code must not be wired until the design review is complete.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

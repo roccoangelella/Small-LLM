@@ -1,15 +1,25 @@
+---
+status: accepted
+date: 2026-09-06
+supersedes: null
+---
+
 # ADR 0152: Evaluate a sparse MoE variant at the 10B pretraining budget
 
 Date: 2026-09-06
 Status: Accepted
 
-## Context
+## Context and problem statement
 
 The canonical dense approximately-100M model has completed a 10B-token pretraining run. The next architecture experiment is intended to test whether replacing the dense feed-forward path with sparse Mixture-of-Experts (MoE) capacity can improve model quality without first moving to the planned larger-data 100B-token regime.
 
 A fair MoE comparison requires distinguishing total parameters from parameters activated per token. The exact MoE geometry, routing rule, expert count, top-k, capacity factor, auxiliary/router losses, and whether the comparison is total-parameter-matched, active-parameter/FLOP-matched, or includes both controls are not decided by this ADR.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 - Set up an MoE architecture experiment for Small-LLM.
 - Use the 10B-token pretraining budget for the first MoE comparison rather than the planned 100B-token run.

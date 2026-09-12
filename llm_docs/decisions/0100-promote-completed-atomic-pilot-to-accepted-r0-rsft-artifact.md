@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0100 — Promote the completed atomic pilot to the accepted R0 R-SFT artifact
 
-## Context
+## Context and problem statement
 
 The 100M / 2B R0 delimiter ablation completed both matched runs. ADR 0099 subsequently selected the atomic special-token protocol for future reasoning stages even though the tiny textual arm had the lower teacher-forced validation loss, because reasoning boundaries are semantic control concepts and must remain unambiguous from ordinary natural-language text.
 
@@ -21,7 +22,11 @@ The completed artifact is `100m-2b-rsft-r0-atomic-pilot-001`. Its training summa
 
 Running the same frozen corpus again only to replace the word `pilot` in the run identity would duplicate compute without adding scientific information.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Promote the already-completed run `100m-2b-rsft-r0-atomic-pilot-001` to the accepted 100M / 2B R0 R-SFT artifact.
 

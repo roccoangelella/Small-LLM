@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0091 — Generate a 630-example R0 pilot and run a matched delimiter ablation
@@ -10,6 +11,10 @@ date: 2026-08-18
 The first live R0 teacher-generation pilot needs to be large enough to measure actual target-token lengths and inspect variability across every frozen skill × difficulty cell before the production R-SFT corpus size is chosen. The project also still owes the small textual-versus-atomic reasoning-delimiter ablation required by the reasoning-token decision.
 
 The R0 matrix has seven reasoning skills and three difficulty bands, for 21 cells. Teacher generation is already batched at approximately 10 examples per API call.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 

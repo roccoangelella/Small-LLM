@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-11
+supersedes: null
 ---
 
 # 0035 — Accelerate and persist eval_core_v1
 
-## Context
+## Context and problem statement
 
 The first full 500M-parent post-SFT qualification attempted to self-provision `eval_core_v1` inside an ephemeral Kaggle GPU session. The legacy builder scanned the pinned Nemotron-ClimbMix tokenized JSONL source serially in 256 MiB regions using 8 MiB HTTP range reads, parsed every source JSON/token array, and only afterward discarded the approximately 99.9% of documents outside the frozen 0.1% validation partition. The full stratified suite also requires every retained cluster, including rare clusters, to reach its document and target-token floors. In practice this made construction of a roughly tens-of-megabytes permanent evaluation artifact take many hours while the GPU was idle.
 
@@ -13,7 +14,11 @@ The user decided that this path must be optimized rather than accepted as normal
 
 The first accelerated attempt used 8 concurrent regions with 32 MiB range reads. Production Kaggle evidence showed repeated `IncompleteRead` failures on those large requests and long head-of-line stalls where `partial_output` remained at 0 MiB even while later workers were active. That configuration is therefore rejected as the default.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Keep the existing `eval_core_v1` corpus semantics, split identity, cluster quotas, source revision, deterministic 256 MiB work-plan order, binary format, verifier, and manifest schema unchanged, but replace the production self-build path with an exactness-preserving streaming scanner.
 

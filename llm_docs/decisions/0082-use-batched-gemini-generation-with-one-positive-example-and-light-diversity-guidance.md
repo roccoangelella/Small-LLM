@@ -1,11 +1,23 @@
 ---
 status: accepted
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-08-14
+supersedes: null
 ---
 
 # ADR 0082 — Use batched Gemini generation with one positive example and light diversity guidance
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+A single positive example communicates the desired abstraction, concision, and output structure more efficiently than increasingly prescriptive prose. Batching reduces API overhead and gives Gemini enough room to produce useful semantic variation in one generation, while the lightweight diversity instruction guards against a batch collapsing into ten cosmetic variants of one template.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The Gemini R-SFT teacher prompt should include at least one positive example showing the intended problem / reasoning / final-answer shape. The example exists to demonstrate the style and level of abstraction we want rather than to define a rigid template that Gemini must copy.
 
@@ -54,6 +66,6 @@ Return a JSON array. Every item must contain exactly: problem, reasoning, answer
 
 The exact wording will be implemented later with the per-skill and per-difficulty structural contracts; this ADR freezes the prompting architecture, not every final prompt sentence.
 
-## Rationale
+## Consequences
 
-A single positive example communicates the desired abstraction, concision, and output structure more efficiently than increasingly prescriptive prose. Batching reduces API overhead and gives Gemini enough room to produce useful semantic variation in one generation, while the lightweight diversity instruction guards against a batch collapsing into ten cosmetic variants of one template.
+No consequences were recorded at the time; section added for the template.

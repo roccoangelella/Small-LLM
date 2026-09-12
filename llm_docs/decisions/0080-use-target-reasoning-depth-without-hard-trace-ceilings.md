@@ -1,11 +1,24 @@
 ---
 status: accepted
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-08-14
+supersedes: null
 ---
 
 # ADR 0080 — Use target reasoning depth without hard trace ceilings
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The project wants difficulty to represent dependent inference depth rather than response length. Recent reasoning-distillation work warns both against indiscriminately long teacher traces that exceed student capacity and against naive truncation that removes necessary reasoning. Asking the teacher for a target number of essential steps gives the dataset generator direct control over reasoning depth while preserving complete solutions.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Reasoning-SFT data generation will use explicit target reasoning depth as a teacher-generation control, but the requested depth is a structural target rather than a hard output-length ceiling.
 
@@ -15,10 +28,9 @@ Do not truncate or reject an otherwise valid reasoning trajectory solely because
 
 The difficulty label remains metadata describing intended structural complexity, not a token-count bucket. Training examples remain globally shuffled within any given reasoning-SFT stage.
 
-## Rationale
-
-The project wants difficulty to represent dependent inference depth rather than response length. Recent reasoning-distillation work warns both against indiscriminately long teacher traces that exceed student capacity and against naive truncation that removes necessary reasoning. Asking the teacher for a target number of essential steps gives the dataset generator direct control over reasoning depth while preserving complete solutions.
-
 ## Deferred
 
 This ADR does not decide whether the full reasoning-depth range should be taught in one mixed R-SFT corpus or in multiple qualified R-SFT stages. That sequencing remains a separate evidence-backed decision.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

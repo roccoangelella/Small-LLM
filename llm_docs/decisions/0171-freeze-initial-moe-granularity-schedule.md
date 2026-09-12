@@ -13,6 +13,10 @@ The first ultra-small MoE experiment is based on the completed 20M dense Small-L
 
 The remaining first-order architecture choice is the routed-expert granularity. To keep the initial experiment scientifically interpretable against the dense reference, the active FFN width should initially match the dense `d_ff=704` budget while using many experts.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 The initial MoE experiment is frozen as:

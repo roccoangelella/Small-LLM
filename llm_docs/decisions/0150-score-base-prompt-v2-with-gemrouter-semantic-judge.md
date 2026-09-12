@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-09-04
+supersedes: null
 owners: [Small-LLM]
 supersedes_for_base_prompt_scoring:
   - 0140-wire-evaluation-v2-and-retire-fixed-length-qualitative-protocol
@@ -9,7 +10,15 @@ supersedes_for_base_prompt_scoring:
 
 # ADR 0150: score Base Prompt v2 with a GemRouter semantic judge
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Base Prompt v2 objective generations must no longer be scored inside the GPU
 evaluator by substring or regular-expression checks.
@@ -91,3 +100,6 @@ and SFT semantic judgments.
 
 SFT Behavior v2 remains governed by its own task-specific behavior scoring; this
 ADR changes only Base Prompt v2 scoring.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

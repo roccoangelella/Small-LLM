@@ -1,18 +1,23 @@
 ---
 status: superseded
 date: 2026-08-19
+supersedes: null
 superseded_by: 0104
 ---
 
 # ADR 0102 — Use Superior Reasoning Stage 1 for the first real R-SFT corpus
 
-## Context
+## Context and problem statement
 
 The repeated-epoch R0 diagnostic established that the approximately-100M model can learn the atomic `<think>`, `</think>`, `<answer>` response protocol when the frozen 630-example Gemini corpus is replayed heavily, but the resulting behavior is strongly overfit: question-shaped prompts trigger reasoning-shaped text without reliable semantic reasoning, while generalization remains weak. More replay of the same tiny corpus is therefore not the next production direction.
 
 Alibaba-Apsara's Superior Reasoning SFT release provides a much larger set of independently generated reasoning examples. Its Stage 1 is the lower-temperature, stability-oriented portion and exposes explicit domain labels including `science` and `instruction_following`, allowing the first expansion to avoid math and code rather than approximating domain from prompt text.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the first larger R-SFT corpus after the 630-example R0 diagnostic:
 

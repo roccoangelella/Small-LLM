@@ -1,15 +1,21 @@
 ---
 status: accepted
+date: 2026-08-24
 decided_at: 2026-08-24
+supersedes: null
 ---
 
 # ADR 0121 — Audit teacher-forced validation document by document
 
-## Context
+## Context and problem statement
 
 Manual inspection of the new teacher-forced held-out confidence report exposed cases where a model can be heavily penalized for disagreeing with uncommon but potentially valid source wording. Examples include `parg coat` in a masonry article and `ballast substances` in flour-milling copy. Distinguishing source-text quality from tokenizer/packing corruption is therefore necessary before interpreting individual low-probability or high-confidence-error examples as model failures.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Review the teacher-forced validation evidence **document by document and example by example**, keeping each source document as the unit of manual context rather than loading the whole validation corpus at once.
 

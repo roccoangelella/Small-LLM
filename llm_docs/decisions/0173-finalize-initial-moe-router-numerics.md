@@ -7,11 +7,15 @@ owners: [Small-LLM]
 
 # ADR 0173: finalize initial MoE router numerics
 
-## Context
+## Context and problem statement
 
 ADR 0170-0172 define the first ultra-small MoE experiment on the completed 20M dense backbone. The initial sparse geometry is 64 routed experts per MoE layer, Top-2, expert hidden width 352, no shared experts, dropless routing, FP32 router arithmetic, and exact Quantile Balancing (QB). ADR 0172 had intentionally left several numerical details open and had provisionally recorded a per-microbatch QB update cadence pending review.
 
 The final pre-implementation review compared the relevant 2026 designs, especially Kimi K3's step-level Quantile Balancing and DeepSeek-V4's Sqrt(Softplus) affinity scoring. The user then accepted the choices below.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 
@@ -60,3 +64,6 @@ This ADR freezes design choices but does **not** authorize wiring yet. Before co
 - `0170-freeze-initial-ultra-small-moe-routing-contract.md`
 - `0171-freeze-initial-moe-granularity-schedule.md`
 - `0172-record-initial-moe-routing-numerics-and-operations.md`
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

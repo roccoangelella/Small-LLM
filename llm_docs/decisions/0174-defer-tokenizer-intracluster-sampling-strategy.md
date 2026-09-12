@@ -6,7 +6,16 @@ supersedes: null
 
 # 0174 — Defer tokenizer intra-cluster sampling strategy
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The intra-cluster sampling method controls corpus dispersion and possible source-order bias, but several defensible deterministic designs remain. The project will reason about those alternatives separately rather than prematurely binding the tokenizer corpus to one method.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The exact strategy used to sample documents *within* the selected ClimbMix clusters for the 10 GB tokenizer-development corpus remains deliberately **undecided**.
 
@@ -32,6 +41,6 @@ This deferral does not reopen the decisions already made for Gate A:
 - require lossless GPT-2 decode/re-encode verification;
 - defer the final MoE pretraining-corpus stratification policy until after the tokenizer is frozen.
 
-## Rationale
+## Consequences
 
-The intra-cluster sampling method controls corpus dispersion and possible source-order bias, but several defensible deterministic designs remain. The project will reason about those alternatives separately rather than prematurely binding the tokenizer corpus to one method.
+No consequences were recorded at the time; section added for the template.

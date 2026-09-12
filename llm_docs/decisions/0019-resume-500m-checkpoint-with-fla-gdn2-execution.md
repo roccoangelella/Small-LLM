@@ -6,7 +6,7 @@ supersedes: null
 
 # 0019 — Resume the active 500M trajectory with FLA GDN-2 execution
 
-## Context
+## Context and problem statement
 
 The integrated Small-LLM FLA GDN-2 layer passed the user-run Kaggle full-layer forward/backward parity probe. The active 20M/500M run already has verified remote checkpoints created under the historical `gdn_chunk_size=32` configuration and the old adaptive PyTorch execution backend.
 
@@ -14,7 +14,11 @@ The 500M one-click launcher is fail-closed and creates a detached training workt
 
 Changing the trainer CLI from `--gdn-chunk-size 32` to 64 is not acceptable for resume because trainer checkpoints serialize the model configuration and restore checks it strictly. Such a change would reject the existing checkpoint even though chunk size is only an execution grouping.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The normal 20M/500M one-click command is authorized to restore the latest verified 500M checkpoint and continue it with the qualified FLA GDN-2 CUDA execution backend.
 
@@ -52,7 +56,7 @@ continues to:
 
 No checkpoint tensor conversion is required because the backend adds no learned parameters or state-dict entries.
 
-## Scientific consequence
+## Consequences
 
 This is an explicit implementation migration within the existing 500M trajectory. The mathematical GDN-2 recurrence is intended to remain the same, but exact bitwise replay equivalence with the hypothetical all-adaptive continuation is no longer expected because floating-point operation ordering changes.
 

@@ -6,7 +6,7 @@ supersedes: 0093
 
 # 0094 — Lower the post-15,500 LR scale throughout the 10B continuation
 
-## Context
+## Context and problem statement
 
 The first aggressive continuation in ADR 0093 forked the exact uncooled `step-00015500`, cosine-decayed from `3e-4` to `1.5e-4` over approximately 300M targets, then switched to an inverse-square-root base. Its fixed-prefix validation loss fell rapidly during the fast settling phase, bottomed near the end of that phase, and then began rising once the schedule changed to the much gentler inverse-square-root continuation.
 
@@ -14,7 +14,11 @@ The user judged this sufficient evidence that the learning rate should be more a
 
 Recent continuation-schedule work still favors a decreasing base close to inverse-square-root rather than a long flat WSD plateau. WSqD uses a shifted inverse-square-root base plus terminal linear cooldown, and the related power schedule uses an empirically fitted exponent close to `-0.5`. We therefore keep the approximately inverse-square-root long-phase shape and lower its scale rather than introducing an unsupported much steeper exponent from a single project run.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Supersede ADR 0093 as the authorized main 100M/10B continuation. Always fork the exact original uncooled `100m-10b-data-001/checkpoints/step-00015500` state; do not continue from the partially trained ADR-0093 branch and do not reheat a cooled checkpoint.
 

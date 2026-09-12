@@ -24,6 +24,10 @@ The run did acquire part of the intended reasoning protocol: under the trained c
 
 Canonical evidence: [`../evidence/rsft_e3_full_qualification_2026-08-24.md`](../evidence/rsft_e3_full_qualification_2026-08-24.md).
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Supersede ADR 0116's provisional model-quality promotion.

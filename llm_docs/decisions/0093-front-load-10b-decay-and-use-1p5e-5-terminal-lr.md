@@ -6,7 +6,7 @@ supersedes: 0092
 
 # 0093 — Front-load the 10B continuation decay and finish at 1.5e-5
 
-## Context
+## Context and problem statement
 
 The step-15,500 diagnostic cooldown showed lower validation loss than the original flat-`3e-4` 100M/10B trajectory within roughly 500 updates. The completed 100M/2B run also showed no obvious learning slowdown late in its cooldown. Together these observations argue against spending a large fraction of the remaining 10B trajectory near the original `3e-4` peak.
 
@@ -14,7 +14,11 @@ ADR 0092 therefore remained too conservative: its pure inverse-square-root conti
 
 The user authorized a more aggressive front-loaded schedule and a terminal LR of `1.5e-5` rather than `3e-5`. The lower terminal target affects only the final cooldown; it does not force the multi-billion-token middle of the run to train at near-terminal LR.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Supersede ADR 0092's pure inverse-square-root continuation. The new main continuation must still fork the exact original uncooled `100m-10b-data-001/checkpoints/step-00015500` state, preserving model, optimizer, scaler, RNG, data cursor, architecture, hybrid Muon+AdamW recipe, FP16 precision, microbatch 4, validation prefix, and exact 10B corpus order. Change only the LR scheduler.
 

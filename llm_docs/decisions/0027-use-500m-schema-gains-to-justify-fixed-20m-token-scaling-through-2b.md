@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-10
+supersedes: null
 ---
 
 # 0027 — Use 500M qualitative schema gains to justify fixed-20M token scaling through the planned 2B probe
@@ -18,6 +19,10 @@ Notable 500M behaviors include:
 - validation loss had continued to improve over the scaling trajectory rather than showing an obvious qualitative/optimization saturation signal at 500M.
 
 The earlier approximately-10M qualitative checkpoint had already shown some Q/A surface-format imitation, so the 500M evidence should not be described as the first appearance of the schema. The stronger claim supported here is that schema continuation, answer-shaped generation, and dialogue-format preservation are more developed while the model remains far from reliable factual or semantic performance.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 
@@ -61,6 +66,10 @@ The decision to keep scaling tokens beyond 2B at the same parameter count should
 6. improved semantic coherence while retaining schema adherence.
 
 If those gains flatten materially while optimization remains healthy, parameter scaling becomes the more informative next axis.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 
