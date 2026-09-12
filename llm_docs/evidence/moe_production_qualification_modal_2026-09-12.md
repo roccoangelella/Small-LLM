@@ -89,3 +89,12 @@ No learning-quality claim for the compile lane beyond rounding-level loss agreem
 ADR 0180 still requires a learning comparison for adoption. The corpus is a 2-shard proxy of the
 production corpus, same tokenizer and schema. Routing balance after 8 updates says nothing about
 100 B behaviour. Checkpoint durability to the Modal volume (commit time) was not measured here.
+
+## Addendum — nondeterminism control, one A10, same day
+
+Two continuous 6-update runs from scratch, identical command, seed and data, in the same container:
+step-6 `trainer_state.pkl` differs on the same 412 of 430 tensors with max abs difference **2.4e-3**,
+larger than the 3.5e-4 between the continuous run and its resume in that container (and than the
+5e-4–1e-3 seen on the three GPUs above). Run-to-run kernel nondeterminism therefore fully accounts for
+the post-resume divergence; checkpoint/resume is exact to the limit the hardware allows. The 18
+identical tensors are the integer routing counters and step bookkeeping. Cost ≈ 0.12 USD.
