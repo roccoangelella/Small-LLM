@@ -6,13 +6,17 @@ supersedes: null
 
 # 0173 — Freeze tokenizer-corpus Gate A format, EOD handling, and cluster policy
 
-## Context
+## Context and problem statement
 
 ADR 0171 selected direct reconstruction from the pinned official `nvidia/Nemotron-ClimbMix` tokenized source rather than inverting the project's packed 100B `.bin` corpus. ADR 0172 then changed the tokenizer-R&D path so the reconstructed text is persisted locally rather than treated as purely transient.
 
 The remaining Gate A choices are how much text to materialize, how to persist it, how to handle GPT-2 EOD tokens, and how to constrain the source mixture used to learn the tokenizer.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The initial tokenizer-training corpus will contain **10,000,000,000 bytes of effective UTF-8 document text**, excluding JSON framing and metadata. Whole documents are atomic: the producer may exceed the target slightly to finish the final accepted document but never truncates one to hit the byte target exactly.
 

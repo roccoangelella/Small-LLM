@@ -1,13 +1,24 @@
+---
+status: accepted
+date: null
+# Decision date was not recorded in the original ADR.
+supersedes: null
+---
+
 # ADR 0148: Register the completed 100M/10B SFT for local chat
 
 - Status: Accepted
 - Date: 2026-09-04
 
-## Context
+## Context and problem statement
 
 The SFT run `100m-10b-sft-s0-2b10pct-data-001` completed its 100M/10B-parent trajectory and published its final verified checkpoint. The root-level `chat.py` already supports completed SFT S0 checkpoints through the normal GPT-2 tokenizer and the verified Hugging Face `latest` checkpoint path, but the `(100M, 10B)` SFT profile was not present in `_SFT_CHAT_RUNS`. Because `_resolve_chat_run()` requires the model/token profile to be registered before applying an optional `--run-id`, the completed 100M/10B SFT artifact could not be selected through the supported local chat CLI.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Register `(100_000_000, 10_000_000_000)` in the SFT chat registry with default run:
 

@@ -1,15 +1,20 @@
 ---
 status: accepted
 date: 2026-08-15
+supersedes: null
 ---
 
 # ADR 0088 — Use minimal schema, uniform R0 generation, 10% retention, and configurable reasoning serialization
 
-## Context
+## Context and problem statement
 
 The Gemini prompt suite and transport are ready. After manually sampling multiple deductive batches, the project explicitly chose not to add a formal semantic problem generator or deterministic logic verifier for the first R0 dataset. The next requirement is a small, testable dataset pipeline rather than more semantic enforcement machinery.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 ### Minimal teacher schema
 

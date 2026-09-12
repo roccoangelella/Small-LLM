@@ -1,3 +1,10 @@
+---
+status: accepted
+date: null
+# Decision date was not recorded in the original ADR.
+supersedes: null
+---
+
 # Decision 0084: Select the 100M/2B SFT chat artifact explicitly
 
 - Status: Accepted
@@ -9,7 +16,11 @@
 
 The 100M/2B SFT run can also use the streamed `torch.save` trainer-state format introduced for low-memory DDP checkpoint durability, whereas `chat.py` historically loaded `trainer_state.pkl` directly with `pickle.load`.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 1. Keep the unqualified `100M / 2B` chat command mapped to the stable pretrained artifact.
 2. Add an explicit `--sft` selector that maps `100M / 2B` to `100m-2b-sft-s0-001`.

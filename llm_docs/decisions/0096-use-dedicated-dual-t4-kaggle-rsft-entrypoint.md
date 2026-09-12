@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0096 — Use a dedicated dual-T4 Kaggle entry point for R-SFT
 
-## Context
+## Context and problem statement
 
 The first R-SFT experiments inherit most of the operational requirements already qualified for S0: exact global-token optimizer steps, Kaggle's two Tesla T4 GPUs, FP16 prewarm, WSD training, checkpoint cadence, exact resume, W&B telemetry, and Hugging Face publication. R-SFT differs in its parent checkpoint, tokenizer/model transition, bundle budget semantics, and delimiter experiment.
 
 The first R0 corpus is intentionally bundle-driven and one-pass. Its final production token budget is not frozen as a percentage of pretraining. The initial delimiter experiment compares textual and atomic reasoning boundaries under matched training conditions.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 - Add a dedicated human entry point at `kaggle/launch_r_sft.py` for R-SFT training.
 - The first supported profile is the 100M model whose pretraining parent consumed approximately 2B tokens, and whose direct parent is completed S0 run `100m-2b-sft-s0-001`.

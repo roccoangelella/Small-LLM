@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+import sys
 import unittest
 
 import torch
@@ -11,6 +13,11 @@ from MOE_model.__main__ import parse_args
 from MOE_model.router import SwitchTopKRouter
 from MOE_model.setup import _model_config_from_args
 from MOE_model.step import _finalize_telemetry
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+import moe_production as production  # noqa: E402
 
 
 class TestAcceptedCLIWiring(unittest.TestCase):
@@ -52,6 +59,77 @@ class TestAcceptedCLIWiring(unittest.TestCase):
                 "--model-size", "accepted", "--device", "cpu", "--precision", "fp32",
                 "--gdn-chunk-size", "32", "--load-balancing", "none",
             ])
+
+
+class TestProductionDurabilityPayload(unittest.TestCase):
+    def _request(self, **overrides) -> production.ProductionRequest:
+        values = {
+            "run_id": "moe-prod-001",
+            "dataset_dir": "/data/moe-superbpe",
+            "total_steps": 762_939,
+            "precision": "fp16",
+            "microbatch_size": 8,
+            "source_commit": "a" * 40,
+        }
+        values.update(overrides)
+        return production.ProductionRequest(**values)
+
+    def test_production_defaults_are_a_durable_checkpoint_sequence(self) -> None:
+        request = self._request()
+        self.assertEqual(request.checkpoint_every_steps, 1_000)
+        self.assertEqual(request.keep_last_checkpoints, 3)
+        self.assertEqual(request.milestone_every_steps, 0)
+        self.assertEqual(request.max_wall_seconds, 0.0)
+
+    def test_payload_round_trip_preserves_the_durability_fields(self) -> None:
+        request = self._request(
+            keep_last_checkpoints=5, milestone_every_steps=50_000,
+            max_wall_seconds=23 * 60 * 60, resume=production.RESUME_LATEST,
+        )
+        payload = production.request_payload(request)
+        self.assertEqual(payload["identity"], production.accepted_identity())
+        self.assertEqual(production.request_from_payload(payload), request)
+
+    def test_command_carries_the_durability_flags(self) -> None:
+        request = self._request(
+            keep_last_checkpoints=3, milestone_every_steps=50_000,
+            max_wall_seconds=23 * 60 * 60,
+        )
+        command = production.build_training_command(
+            request, run_root=Path("/runs"), schedule=production.DISPLAY_SCHEDULE,
+        )
+
+        def value(flag: str) -> str:
+            return command[command.index(flag) + 1]
+
+        self.assertEqual(value("--checkpoint-every-steps"), "1000")
+        self.assertEqual(value("--keep-last-checkpoints"), "3")
+        self.assertEqual(value("--milestone-every-steps"), "50000")
+        self.assertEqual(value("--max-wall-seconds"), "82800")
+
+    def test_the_trainer_accepts_every_emitted_production_flag(self) -> None:
+        request = self._request(milestone_every_steps=50_000, max_wall_seconds=23 * 60 * 60)
+        command = production.build_training_command(
+            request, run_root=Path("/runs"), schedule=production.DISPLAY_SCHEDULE,
+        )
+        args = parse_args(command[command.index("-m") + 2:] + ["--device", "cpu"])
+        self.assertEqual(args.checkpoint_every_steps, 1_000)
+        self.assertEqual(args.keep_last_checkpoints, 3)
+        self.assertEqual(args.milestone_every_steps, 50_000)
+        self.assertEqual(args.max_wall_seconds, 82_800.0)
+        self.assertEqual(args.steps, 762_939)
+
+    def test_provider_launchers_set_the_production_cadence(self) -> None:
+        modal = (ROOT / "modal" / "moe_production_launch.py").read_text(encoding="utf-8")
+        beam = (ROOT / "beam" / "moe_production_launch.py").read_text(encoding="utf-8")
+        self.assertIn("checkpoint_every_steps: int = 1000", modal)
+        self.assertIn('precision: str = "bf16"', modal)
+        self.assertIn('compile_mode: str = "blocks"', modal)
+        self.assertIn('default="bf16"', beam)
+        self.assertIn('default="blocks"', beam)
+        self.assertIn("max_wall_seconds: float = 23 * 60 * 60", modal)
+        self.assertIn('"--checkpoint-every-steps", type=int, default=1000', beam)
+        self.assertIn('"--max-wall-seconds", type=float, default=0.0', beam)
 
 
 class TestQuantileTransactionalState(unittest.TestCase):

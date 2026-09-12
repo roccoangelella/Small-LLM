@@ -6,7 +6,7 @@ supersedes: null
 
 # Publish the MoE 100B SuperBPE corpus in a public HF bucket
 
-## Context
+## Context and problem statement
 
 The frozen MoE corpus entrypoint already reuses the established ClimbMix
 selection, cluster stratification, deterministic split, schema-v2 sharding, and
@@ -17,7 +17,11 @@ hardcoded private, which did not satisfy the publication requirement.
 The existing shared dataset bucket is private and contains earlier corpora, so
 changing its visibility would expose unrelated artifacts.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Publish `moe-100b-superbpe-b64-dataset-001` to a dedicated public HF Storage
 Bucket. The frozen entrypoint forces public visibility, the storage adapter

@@ -6,7 +6,7 @@ supersedes: 0094
 
 # 0095 — Decay from 1e-4 to 1e-5, then finish at 5e-6
 
-## Context
+## Context and problem statement
 
 ADR 0094 already lowered the post-step-15,500 continuation to a `1e-4` settling endpoint, but its inverse-square-root middle would still reach only about `4.93e-5` at the 9.6B-token terminal-cooldown boundary. The user judged that learning-rate scale still too high given the repeated project evidence that validation improves while LR is falling and degrades or stalls when the decay becomes much gentler.
 
@@ -14,7 +14,11 @@ The user therefore authorized explicit long-phase endpoints: reach `1e-4` after 
 
 Recent under-1B continuation-schedule work generally favors decreasing power-law / inverse-square-root-like LR rather than a long flat WSD plateau. A literal inverse-square-root base cannot satisfy the newly requested `1e-4 -> 1e-5` endpoint pair over this token interval. To retain a smooth power-law continuation while obeying the project evidence and requested endpoints, calibrate the power exponent from the two endpoint constraints instead of choosing it arbitrarily. This gives an exponent of approximately `1.6270515945`, materially steeper than the usual approximately `0.5` continuation exponent; this is an intentional project-specific experiment, not a claim that such a steep exponent is generally state of the art.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Supersede ADR 0094. The authorized main 100M/10B continuation must always fork the exact original uncooled `100m-10b-data-001/checkpoints/step-00015500` state. Do not continue from ADR-0093 or ADR-0094 branches and do not reheat a cooled checkpoint.
 

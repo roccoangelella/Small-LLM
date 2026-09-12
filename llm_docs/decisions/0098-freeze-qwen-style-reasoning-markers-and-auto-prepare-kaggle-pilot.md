@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0098 — Freeze Qwen-style reasoning markers and auto-prepare the Kaggle pilot
 
-## Context
+## Context and problem statement
 
 The 630-example R0 reasoning corpus is now frozen and committed at `artifacts/rsft-r0-pilot-630/generation/reasoning.jsonl`. The three promoted reasoning-control IDs were already fixed at 50257, 50258, and 50259, but their text spellings had intentionally remained open until the delimiter ablation. The first Kaggle R-SFT launcher also still required a prebuilt tokenized bundle, explicit token spec, and explicit run ID.
 
 The project owner delegated the exact token spelling to the implementation, preferring a convention compatible with contemporary reasoning LLMs, and requested that the Kaggle R-SFT path be ready to train directly from the now-committed pilot corpus.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Freeze the atomic token strings as:
 

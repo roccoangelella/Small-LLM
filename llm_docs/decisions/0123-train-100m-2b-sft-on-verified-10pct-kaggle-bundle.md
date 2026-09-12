@@ -1,11 +1,20 @@
 ---
 status: accepted
 date: 2026-08-25
+supersedes: null
 ---
 
 # ADR 0123: train the next 100M/2B S0 run on the verified 10% Kaggle bundle
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Use the completed, privately published ADR-0122 10% capacity-aware S0 bundle as the training dataset for the next 100M/2B supervised-fine-tuning trial.
 
@@ -88,3 +97,6 @@ The finite schedule must derive from the bundle's realized train block counts/ta
 ## Qualification
 
 This remains an experimental S0 scaling run. After completion, compare it directly with the pretrained parent and completed 4% S0 checkpoint on the frozen SFT held-outs, instruction behavior, EOS/runaway/repetition behavior, unchanged `eval_core_v1`, and subsequent reasoning/generalization probes. Do not promote the run based on SFT validation loss alone.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

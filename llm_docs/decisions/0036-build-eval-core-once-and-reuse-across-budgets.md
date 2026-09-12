@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-11
+supersedes: null
 ---
 
 # 0036 — Build eval_core_v1 once and reuse it across compatible budgets
 
-## Context
+## Context and problem statement
 
 The permanent `eval_core_v1` corpus is defined entirely by the frozen ClimbMix source revision, split identity, retained cluster set, per-cluster quotas, tokenizer geometry, and selection order. It does not depend on model weights, checkpoint identity, pretraining token budget, or SFT state. Building it by rescanning the pinned source during a GPU evaluation wastes accelerator time.
 
 The project currently needs the same frozen base-distribution qualification suite for the 20M model trained to 500M tokens and for the 20M model trained to 2B tokens.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Build and verify one production `eval_core_v1` artifact on a CPU/network machine, persist that immutable artifact remotely, and reuse the exact same verified corpus for both the 500M and 2B parent/SFT qualification runs.
 

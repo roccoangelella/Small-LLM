@@ -1,16 +1,26 @@
+---
+status: accepted
+date: 2026-09-06
+supersedes: null
+---
+
 # ADR 0155 — Freeze Top-1 Switch-style router without load balancing
 
 Date: 2026-09-06
 Status: Accepted for `moe-8e-top1` experiment branch
 Branch: `moe-8e-top1`
 
-## Context
+## Context and problem statement
 
 The first Small-LLM MoE experiment converts every one of the 20 dense FFN positions into an independent 8-expert MoE layer. Each expert keeps the current dense SwiGLU geometry (`d_model=512`, `d_ff=1408`). The experiment is Top-1 only and starts from scratch.
 
 The previous planning discussion considered explicit load-balancing mechanisms. The user rejected imposing an externally preferred equal-load target for the first experiment. The initial goal is to observe whether learned routing naturally produces useful specialization and how utilization distributes across experts, rather than forcing a target distribution.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the first MoE experiment:
 

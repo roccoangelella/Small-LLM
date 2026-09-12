@@ -1,15 +1,22 @@
 ---
 status: current
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-09-10
+supersedes: null
 ---
 
 # ADR 0170 — MoE tokenizer 8k target and reference corpus
 
-## Context
+## Context and problem statement
 
 The MoE line is moving away from the inherited GPT-2 50,257-token tokenizer. The project already has a production-scale reference corpus in the Hugging Face Storage Bucket `roccoangelella/small-llm-100b-datasets`; it is currently being uploaded in GPT-2-tokenized binary form and is not yet complete. The corpus was produced from the project's accepted clustered/weighted dataset pipeline.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 - Target an **8k-class semantic vocabulary** for the new MoE tokenizer.
 - Use the current `roccoangelella/small-llm-100b-datasets` corpus as the tokenizer R&D/testbed so tokenizer design reflects the same data distribution intended for model pretraining.

@@ -1,11 +1,25 @@
 ---
 status: accepted
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-08-15
+supersedes: null
 ---
 
 # ADR 0086 — Wire all R0 teacher prompts and load the private LLM endpoint from environment configuration
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The accepted R0 taxonomy needs stable, reviewable teacher contracts rather than ad-hoc prompt strings embedded in generation code. Sharing one generation structure across families makes dataset behavior easier to inspect while family-specific definitions reduce category drift such as DED batches becoming CSP or arithmetic tasks.
+
+Keeping the endpoint outside source control avoids publishing private routing infrastructure while retaining a simple local/runtime configuration path.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The reasoning-SFT module will own the teacher-generation prompt contracts for every accepted R0 reasoning family in `post_training/R-SFT/prompts.py`:
 
@@ -25,8 +39,6 @@ The private GemRouter/OpenAI-compatible endpoint will no longer be hardcoded in 
 
 `GEMR_API_KEY` remains the bearer-key variable and the default teacher model remains `gemini-3.7-flash` unless a later decision changes it.
 
-## Rationale
+## Consequences
 
-The accepted R0 taxonomy needs stable, reviewable teacher contracts rather than ad-hoc prompt strings embedded in generation code. Sharing one generation structure across families makes dataset behavior easier to inspect while family-specific definitions reduce category drift such as DED batches becoming CSP or arithmetic tasks.
-
-Keeping the endpoint outside source control avoids publishing private routing infrastructure while retaining a simple local/runtime configuration path.
+No consequences were recorded at the time; section added for the template.

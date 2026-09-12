@@ -1,9 +1,23 @@
+---
+status: accepted
+date: 2026-09-04
+supersedes: null
+---
+
 # ADR 0147 — Batch evaluation v2 execution without changing the benchmarks
 
 Date: 2026-09-04
 Status: accepted and wired
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Keep the evaluation-v2 benchmark definitions, cases, scoring rules, seeds and sampled decoding contract unchanged, but replace the dominant serial execution paths with evaluation-only batching.
 

@@ -14,6 +14,10 @@ The warmed median throughput was 20,183.50 target tok/s on one T4 and 34,292.22 
 
 The project also has a distinct Modal training path. Modal uses a single H100 and has different optimizer-block/microbatch utilization decisions; the Kaggle DDP result is not evidence for changing that topology.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Chosen option: **make exact-batch two-T4 DDP the standard production execution mode for Kaggle training, while keeping Modal training single-H100.**

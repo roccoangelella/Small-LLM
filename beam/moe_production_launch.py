@@ -48,7 +48,7 @@ def _require_source_commit(source_commit: str) -> None:
     image=CPU_IMAGE,
     cpu=2,
     memory="8Gi",
-    timeout=1800,
+    timeout=24 * 60 * 60,
     retries=1,
     secrets=SECRETS,
     volumes=[_base.DATA_VOLUME, _base.RUN_VOLUME, _base.CACHE_VOLUME],
@@ -58,7 +58,7 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     """Decode a real training block with the accepted 8,000-token semantic bound."""
 
     request = _production.request_from_payload(payload)
-    return _production.prepare_dataset(request)
+    return _production.prepare_dataset(request, run_root=RUN_ROOT)
 
 
 @_base.function(
@@ -86,14 +86,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--dataset-dir", required=True)
+    parser.add_argument("--dataset-shard-bucket", default="")
+    parser.add_argument("--dataset-shard-run-id", default="")
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="fp16")
-    parser.add_argument("--microbatch-size", type=int, default=8)
+    # Qualified on RTX 4090 (2026-09-12): BF16, microbatch 16 keeps 2x headroom for capacity spikes.
+    parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="bf16")
+    parser.add_argument("--microbatch-size", type=int, default=16)
     parser.add_argument("--resume")
     parser.add_argument("--sequences-per-block", type=int)
-    parser.add_argument("--checkpoint-every-steps", type=int, default=0)
-    parser.add_argument("--validation-blocks", type=int, default=0)
+    parser.add_argument("--checkpoint-every-steps", type=int, default=1000)
+    parser.add_argument("--keep-last-checkpoints", type=int, default=3)
+    parser.add_argument("--milestone-every-steps", type=int, default=0)
+    # The Beam GPU function has no wall-clock timeout, so draining stays off by default.
+    parser.add_argument("--max-wall-seconds", type=float, default=0.0)
+    # Negative means "as many as the corpus run contract plans".
+    parser.add_argument("--validation-blocks", type=int, default=-1)
+    parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="blocks")
+    parser.add_argument("--allow-partial-corpus", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
@@ -101,21 +111,28 @@ def main(argv: list[str] | None = None) -> int:
     request = _production.ProductionRequest(
         run_id=args.run_id,
         dataset_dir=args.dataset_dir,
-        steps=args.steps,
+        total_steps=args.steps,
         precision=args.precision,
         microbatch_size=args.microbatch_size,
         source_commit=args.source_commit,
         resume=args.resume,
         sequences_per_block=args.sequences_per_block,
         checkpoint_every_steps=args.checkpoint_every_steps,
-        validation_blocks=args.validation_blocks,
+        keep_last_checkpoints=args.keep_last_checkpoints,
+        milestone_every_steps=args.milestone_every_steps,
+        max_wall_seconds=args.max_wall_seconds,
+        validation_blocks=None if args.validation_blocks < 0 else args.validation_blocks,
+        compile_mode=args.compile_mode,
+        allow_partial_corpus=args.allow_partial_corpus,
+        dataset_shard_bucket=args.dataset_shard_bucket,
+        dataset_shard_run_id=args.dataset_shard_run_id,
     )
     payload = _production.request_payload(request)
     display = {
         **payload,
         "provider": "beam",
         "gpu": "RTX4090",
-        "command": _production.build_training_command(request, run_root=RUN_ROOT),
+        "command": _production.build_training_command(request, run_root=RUN_ROOT, schedule=_production.DISPLAY_SCHEDULE),
     }
     print(json.dumps(display, indent=2, sort_keys=True), flush=True)
     if args.dry_run:
@@ -130,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("CPU production preparation returned a different model identity")
     result = train_production_rtx4090.remote(payload)
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    if result.get("status") == "incomplete":
+        raise SystemExit(f"segment ended at step {result.get('steps_reached')} before the target: corpus exhausted")
     return 0
 
 

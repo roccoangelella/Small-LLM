@@ -1,4 +1,14 @@
+---
+status: accepted
+date: 2026-08-18
+supersedes: null
+---
+
 # Diagnose the first dual-T4 update and stabilize the Triton cache contract
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
 
 Date: 2026-08-18
 
@@ -12,3 +22,15 @@ The next retry must:
 - continue validating the actual model/FLA-facing source files plus the frozen runtime/geometry contract.
 
 The scientific checkpoint, data cursor, optimizer state, LR schedule, block64 global batch, and microbatch-2 execution slicing remain unchanged.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
+
+No separate decision outcome was recorded at the time; section added for the template.
+
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

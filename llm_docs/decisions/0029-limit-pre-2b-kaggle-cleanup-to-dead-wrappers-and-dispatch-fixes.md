@@ -13,6 +13,10 @@ After introducing the canonical profile-driven `kaggle/launch.py` front door, th
 
 A cleanup audit also found that the unified 100M publication profile was dispatching directly to `build_and_push_100m.py`, while the established `build_and_push_100m_entry.py` compatibility entry excluded Kaggle's generated root-level `*.archive` transport artifact from tree-identity hashing.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 The initial decision was to perform only cleanup that was clearly behavior-preserving before the 2B run:
@@ -27,6 +31,10 @@ The initial decision was to perform only cleanup that was clearly behavior-prese
 ## Supersession
 
 ADR 0030 supersedes this conservative boundary after the user explicitly authorized pre-2B consolidation of profile-specific wrappers/overlays behind one profile-driven runtime. The underlying qualified shared engines remain retained, but the per-profile executable layers and remaining publication shell wrappers are removed.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 

@@ -7,7 +7,7 @@ owners: [Small-LLM]
 
 # ADR 0144: consolidate 100M/10B probes and test the low-LR tail
 
-## Context
+## Context and problem statement
 
 The completed 100M/10B pretraining run entered a terminal learning-rate decay near the end of training. Its late validation-loss curve therefore cannot by itself distinguish model/data saturation from an optimizer that has simply been driven to a very small step size.
 
@@ -15,7 +15,11 @@ The older Probe A experiment used separate `probe_a_lr_reset_10b.py` and `probe_
 
 The historical step-00071750 source may no longer be retained in Hugging Face because the dedicated best-model repository is replace-oriented. The current strict-best artifact may therefore be the only usable source.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 `kaggle/src/probes_100m_10b.py` is the single public home for short 100M/10B pretraining probes. Do not add a new one-off Kaggle Python file for each future 100M/10B probe; extend this launcher instead.
 
@@ -41,7 +45,7 @@ For this experiment stage, the primary decision criterion is validation loss: **
 
 The current deterministic corpus ends at the 10B endpoint. These probes therefore test the remaining tail from the chosen pre-terminal source checkpoint under a held LR; they do not constitute a true >10B fresh-data continuation. A 20B/50B/100B continuation requires extending the deterministic corpus first.
 
-## Repository consequences
+## Consequences
 
 - Canonical launcher: `kaggle/src/probes_100m_10b.py`.
 - Superseded launcher files `kaggle/src/probe_a_lr_reset_10b.py` and `kaggle/src/probe_a_lr_reset_10b_impl.py` are removed.

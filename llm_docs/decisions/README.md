@@ -25,6 +25,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md`](0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md)
 - [`0021-qualify-fla-gdn2-v052-and-resume-step4000.md`](0021-qualify-fla-gdn2-v052-and-resume-step4000.md)
 - [`0035-retire-completed-fla-investigation-scripts-from-kaggle.md`](0035-retire-completed-fla-investigation-scripts-from-kaggle.md)
+- [`0180-opt-in-torch-compile-lane-for-moe-blocks.md`](0180-opt-in-torch-compile-lane-for-moe-blocks.md) — status: proposed, pending owner acceptance
 
 ### 2. Pretraining & Infrastructure (Modal, Beam, Kaggle)
 - [`0004-run-100m-in-one-session-with-250-step-durability.md`](0004-run-100m-in-one-session-with-250-step-durability.md)
@@ -50,6 +51,8 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0114-run-deep-decay-100m-10b-on-modal-h100.md`](0114-run-deep-decay-100m-10b-on-modal-h100.md)
 - [`0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md`](0132-split-latest-checkpoints-to-hf-bucket-and-best-model-to-dedicated-repo.md)
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
+- [`0179-production-checkpoint-sequence.md`](0179-production-checkpoint-sequence.md)
+- [`0181-take-the-production-schedule-from-the-corpus-run-contract.md`](0181-take-the-production-schedule-from-the-corpus-run-contract.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
@@ -59,6 +62,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md`](0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md)
+- [`0182-stream-the-moe-corpus-while-it-is-produced.md`](0182-stream-the-moe-corpus-while-it-is-produced.md)
 
 ### 4. Post-Training & R-SFT Reasoning
 - [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)

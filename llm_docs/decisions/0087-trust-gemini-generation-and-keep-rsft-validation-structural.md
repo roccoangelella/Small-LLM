@@ -1,11 +1,22 @@
 ---
 status: accepted
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-08-15
+supersedes: null
 ---
 
 # ADR 0087 — Trust Gemini problem generation and keep R-SFT validation structural
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the first reasoning-SFT dataset pipeline, do not build a separate formal problem generator or deterministic topic/logic verifier for the seven R0 reasoning families.
 

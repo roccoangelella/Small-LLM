@@ -1,15 +1,25 @@
+---
+status: accepted
+date: 2026-08-10
+supersedes: null
+---
+
 # ADR 0035: Commit user-requested changes directly to main
 
 Date: 2026-08-10
 Status: Accepted
 
-## Decision
+## Decision outcome
 
 For changes explicitly requested by the project owner in ChatGPT project work, commit and push the implementation directly to the repository `main` branch instead of opening a pull request, unless the owner explicitly asks for a PR or branch-based review flow.
 
-## Context
+## Context and problem statement
 
 During the SFT launcher log-alignment change, a pull request was opened after implementing the requested change. The project owner clarified that this repository workflow should use direct commits to `main` rather than PRs for such requests.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Consequences
 

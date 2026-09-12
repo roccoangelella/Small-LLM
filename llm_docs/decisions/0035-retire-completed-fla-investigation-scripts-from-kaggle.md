@@ -14,6 +14,10 @@ ADR 0026 had deliberately kept several GDN-2/FLA qualification executables while
 
 The cleanup audit distinguished old-looking files from dead files. In particular, the 100M-named training/publication engines are still loaded by `kaggle/runtime.py`, their helper modules remain live dependencies, the publication requirements file is still used by the unified launcher, and the per-profile publication environment templates remain referenced by reproducibility runbooks. Those files are not cleanup candidates merely because their names reflect earlier stages.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Remove the following completed investigation executables from `main` because they have no live code or test callers and are referenced only by historical decision/evidence/archive material:

@@ -6,7 +6,20 @@ supersedes: 0040
 
 # Use a block-64 Modal corpus and probe microbatch 16/32/48/64
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The H100/H200 should be allowed to expose substantially more execution parallelism than the T4-era 16-sequence block permitted. Keeping the storage/optimizer block at 16 would make microbatch sizes above 16 impossible to measure and could leave expensive Hopper capacity unused.
+
+A 64-sequence block is large enough to benchmark 16, 32, 48, and 64 without introducing cross-block transactional accumulation into the trainer. The hardware probe remains authoritative: 48 or 64 may fail on an 80 GB H100 with the current activation-heavy attention/LM-head implementation, while an H200 may admit a larger candidate. A failed candidate is diagnostic and does not alter the production trajectory; the fastest safe candidate is frozen before optimizer step 1.
+
+The optimizer batch itself is intentionally changed by this decision. This is a new 100M / 2B trajectory, so the efficiency gain is preferred over preserving the earlier T4-oriented 32k-token update size. Token-based schedule boundaries are retained so the data exposure and WSD phase budget remain directly interpretable.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the authorized approximately-100M-parameter / 2B-token Modal pretraining run, replace the earlier 16-sequence optimizer-block plan from ADR 0040 with a 64-sequence prepared-block dataset derived byte-for-byte from the verified `20m-2b-dataset-001` corpus.
 
@@ -44,10 +57,6 @@ decay tokens: 399,998,976
 total train target tokens: 1,999,994,880
 ```
 
-## Rationale
+## Consequences
 
-The H100/H200 should be allowed to expose substantially more execution parallelism than the T4-era 16-sequence block permitted. Keeping the storage/optimizer block at 16 would make microbatch sizes above 16 impossible to measure and could leave expensive Hopper capacity unused.
-
-A 64-sequence block is large enough to benchmark 16, 32, 48, and 64 without introducing cross-block transactional accumulation into the trainer. The hardware probe remains authoritative: 48 or 64 may fail on an 80 GB H100 with the current activation-heavy attention/LM-head implementation, while an H200 may admit a larger candidate. A failed candidate is diagnostic and does not alter the production trajectory; the fastest safe candidate is frozen before optimizer step 1.
-
-The optimizer batch itself is intentionally changed by this decision. This is a new 100M / 2B trajectory, so the efficiency gain is preferred over preserving the earlier T4-oriented 32k-token update size. Token-based schedule boundaries are retained so the data exposure and WSD phase budget remain directly interpretable.
+No consequences were recorded at the time; section added for the template.

@@ -6,7 +6,7 @@ supersedes: provider-lock portions of 0099 and 0114
 
 # 0117 — Make the 100M/10B deep-decay continuation portable across Modal, Beam, and Kaggle
 
-## Context
+## Context and problem statement
 
 ADR 0095 freezes the scientific 100M/10B deep-decay trajectory under the run ID
 `100m-10b-deep-decay-from-step15500`. Later execution ADRs moved that same
@@ -17,7 +17,11 @@ The user expects to switch providers frequently according to available credits
 and capacity. Provider switching must therefore be a normal resume operation,
 not a bespoke migration each time.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The shared Hugging Face model-repository namespace is the durable rendezvous for
 all three execution providers. Before allocating training GPUs, each provider
@@ -55,7 +59,7 @@ restored checkpoint. The rewritten resume checkpoint need not replace the
 provider-neutral HF source checkpoint: the next normal training checkpoint is
 published under the unchanged shared run namespace.
 
-## Operational consequence
+## Consequences
 
 Switching provider is now intended to require only that provider's normal
 launch command. No checkpoint ID or manual `--resume` argument is supplied.

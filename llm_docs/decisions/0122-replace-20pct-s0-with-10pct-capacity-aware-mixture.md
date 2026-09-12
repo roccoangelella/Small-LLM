@@ -6,7 +6,19 @@ supersedes: 0119-run-100m-2b-s0-at-20-percent
 
 # ADR 0122: replace the 20% S0 trial with a 10% capacity-aware S0 mixture
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The attempted 20% configuration exposed two independent finite-data constraints. First, proportional validation/test scaling requested roughly 10.53M targets per held-out split even though the unique filtered pools contain only roughly 5.27M validation and 5.11M test targets; fixed held-outs are sufficient and superior for longitudinal comparability. Second, 20% SFT at an 85% instruction share would require roughly 340.17M instruction targets, far beyond the unique S0 instruction inventory.
+
+A 10% horizon requires only 170.09M instruction targets and therefore fits comfortably inside the estimated unique Magpie capacity while retaining the full smaller-source inventories. It gives approximately 2.5× the SFT exposure of the completed 4% run without introducing instruction repetition, while preserving the 85/15 instruction-versus-pretraining-replay control.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Do not run the previously authorized 20% 100M/2B S0 scaling experiment. The next S0 trial on the completed `100m-2b-data-001` parent will instead use exactly 10% of the verified parent loss-bearing target count.
 
@@ -105,12 +117,9 @@ Before publication, the 10% bundle builder must verify all of the following:
 
 If Magpie cannot supply the planned `160,707,411` instruction targets after filtering and serialization, fail closed rather than changing the mixture silently.
 
-## Rationale
-
-The attempted 20% configuration exposed two independent finite-data constraints. First, proportional validation/test scaling requested roughly 10.53M targets per held-out split even though the unique filtered pools contain only roughly 5.27M validation and 5.11M test targets; fixed held-outs are sufficient and superior for longitudinal comparability. Second, 20% SFT at an 85% instruction share would require roughly 340.17M instruction targets, far beyond the unique S0 instruction inventory.
-
-A 10% horizon requires only 170.09M instruction targets and therefore fits comfortably inside the estimated unique Magpie capacity while retaining the full smaller-source inventories. It gives approximately 2.5× the SFT exposure of the completed 4% run without introducing instruction repetition, while preserving the 85/15 instruction-versus-pretraining-replay control.
-
 ## Qualification
 
 This 10% artifact remains experimental until it passes the same frozen parent-versus-SFT qualification matrix used for the completed 4% S0 run: instruction behavior, EOS/runaway/repetition behavior, held-out SFT objective, unchanged `eval_core_v1` retention, and subsequent reasoning/generalization probes where applicable. Lower SFT-distribution validation loss alone is not sufficient for promotion.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

@@ -12,6 +12,10 @@ The R-SFT dataset directory accumulated separate Superior-Reasoning scripts for 
 
 The current scaling plan also needs Stage 1 and Stage 2 of Superior Reasoning to behave as one source family with one normalization/filter contract, while keeping the completed 16,716-row Stage-1-expanded artifact immutable as the base of the 1% experiment.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Adopt a three-layer R-SFT dataset-production architecture:

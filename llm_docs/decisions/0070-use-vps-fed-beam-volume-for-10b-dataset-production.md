@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-13
+supersedes: null
 ---
 
 # ADR 0070: Produce 10B data on the VPS and mirror READY shards into Beam
 
-## Context
+## Context and problem statement
 
 The first live Beam 100M/10B attempt showed that running the incremental ClimbMix producer as a paid Beam CPU function is uneconomic. The producer had generated only 210 of the planned 76,294 training blocks when approximately $0.06 had already been spent, while the GPU had not started because the two-shard lead buffer was not yet ready.
 
 Beam supports copying local files directly into a distributed Volume with `beam cp`, and the training adapter already mounts `small-llm-cache` at `/cache`. The VPS can therefore perform the source HTTP reads and deterministic dataset construction continuously in a persistent `tmux` session without consuming Beam CPU runtime.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the Beam 100M/10B lane, run incremental dataset production on the VPS with `beam/vps_dataset_producer.py` instead of allocating the Beam CPU producer.
 

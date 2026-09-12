@@ -1,12 +1,26 @@
 ---
 status: accepted
 date: 2026-09-04
+supersedes: null
 owners: [Small-LLM]
 ---
 
 # ADR 0143: remove IRE project state from the repository
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The repository already has a dedicated structured project-memory hierarchy under
+`llm_docs/`. Keeping a second research-memory system under `.ire/` duplicates
+state, introduces tool-specific metadata, and creates ambiguity about which
+memory source is authoritative.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Remove the tracked `.ire/` directory from `main` and ignore `/.ire/` going
 forward.
@@ -14,13 +28,6 @@ forward.
 `llm_docs/` remains the canonical durable project-memory system for Small-LLM.
 IRE-specific state, configuration, resources, caches, and agent memory are not
 part of the model codebase or its reproducibility contract.
-
-## Rationale
-
-The repository already has a dedicated structured project-memory hierarchy under
-`llm_docs/`. Keeping a second research-memory system under `.ire/` duplicates
-state, introduces tool-specific metadata, and creates ambiguity about which
-memory source is authoritative.
 
 ## Consequences
 

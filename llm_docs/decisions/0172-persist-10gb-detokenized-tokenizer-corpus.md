@@ -6,11 +6,15 @@ supersedes: null
 
 # 0172 — Persist the initial 10 GB detokenized tokenizer corpus
 
-## Context
+## Context and problem statement
 
 ADR 0171 selected direct reconstruction from the pinned `nvidia/Nemotron-ClimbMix` GPT-2-tokenized source for tokenizer R&D and an initial approximately-10-GB raw-text sample. ADR 0171 proposed keeping reconstructed text transient.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the initial tokenizer corpus, materialize and retain approximately **10 GB of detokenized natural-language text on disk** instead of feeding reconstructed text only transiently to the tokenizer trainer. The persisted text is a reusable intermediate artifact and may be deleted later if it is no longer useful.
 

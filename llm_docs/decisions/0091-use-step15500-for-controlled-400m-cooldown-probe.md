@@ -6,13 +6,17 @@ supersedes: 0090
 
 # 0091 — Use step 15,500 for the controlled 400M cooldown probe
 
-## Context
+## Context and problem statement
 
 The originally selected `step-00012500` snapshot for `100m-10b-data-001` is no longer recoverable. A read-only Beam/Hugging Face inspection found that the Beam run Volume now starts at step 15,500, while the rolling latest-only Hugging Face model-repository tree retains only step 23,500. Therefore step 15,500 is the earliest exact recoverable state and the closest available state to the originally intended divergence point.
 
 Step 15,500 has consumed 2,031,616,000 target tokens. Reusing the historical 100M/2B WSD schedule in absolute-token coordinates would already place this state beyond that schedule's cooldown endpoint, so it would collapse immediately to the minimum LR rather than test a controlled anneal.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Supersede ADR 0090's step-12,500 matched-absolute-schedule probe.
 

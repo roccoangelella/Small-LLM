@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-09-03
+supersedes: null
 owners: [Small-LLM]
 implements:
   - 0140-wire-evaluation-v2-and-retire-fixed-length-qualitative-protocol
@@ -8,7 +9,15 @@ implements:
 
 # ADR 0141: activate evaluation v2 entrypoints for pretraining and SFT
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Wire the staged evaluation-v2 implementation into the active pretrained and SFT
 qualification entrypoints.

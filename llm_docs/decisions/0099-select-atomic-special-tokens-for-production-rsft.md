@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0099 — Select atomic special tokens for production R-SFT
 
-## Context
+## Context and problem statement
 
 The first 100M/2B R0 delimiter ablation completed both matched one-pass Kaggle runs from the same completed S0 parent and the same shared R0/S0-retention source manifest.
 
@@ -13,7 +14,11 @@ The textual arm completed 30 optimizer steps / 58,099 loss-bearing train targets
 
 The project owner explicitly decided that the production interface must nevertheless use dedicated special tokens. The reason is architectural and scientific rather than a claim that the atomic pilot won on validation loss: ordinary text such as the word `reasoning` carries natural-language semantics, while the model also needs an unambiguous machine-readable control concept for entering/exiting reasoning and entering the final answer. Reusing ordinary GPT-2 token sequences would entangle those roles and make output parsing depend on natural-language text. The project owner also notes that the atomic arm was learning three newly initialized, very frequent control rows during only one short pass, while its loss trajectory continued to decline at a similar qualitative rate.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Production R-SFT uses only the frozen atomic reasoning-control interface:
 
@@ -36,3 +41,6 @@ Consequences for the production contract:
 ## Deferred
 
 This ADR does **not** freeze the production R0 corpus size/token budget or the production held-out allocation. Those remain separate data-scale decisions. It also does not freeze the later reasoning qualification suite.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-28
+supersedes: null
 ---
 
 # ADR 0128: disable Xet for canonical Kaggle SFT checkpoint publication
 
-## Context
+## Context and problem statement
 
 The 100M/2B 10% S0 run `100m-2b-sft-s0-10pct-001` was launched from Kaggle with the canonical command:
 
@@ -22,7 +23,11 @@ The failure signature matches the already-observed Kaggle R-SFT failure mode in 
 
 The frozen 10% train bundle contains 6,220 optimizer blocks / 200,099,738 realized train targets, so step 3,750 was not the planned end of the run.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The canonical `kaggle/launch_sft.py` entry point must force:
 
@@ -44,3 +49,6 @@ The existing automatic verified-resume behavior remains unchanged. The SFT train
 - the operator should use the same canonical training command and the same run ID derived from `--sft-fraction 10%`.
 
 The two-phase Hugging Face publication protocol remains the durability gate; incomplete remote uploads must not advance `latest.json`.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

@@ -6,7 +6,25 @@ supersedes: 0042
 
 # Prepare the Modal block-64 corpus on the VPS
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The user wants one control plane for the new training platform. Moving Kaggle-notebook authentication and Modal credentials into a notebook adds another execution environment and secret surface without providing a training benefit.
+
+The VPS already hosts the Small-LLM checkout and the authenticated Modal CLI. Downloading the several-gigabyte finite corpus there once is acceptable because the source is cached and the byte-preserving reblock is also cached. The resulting path is operationally simpler:
+
+```text
+Kaggle dataset -> VPS verified cache -> VPS block-64 derivative -> Modal Volume -> Modal GPU training
+```
+
+No workstation or Kaggle notebook participates.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 All operator interaction for the 100M / 2B Modal trajectory is performed from the VPS. Kaggle remains only the remote source that already stores the verified 2B finite dataset; no Kaggle notebook is part of the Modal workflow.
 
@@ -36,18 +54,6 @@ Modal destination: /datasets/modal-2b-b64-dataset-001
 ```
 
 The VPS `.venv` is the operator environment for both Kaggle and Modal CLIs. Kaggle authentication uses the official CLI mechanisms, preferably `KAGGLE_API_TOKEN` or the user's token file; Modal authentication remains the existing VPS `modal setup` profile.
-
-## Rationale
-
-The user wants one control plane for the new training platform. Moving Kaggle-notebook authentication and Modal credentials into a notebook adds another execution environment and secret surface without providing a training benefit.
-
-The VPS already hosts the Small-LLM checkout and the authenticated Modal CLI. Downloading the several-gigabyte finite corpus there once is acceptable because the source is cached and the byte-preserving reblock is also cached. The resulting path is operationally simpler:
-
-```text
-Kaggle dataset -> VPS verified cache -> VPS block-64 derivative -> Modal Volume -> Modal GPU training
-```
-
-No workstation or Kaggle notebook participates.
 
 ## Consequences
 

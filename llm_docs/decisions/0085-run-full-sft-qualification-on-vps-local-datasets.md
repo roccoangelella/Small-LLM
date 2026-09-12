@@ -1,3 +1,10 @@
+---
+status: accepted
+date: null
+# Decision date was not recorded in the original ADR.
+supersedes: null
+---
+
 # ADR 0085: Run full SFT qualification on the VPS with local test datasets
 
 - Status: Accepted
@@ -9,7 +16,11 @@ The completed 100M / 2B SFT qualification had been launched through `kaggle/laun
 
 The repository `tests/` directory also mixed ordinary discovered tests, reusable fixtures, hardware qualification harnesses, and operational qualification data conventions without a clear separation of roles.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The canonical 100M / 2B full parent-versus-SFT qualification moves to the VPS.
 

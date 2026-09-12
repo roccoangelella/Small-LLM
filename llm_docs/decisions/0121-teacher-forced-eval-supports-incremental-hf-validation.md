@@ -1,9 +1,14 @@
 ---
 status: accepted
 date: 2026-08-24
+supersedes: null
 ---
 
 # Teacher-forced evaluation must support incremental HF validation datasets
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
 
 The post-pretraining teacher-forced diagnostic must remain fail-closed on dataset identity while supporting both historical static schema-v2 datasets and the current incremental Hugging Face dataset architecture.
 
@@ -14,3 +19,15 @@ In `auto` mode, first reuse any identity-matched local dataset under Kaggle inpu
 Multiple local rolling-cache roots with the same modern consumer-manifest hash are equivalent for this diagnostic because the validation inventory is frozen by the incremental dataset contract; choose one deterministically rather than treating duplicate identical cache copies as a scientific ambiguity.
 
 Teacher-forced reports should record `dataset_manifest_sha256` for all datasets and retain `drive_manifest_sha256` when a legacy dataset has one.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
+
+No separate decision outcome was recorded at the time; section added for the template.
+
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

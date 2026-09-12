@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-13
+supersedes: null
 ---
 
 # ADR 0066: Run 100M/2B SFT at 10% on Kaggle dual T4
 
-## Context
+## Context and problem statement
 
 The completed 100M/2B pretraining endpoint has 2,001,000,448 consumed training targets. The first 20M/500M S0 SFT experiment used the earlier 4%-of-parent budget and failed behavioral qualification despite improving masked SFT likelihood. The next experiment should test whether substantially more supervised signal helps the larger 100M parent without changing the source stratification, so budget and model capacity are the intended experimental changes rather than a simultaneous mixture rewrite.
 
 Kaggle exposes two Tesla T4 GPUs, and ADR 0056 already establishes exact-batch two-T4 DDP as the Kaggle production topology. SFT should use both GPUs rather than leaving one idle, while preserving one global optimizer update per immutable SFT block and rank-zero-only external side effects.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the 100M/2B SFT profile only:
 

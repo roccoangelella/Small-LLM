@@ -7,13 +7,17 @@ owners: [Small-LLM]
 
 # ADR 0172: record initial MoE routing numerics and operational choices
 
-## Context
+## Context and problem statement
 
 ADR 0170 and ADR 0171 freeze the first ultra-small MoE geometry as the completed 20M dense backbone with MoE FFNs in all eight blocks, 64 routed experts per layer, Top-2 routing, expert hidden width 352, no shared experts, and a non-gradient Quantile Balancing controller. The remaining work is to freeze the numerical and training behavior of the router before implementation.
 
 This ADR records the choices accepted on 2026-09-10 and explicitly separates them from items that still require clarification or a later decision.
 
-## Accepted choices
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 1. **Dropless routing.** There is no expert capacity factor, overflow token dropping, or overflow rerouting in the initial model. Every Top-2 assignment is executed.
 2. **Exact Quantile Balancing for the initial implementation.** Do not use the production histogram approximation initially; compute the required per-expert quantile exactly from the routing statistics available to the controller.
@@ -59,6 +63,10 @@ Qualification should fail closed on non-finite router values or any nonzero toke
 ## Implementation gate
 
 No routing/training implementation change is authorized until the user can explain in their own words: (a) how trainable router weights differ from the non-gradient QB bias, (b) where that bias enters selection and where it does not enter mixture weighting, (c) the consequence of updating QB every microbatch rather than once per logical optimizer step, and (d) the behavior of the final chosen score function.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 

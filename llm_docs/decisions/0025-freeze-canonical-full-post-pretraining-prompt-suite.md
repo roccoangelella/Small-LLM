@@ -6,11 +6,15 @@ supersedes: 0024
 
 # 0025 — Freeze canonical full post-pretraining prompt-suite settings
 
-## Context and correction
+## Context and problem statement
 
 ADR 0024 froze the deterministic settings for a questions-only run after the user's request was interpreted too narrowly. The user clarified that the reusable post-pretraining comparison should run the **full qualitative prompt suite**, not only the question subset.
 
 The canonical comparison therefore includes every prompt category exposed by `trainer.post_pretraining_prompt_suite`: continuations, structured/pattern prompts, dialogue, and general-knowledge questions.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
 
 ## Decision outcome
 
@@ -57,6 +61,10 @@ A different decoding setup or a questions-only subset may still be run as a supp
 ## Origin
 
 This ADR corrects ADR 0024 after the user explicitly clarified on 2026-08-10: the desired reusable test is the **full suite**.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 

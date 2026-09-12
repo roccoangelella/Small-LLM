@@ -12,6 +12,10 @@ The completed 100M/2B S0 SFT checkpoint has a comprehensive post-SFT qualificati
 
 The user wants the 100M/2B SFT checkpoint, and future comparable SFT checkpoints, to be evaluated with the same standard model-level tests normally used for pretrained checkpoints, while retaining the SFT-specific qualification.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 For the completed 100M/2B SFT checkpoint, run and retain the following evaluation matrix:

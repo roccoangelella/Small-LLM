@@ -1,11 +1,22 @@
 ---
 status: accepted
 date: 2026-09-03
+supersedes: null
 ---
 
 # 0138 — Approve SFT Behavior v2 design without wiring
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The existing 30-case SFT behavior suite spreads a small number of probes across many categories, which is useful for smoke testing but too sparse for strong diagnosis. The approved v2 direction is intended to distinguish missing base capability from failures of instruction compliance and to provide per-constraint evidence before changing future SFT recipes.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Approve the proposed SFT Behavior v2 evaluation design described in the 2026-09-03 planning discussion, but do not implement or wire it yet.
 
@@ -21,10 +32,6 @@ The approved design direction includes:
 - statistical paired comparison between checkpoints rather than relying only on raw pass-rate deltas.
 
 The detailed implementation remains intentionally unwired. No evaluator code, dataset artifact, launcher surface, or training/decontamination path is changed by this ADR.
-
-## Rationale
-
-The existing 30-case SFT behavior suite spreads a small number of probes across many categories, which is useful for smoke testing but too sparse for strong diagnosis. The approved v2 direction is intended to distinguish missing base capability from failures of instruction compliance and to provide per-constraint evidence before changing future SFT recipes.
 
 ## Consequences
 

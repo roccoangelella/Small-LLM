@@ -1,11 +1,20 @@
 ---
 status: accepted
 date: 2026-08-25
+supersedes: null
 ---
 
 # ADR 0126: freeze the token-zero aggressive LR policy for 10% SFT and future fresh pretraining
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 ADR 0124 selected the settle -> power-law -> terminal-cooldown policy family for the accepted 100M/2B 10% S0 run. ADR 0125 clarified that the step-15,500 continuation anchor is historical evidence, not part of the schedule definition for a fresh optimizer.
 
@@ -79,3 +88,6 @@ The shared implementation now lives in `trainer/fresh_decay.py` and is tested at
 ## SFT implementation boundary
 
 The accepted 10% SFT run uses a dedicated pinned training worktree and wrapper. This isolates the scientific scheduler change from the completed 4% SFT run while preserving the already-qualified dual-T4 execution slicing, hybrid Muon+AdamW optimizer, immutable dataset identity, exact-resume behavior, checkpoint cadence, and evaluation path.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

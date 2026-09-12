@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-12
+supersedes: null
 ---
 
 # Stream the 10B corpus through 1 GiB HF shards and CPU-stage before H100 allocation
 
-## Context
+## Context and problem statement
 
 ADR 0050 authorizes a fresh approximately-100M / 10B pretraining experiment only after the completed 100M / 2B behavioral qualification confirms that the larger model's lower loss translates into meaningful capability. Dataset preparation itself does not require H100 compute and can proceed before that behavioral gate resolves.
 
@@ -15,7 +16,7 @@ The existing dataset system already has the needed scientific primitives: the pi
 
 The operational requirement is also explicit: an H100 must not be allocated just to sit idle while the first large training shard downloads. Dataset transport must be staged on cheap CPU compute first.
 
-## Decision
+## Decision outcome
 
 The 10B dataset and its Modal consumer use the following contract.
 
@@ -106,7 +107,7 @@ This ADR changes dataset storage/transport and provider orchestration only. It d
 
 This storage decision also does not independently settle or supersede the exact 10B WSD horizon policy. Any later schedule change requires its own scientific decision.
 
-## Alternatives considered
+## Considered options
 
 ### Materialize the complete approximately-20-GB corpus in every Modal workspace
 

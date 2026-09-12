@@ -11,6 +11,7 @@ from trainer.engine import TrainingSession, seed_everything
 from trainer.identity import checkpoint_identity, saved_checkpoint_identity
 from trainer.shards import SchemaV2ShardReader
 
+from .compile_lane import DEFAULT_COMPILE_MODE, apply_compile_lane
 from .config import MoEModelConfig
 from .engine import MoETrainerEngine
 from .initialization import initialize_moe_model
@@ -69,6 +70,10 @@ def setup(args: object):
 
     model = MoESmallLLM(model_config)
     initialize_moe_model(model, args.initialization)
+    # Execution lane, applied before the engine builds the optimizer. Compiling a
+    # block in place never rebinds its parameters, so the optimizer below captures
+    # the same tensors and the checkpoint contract is untouched.
+    apply_compile_lane(model, getattr(args, "compile_mode", DEFAULT_COMPILE_MODE))
     trainer_config = TrainerConfig(
         optimizer=args.optimizer,
         microbatch_size=args.microbatch_size,

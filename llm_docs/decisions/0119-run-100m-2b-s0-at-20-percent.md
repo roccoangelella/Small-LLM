@@ -1,11 +1,22 @@
 ---
 status: accepted
 date: 2026-08-24
+supersedes: null
 ---
 
 # ADR 0119: run a 20% 100M/2B S0 scaling experiment with unchanged stratification
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+The completed 4% S0 run retained most base-language capability but only weakly established strict instruction behavior. A substantially larger S0 target horizon is therefore useful as a controlled data-scaling experiment before attributing the limitation to model capacity or to the S0 mixture itself. Holding stratification and preprocessing fixed isolates total SFT exposure as the primary experimental variable.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Build and privately publish a new S0 supervised-fine-tuning bundle for the completed 100M/2B pretrained parent at exactly 20% of the verified parent loss-bearing target count.
 
@@ -48,10 +59,9 @@ Kaggle dataset slug: small-llm-100m-2b-sft-s0-20pct-001
 
 The lower-level scaled builder already takes an explicit rational fraction and preserves the existing `0.85/0.15` mixture and default instruction-source shares, so the new CLI flag exposes that existing capability rather than defining a new dataset recipe.
 
-## Rationale
-
-The completed 4% S0 run retained most base-language capability but only weakly established strict instruction behavior. A substantially larger S0 target horizon is therefore useful as a controlled data-scaling experiment before attributing the limitation to model capacity or to the S0 mixture itself. Holding stratification and preprocessing fixed isolates total SFT exposure as the primary experimental variable.
-
 ## Qualification
 
 The 20% artifact is experimental until it passes the same frozen parent-versus-SFT qualification matrix. In particular, compare instruction behavior, EOS/runaway behavior, general `eval_core_v1` retention, and any later reasoning/generalization probes. A lower SFT-distribution validation loss alone is not sufficient for promotion.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

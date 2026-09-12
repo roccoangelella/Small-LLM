@@ -15,6 +15,10 @@ The expanded 16,716-row atomic production corpus has now also completed a three-
 
 The user wants this completed expanded three-epoch model to replace the older R0 as the default model used for local R-SFT chat for now.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Promote `100m-2b-rsft-r0-16716-e3-001` as the current default/accepted R-SFT R0 chat target for the 100M/2B profile.

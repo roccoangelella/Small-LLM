@@ -1,12 +1,21 @@
 ---
 status: superseded
 date: 2026-08-29
+supersedes: null
 superseded_by: 0130
 ---
 
 # ADR 0129: Lengthen the 100M/2B 10% SFT peak before aggressive decay
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Rerun the frozen 100M/2B 10% S0 corpus as a new scientific trajectory with the same optimizer, same `3e-5` peak learning rate, and the same low terminal learning-rate landmarks, but keep the optimizer at peak LR for materially longer before the aggressive decay begins.
 
@@ -67,3 +76,6 @@ Treat this as a schedule-shape ablation, not an automatic promotion. After compl
 4. new 10% long-peak S0.
 
 Promotion must consider frozen general eval-core retention and instruction behavior together with held-out SFT loss. A lower in-distribution SFT loss alone is insufficient evidence of better model quality.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

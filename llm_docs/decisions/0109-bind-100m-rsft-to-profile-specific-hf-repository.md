@@ -12,6 +12,10 @@ A committed Kaggle run for the expanded 16,716-row R-SFT corpus successfully bui
 
 The R-SFT launcher is fixed to the 100M/2B profile, so a cross-profile generic repository fallback is unsafe.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 For 100M/2B R-SFT model artifacts, resolve the S0 parent repository as:

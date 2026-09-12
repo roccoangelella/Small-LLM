@@ -12,6 +12,10 @@ The unified R-SFT Stage-2 source scan is complete and the 1% reasoning corpus ha
 
 The finalized JSONL is 91,356,196 bytes, below GitHub's 100 MB per-file hard limit, and has SHA-256 `acb6a029d641bcf661beb24ddb2a4e7c1deadca47da3e5bd3acb1c7090e58042`.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Publish the frozen 1% reasoning corpus and its manifest directly on the repository `main` branch under `artifacts/rsft-superior-1pct/`.

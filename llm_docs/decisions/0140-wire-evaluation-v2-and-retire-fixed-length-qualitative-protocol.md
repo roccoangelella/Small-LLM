@@ -11,7 +11,15 @@ implements:
 
 # ADR 0140: stage evaluation v2 and retire the fixed-length qualitative protocol
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Adopt evaluation v2 as the next project evaluation target and stage its first
 implementation modules in-repository, while keeping the final active evaluator

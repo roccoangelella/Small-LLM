@@ -6,11 +6,15 @@ supersedes: null
 
 # 0169 — Reuse Triton/FLA cache seeds on the provider lanes
 
-## Context
+## Context and problem statement
 
 Rocco already implemented a pinned Kaggle seed in ADR 0102. Historical dense logs show long first updates on Modal and Beam too; these observations are not matched cache experiments and do not establish a MoE speedup. Edo authorized local review/integration of the separate `edo/triton-seed` work, with GPU verification deferred to the next useful authorized tests.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Reuse the existing cache volume for archives; compilation uses `/tmp/small-llm-triton/<cache_id>` on ordinary local disk. Keep generated kernels out of Git and the cache out of scientific identity. Kaggle's existing implementation is unchanged.
 

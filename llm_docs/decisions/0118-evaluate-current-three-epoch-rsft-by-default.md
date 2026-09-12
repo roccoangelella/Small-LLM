@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-22
+supersedes: null
 ---
 
 # 0118 — Evaluate the current three-epoch R-SFT model by default
 
-## Context
+## Context and problem statement
 
 ADR 0116 provisionally promoted `100m-2b-rsft-r0-16716-e3-001` as the current/default R-SFT R0 model, but the canonical Kaggle R-SFT evaluation launcher still resolved the older historical `100m-2b-rsft-r0-12306-001` checkpoint.
 
 That mismatch made the standard qualification command evaluate a superseded model even though chat and current project status already selected the three-epoch run.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 The canonical command
 

@@ -12,6 +12,10 @@ The completed expanded R-SFT corpus contains 16,716 unique normalized reasoning 
 
 The project now wants to measure whether additional unique reasoning supervision continues to improve the approximately-100M model before considering substantially larger R-SFT budgets such as 10% of pretraining.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Run a nested unique-data R-SFT scaling sweep at approximately **1%, 2%, and 4% of the 100M/2B pretraining target count**.

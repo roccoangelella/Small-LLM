@@ -1,15 +1,22 @@
 ---
 status: current
+date: null
+# Decision date was not recorded; last_reviewed is retained below.
 last_reviewed: 2026-09-10
+supersedes: null
 ---
 
 # ADR 0169 — MoE initial expert scaling sequence
 
-## Context
+## Context and problem statement
 
 The MoE design exploration moved beyond the original `moe-8e-top1` qualification geometry. The next experiments are intended to preserve a roughly comparable aggregate expert-width budget while testing whether more, smaller experts and a correspondingly larger Top-K improve specialization/routing without making active compute grow uncontrollably.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Use the following MoE experimental sequence:
 

@@ -6,13 +6,17 @@ supersedes: null
 
 # 0176 — Retokenize the 100B MoE corpus before token-count stratification
 
-## Context
+## Context and problem statement
 
 The MoE line uses the frozen 8,000-ID SuperBPE tokenizer from ADR 0175, while the pinned Nemotron-ClimbMix source is distributed as GPT-2-tokenized JSONL records. The existing production dataset pipeline already provides the desired deterministic cluster filtering/stratification, train/validation split, schema-v2 context+1 packing, immutable sharding, crash-safe resume, incremental READY frontier, and Hugging Face durability/upload behavior.
 
 Those components should be reused rather than reimplemented. However, the existing scheduler and corpus-size accounting use `SourceDocument.source_token_count`, so leaving documents in GPT-2 token space until after scheduling would measure cluster deficits and the 100B corpus budget in the wrong token unit.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For the production MoE corpus, retokenization happens at the document boundary **before** a `SourceDocument` is handed to the existing scheduler.
 
@@ -73,6 +77,8 @@ Implemented on `moe-8e-top1` through code head `c3863a0c4ba644320c6d28fe8f259e02
 
 The targeted tests are present but have not yet been executed in a qualified project environment. The assistant sandbox could not perform a clean checkout because external GitHub resolution was unavailable, and no GitHub Actions workflow/status checks are attached to the branch. No 100B corpus production has been launched yet.
 
-## Branch ownership
+## Consequences
+
+### Branch ownership
 
 This decision and its implementation belong to the MoE development line and are recorded in `llm_docs/` on `moe-8e-top1`. They should not be maintained as project-memory state on `main` unless/until the MoE line is intentionally merged there.

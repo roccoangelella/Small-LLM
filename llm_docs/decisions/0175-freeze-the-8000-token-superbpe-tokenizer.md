@@ -11,14 +11,18 @@ supersedes: null
 > geometry/router. 0175 is the next free number **on this branch**; a merge to `main` will need a renumbering pass.
 > This ADR **amends 0171 and 0173 of the tokenizer-corpus series**; see "Amendments" below.
 
-## Context
+## Context and problem statement
 
 The MoE geometry (8 layers, d_model 256, 64 experts top-2, ~9.9M active parameters) cannot carry the inherited GPT-2
 vocabulary: at V=50,304 the tied embedding alone is 12.9M parameters against ~42M stored, and the output head dominates the
 forward pass. ADR 0170 set an 8k-class target and left the algorithm, the special-token inventory, the training sample and the
 acceptance metrics open. This ADR closes those.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 **Vocabulary: exactly 8,000 ids** = 7,192 word-level BPE tokens (byte alphabet included) + 800 cross-word "superword" merges
 + 8 special tokens.

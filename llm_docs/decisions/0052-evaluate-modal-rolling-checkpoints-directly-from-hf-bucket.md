@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-12
+supersedes: null
 ---
 
 # 0052 — Evaluate Modal rolling checkpoints directly from the HF Storage Bucket
 
-## Context
+## Context and problem statement
 
 The Modal production checkpoint transport authorized by ADR 0047 writes verified two-phase checkpoints to a private Hugging Face Storage Bucket. In rolling latest-only mode the bucket retains `run/<run_id>/latest.json` plus the checkpoint tree it names and deliberately removes `best.json` and superseded checkpoint trees.
 
@@ -13,7 +14,11 @@ The existing `trainer.post_pretraining_prompt_suite` reads the Git-backed Huggin
 
 The frozen canonical full post-pretraining comparison in ADR 0025 still defines `pointer=best`. A rolling bucket `latest` checkpoint must therefore not be silently relabeled as `best`.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Add a dedicated bucket-backed evaluator entrypoint:
 
@@ -34,7 +39,7 @@ Keep `trainer.post_pretraining_prompt_suite` unchanged for Git-backed repository
 
 Raise the `post-training` optional dependency to `huggingface-hub>=1.5,<2`, matching the Storage Bucket API requirement already used by Modal production.
 
-## Comparison consequence
+## Consequences
 
 A Modal bucket `latest` evaluation is a valid deterministic diagnostic of that exact verified checkpoint. It is not, by itself, evidence that the ADR-0025 canonical `best` checkpoint comparison was performed. If a canonical best-checkpoint comparison is required for a run whose bucket has already pruned `best`, recover or publish the actual best checkpoint separately rather than changing the pointer meaning.
 

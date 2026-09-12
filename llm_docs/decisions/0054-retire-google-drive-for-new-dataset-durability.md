@@ -1,11 +1,12 @@
 ---
 status: accepted
 date: 2026-08-12
+supersedes: null
 ---
 
 # 0054 — Retire Google Drive for new dataset durability
 
-## Context
+## Context and problem statement
 
 ADR 0053 makes a private Hugging Face Storage Bucket the canonical store for the approximately-10B derived corpus and uses a verified rolling local cache during Modal training. The repository still retained an older Google Drive upload backend, OAuth setup, Google client dependencies, and publication configuration from the earlier finite-dataset pipeline.
 
@@ -13,7 +14,11 @@ Keeping two remote durability providers no longer provides a useful training pro
 
 The current trainer remains one-pass. Repeated epochs are therefore a future trainer/cursor feature, not a storage-backend requirement.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For all new dataset production:
 

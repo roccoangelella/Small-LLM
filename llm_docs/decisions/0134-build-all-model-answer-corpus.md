@@ -1,9 +1,23 @@
+---
+status: accepted
+date: 2026-08-31
+supersedes: null
+---
+
 # 0134 — Build all-model answer corpus
 
 Date: 2026-08-31
 Status: Accepted
 
-## Decision
+## Context and problem statement
+
+No separate context was recorded at the time; section added for the template.
+
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Produce document-ready answer-corpus artifacts for every Small-LLM model endpoint trained so far, using both deterministic greedy outputs and sampled outputs.
 
@@ -25,3 +39,7 @@ For R-SFT qualification, use the comprehensive R-SFT evaluator because its JSON 
 ## Notes
 
 This decision concerns evaluation/reporting artifacts only. It does not change model selection, training hyperparameters, checkpoint publication policy, or canonical eval-core metrics.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

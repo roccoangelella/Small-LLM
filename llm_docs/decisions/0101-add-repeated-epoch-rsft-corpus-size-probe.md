@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-18
+supersedes: null
 ---
 
 # ADR 0101 — Add a repeated-epoch R-SFT corpus-size probe
 
-## Context
+## Context and problem statement
 
 The accepted atomic R0 checkpoint `100m-2b-rsft-r0-atomic-pilot-001` received only 29 optimizer updates over the frozen 630-example reasoning corpus plus the 10% S0 instruction-retention lane. In direct chat, even an in-distribution reasoning problem did not reliably emit the newly promoted `<think>` token as the first assistant token. The project owner wants a controlled diagnostic before expanding the corpus: hold the data, parent, token protocol, optimizer family, and training path fixed, but increase repeated exposure to the same immutable train stream.
 
 This is explicitly an overfitting/corpus-size diagnostic, not a new claim about the preferred production training recipe.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Add `--num-epochs N` to the Kaggle R-SFT launcher.
 
@@ -34,3 +39,6 @@ The probe asks a narrow question: does much greater repeated exposure make the t
 ## Non-decision
 
 This does not replace the accepted atomic special-token decision, does not promote 10 epochs as a production default, and does not decide which external reasoning dataset will be mixed into the next larger R-SFT corpus.
+## Consequences
+
+No consequences were recorded at the time; section added for the template.

@@ -1,17 +1,22 @@
 ---
 status: accepted
 date: 2026-08-13
+supersedes: null
 ---
 
 # ADR 0065: Probe Beam microbatches 8, 12, and 16 only
 
-## Context
+## Context and problem statement
 
 The completed 100M/2B H100 run froze microbatch 16. Beam's default serverless training GPU is the RTX 5090, which has materially less VRAM than the H100 used for that completed run. The Beam adapter currently probes a wider set including values above 16. Those candidates are not useful enough to justify spending startup GPU time on them before the real 100M training trajectory.
 
 The startup probe already measures actual tokens per second, finite loss and gradient norm, and peak reserved CUDA memory, and selects the fastest safe measured candidate. The optimizer/data block remains 64 sequences; changing execution microbatch does not change the scientific batch contract.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 For fresh Beam single-GPU pretraining runs, the automatic startup qualification candidates are exactly microbatch 8, 12, and 16.
 

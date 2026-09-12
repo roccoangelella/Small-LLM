@@ -1,12 +1,13 @@
 ---
 status: accepted
 date: 2026-09-04
+supersedes: null
 owners: [Small-LLM]
 ---
 
 # ADR 0146: normalize Kaggle probe runtime paths after the src move
 
-## Context
+## Context and problem statement
 
 The consolidated 100M/10B probe launcher from ADR 0144 failed on Kaggle before checkpoint restore with:
 
@@ -18,7 +19,11 @@ The pip dependency-conflict warnings printed immediately beforehand are not the 
 
 A second failure mode exists during that isolated-HF bootstrap. `kaggle/src/probes_100m_10b.py` re-executes `Path(__file__)` after preparing its private `huggingface_hub` runtime. If the public wrapper simply delegates without changing the implementation module's execution file, the restart jumps directly into `kaggle/src/probes_100m_10b.py`, losing the wrapper's normalized paths and reproducing the same runtime error after the `restarting with private huggingface_hub` message.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 - `kaggle/probes_100m_10b.py` is the stable operator entrypoint for the ADR-0144 probe family.
 - The scientific implementation remains consolidated in `kaggle/src/probes_100m_10b.py`; no new scientific probe implementation is introduced.

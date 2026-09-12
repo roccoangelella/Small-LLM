@@ -9,7 +9,16 @@ implements:
 
 # ADR 0149: require genuinely unique Base Prompt v2 cases
 
-## Decision
+## Context and problem statement
+
+### Rationale
+
+Evaluation v2 was approved in ADR 0140 specifically as an expanded native prompt layer with 100 mechanically scored prompts and 20 qualitative continuations. Exact repetition artificially increases nominal sample count without increasing semantic coverage, overweights a small number of questions, and makes greedy repeats fully redundant. The corrected suite restores the intended breadth while keeping the established family structure and decoding protocol.
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Correct the active Base Prompt v2 definition so that its advertised 120-prompt full suite is composed of 120 genuinely distinct prompt texts and 120 distinct case IDs.
 
@@ -34,12 +43,8 @@ The evaluator now fails closed at module construction if the full set is not exa
 
 Regression tests independently assert the same uniqueness and family-count invariants.
 
-## Comparability consequence
+## Consequences
 
 Base Prompt v2 aggregate scores produced by the recycled-template implementation must not be interpreted as statistics over 100 unique scored prompts. They are historical defective Base Prompt v2 evidence and should not be compared directly with scores from the corrected prompt set without explicitly noting the prompt-set change.
 
 This correction does not alter or invalidate `eval_core_v1` results or L20 conditional-likelihood results, because those layers do not use the native Base Prompt v2 case constructor.
-
-## Rationale
-
-Evaluation v2 was approved in ADR 0140 specifically as an expanded native prompt layer with 100 mechanically scored prompts and 20 qualitative continuations. Exact repetition artificially increases nominal sample count without increasing semantic coverage, overweights a small number of questions, and makes greedy repeats fully redundant. The corrected suite restores the intended breadth while keeping the established family structure and decoding protocol.

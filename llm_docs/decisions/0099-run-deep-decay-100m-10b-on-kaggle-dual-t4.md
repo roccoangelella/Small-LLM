@@ -7,7 +7,7 @@ superseded_by: 0114
 
 # 0099 — Run the 100M/10B deep-decay continuation on Kaggle dual T4
 
-## Context
+## Context and problem statement
 
 ADR 0095 authorized the scientific trajectory that forks the exact original uncooled `100m-10b-data-001/checkpoints/step-00015500` state and changes its learning-rate scheduler. Its first implementation targeted one Beam GPU. The user has now chosen Kaggle's two Tesla T4 GPUs as the execution lane for that continuation.
 
@@ -15,7 +15,11 @@ The repository already has an exact-batch Kaggle DDP implementation qualified un
 
 Direct 100M/T4 hardware evidence resolves the execution microbatch choice. Microbatch four OOMed during a no-step `4x2048` backward prewarm on a 14.56-GiB Tesla T4. Microbatch two then passed prewarm and completed 250 real optimizer updates, reaching peak allocated 8.35 GiB and peak reserved 11.70 GiB. The later failure was not memory-related: rank one waited in the default NCCL barrier while rank zero performed long cadence side effects and hit the ten-minute watchdog. The SFT path fixed that exact failure class by moving control-plane rendezvous to a one-hour Gloo group while retaining NCCL for DDP math.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 Move the authorized main deep-decay continuation to **Kaggle 2x Tesla T4 exact-batch DDP**.
 

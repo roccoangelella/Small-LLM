@@ -14,6 +14,10 @@ The official NVIDIA GatedDeltaNet-2 repository is distributed under the NVIDIA S
 
 PyTorch Foundation trademark guidance also advises against using the PyTorch name as part of an external product/project name.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 Create and publish a standalone public project named **`gated-delta-rule`** under the MIT license.
@@ -39,6 +43,10 @@ Before a public release is treated as authoritative, the standalone tree must pa
 ## Publication tooling note
 
 The connected GitHub tool available in this project can write to existing repositories but does not currently expose repository creation or repository-visibility mutation. If that remains true at release time, prepare a complete Git repository/archive and publish it only through an account action that creates a new public repository; do not overwrite or repurpose an unrelated existing public repository.
+
+## Consequences
+
+No consequences were recorded at the time; section added for the template.
 
 ## Links
 

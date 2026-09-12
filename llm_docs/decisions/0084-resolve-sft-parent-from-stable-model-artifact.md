@@ -1,3 +1,10 @@
+---
+status: accepted
+date: null
+# Decision date was not recorded in the original ADR.
+supersedes: null
+---
+
 # ADR 0084: Resolve SFT parents from stable model artifacts when live pointers are absent
 
 - Status: Accepted
@@ -9,7 +16,11 @@ The canonical 100M / 2B post-SFT full qualification failed before evaluation bec
 
 The SFT checkpoint itself still uses the live `run/<sft_run_id>/latest.json` publication protocol while training is active, so parent and SFT transports cannot be assumed to be identical.
 
-## Decision
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
+## Decision outcome
 
 `post_training.sft.checkpoints.download_parent_checkpoint` keeps the requested historical live pointer as the first resolution path. If and only if that live pointer is absent, it falls back to the verified stable model-artifact resolver in `trainer.model_artifact`.
 

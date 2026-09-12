@@ -11,6 +11,10 @@ owners: [Small-LLM]
 
 MoE-specific architecture and execution decisions were historically written into `llm_docs/` on `main`, even after a dedicated MoE implementation branch existed. That makes branch-local design history ambiguous and lets sparse-experiment decisions leak into the dense production branch.
 
+## Considered options
+
+No alternative was recorded at the time; section added for the template.
+
 ## Decision outcome
 
 All MoE-specific project memory belongs on the dedicated `moe-8e-top1` branch, not on `main`.
