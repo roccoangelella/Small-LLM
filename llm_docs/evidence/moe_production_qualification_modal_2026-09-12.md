@@ -243,3 +243,20 @@ found; the dataset launcher already had the right pattern), and it must be run t
 `modal` console script from a venv that also has torch, because `python -m modal` from the
 repository root imports the repository's own `modal/` package instead of the SDK. GPU cost of the
 lifecycle test ≈ 0.75 USD.
+
+## Addendum — streaming the live corpus on Beam RTX 4090 (source `ad0b0c3`, same day)
+
+`python beam/moe_production_launch.py --run-id test-stream-001 --steps 12 --checkpoint-every-steps 4
+--keep-last-checkpoints 2 --dataset-shard-bucket roccoangelella/small-llm-moe-100b-superbpe-dataset
+--dataset-shard-run-id moe-100b-superbpe-b64-dataset-001` with the launcher defaults (BF16,
+microbatch 16, compile on). The CPU gate staged the incremental window from the live bucket (run
+contract with the full WSD plan, 16 validation blocks), the RTX 4090 ran 12 updates reading
+shards through the rolling cache, checkpoints 4, 8 and 12 were written, validation ran on the
+contract's 16 blocks (≈ 30 s each on the 4090), and the result was `status: complete,
+steps_reached: 12`, exit 0. The producer was at 29 train shards (14.5 B tokens) at 13:21 UTC,
+≈ 155 k tokens/s since 2026-09-11 11:31 UTC. Cost ≈ 0.25 USD.
+
+Consequence for the launch: at 192 k tokens/s the 4090 reaches the producer's frontier after
+≈ 4.5 days (≈ 75 B tokens consumed) and then follows it at ≈ 155 k tokens/s: ≈ 6.4 update-clock
+days in total instead of 6.0. Validation at every 1,000-update checkpoint costs ≈ 30 s per
+≈ 11 min on this card (≈ 4.5 %); a 2,500-update cadence brings it under 2 %.
