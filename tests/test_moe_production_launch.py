@@ -26,7 +26,7 @@ class TestProductionCommand(unittest.TestCase):
         values = {
             "run_id": "moe-prod-qualification",
             "dataset_dir": "/data/moe-superbpe",
-            "steps": 2,
+            "total_steps": 2,
             "precision": "fp16",
             "microbatch_size": 8,
             "source_commit": "a" * 40,
@@ -101,7 +101,7 @@ class TestProductionDatasetGate(unittest.TestCase):
         return ProductionRequest(
             run_id="vocab-gate",
             dataset_dir=str(dataset),
-            steps=1,
+            total_steps=1,
             precision="fp32",
             microbatch_size=1,
             source_commit="b" * 40,

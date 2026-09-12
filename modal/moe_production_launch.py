@@ -99,7 +99,10 @@ def main(
     microbatch_size: int = 8,
     resume: str = "",
     sequences_per_block: int = 0,
-    checkpoint_every_steps: int = 0,
+    checkpoint_every_steps: int = 1000,
+    keep_last_checkpoints: int = 3,
+    milestone_every_steps: int = 0,
+    max_wall_seconds: float = 23 * 60 * 60,
     validation_blocks: int = 0,
     dry_run: bool = False,
 ) -> None:
@@ -109,13 +112,16 @@ def main(
     request = _production.ProductionRequest(
         run_id=run_id,
         dataset_dir=dataset_dir,
-        steps=steps,
+        total_steps=steps,
         precision=precision,
         microbatch_size=microbatch_size,
         source_commit=source_commit,
         resume=resume or None,
         sequences_per_block=sequences_per_block or None,
         checkpoint_every_steps=checkpoint_every_steps,
+        keep_last_checkpoints=keep_last_checkpoints,
+        milestone_every_steps=milestone_every_steps,
+        max_wall_seconds=max_wall_seconds,
         validation_blocks=validation_blocks,
     )
     payload = _production.request_payload(request)

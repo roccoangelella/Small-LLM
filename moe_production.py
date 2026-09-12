@@ -8,7 +8,9 @@ D/M0/M1 100M/2B experiment identities, while production must always enter
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
+import json
 import re
 from pathlib import Path
 import subprocess
@@ -16,33 +18,45 @@ import sys
 from typing import Callable
 
 from MOE_model.config import MoEModelConfig
+from dataset.src.checkpoint_sequence import CHECKPOINT_ID, find_latest_complete_checkpoint
 from trainer.shards import SchemaV2ShardReader
 
 
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 
+RESUME_LATEST = "latest"
+
 
 @dataclass(frozen=True, slots=True)
 class ProductionRequest:
+    """One production run whose ``total_steps`` is the absolute update target.
+
+    The trainer consumes ``--steps`` as a per-segment count, so a resumed segment
+    is launched with the remaining updates rather than the absolute target.
+    """
+
     run_id: str
     dataset_dir: str
-    steps: int
+    total_steps: int
     precision: str
     microbatch_size: int
     source_commit: str
     resume: str | None = None
     sequences_per_block: int | None = None
-    checkpoint_every_steps: int = 0
+    checkpoint_every_steps: int = 1000
     validation_blocks: int = 0
+    keep_last_checkpoints: int = 3
+    milestone_every_steps: int = 0
+    max_wall_seconds: float = 0.0
 
     def __post_init__(self) -> None:
         if _RUN_ID.fullmatch(self.run_id) is None:
             raise ValueError("run_id must contain only letters, digits, '.', '_' or '-'")
         if not self.dataset_dir:
             raise ValueError("dataset_dir is required")
-        if self.steps <= 0:
-            raise ValueError("steps must be positive")
+        if self.total_steps <= 0:
+            raise ValueError("total_steps must be positive")
         if self.precision not in {"fp16", "bf16", "fp32"}:
             raise ValueError("precision must be fp16, bf16 or fp32")
         if self.microbatch_size <= 0:
@@ -55,6 +69,17 @@ class ProductionRequest:
             raise ValueError("checkpoint_every_steps cannot be negative")
         if self.validation_blocks < 0:
             raise ValueError("validation_blocks cannot be negative")
+        if self.keep_last_checkpoints < 0:
+            raise ValueError("keep_last_checkpoints cannot be negative")
+        if self.milestone_every_steps < 0:
+            raise ValueError("milestone_every_steps cannot be negative")
+        if self.max_wall_seconds < 0:
+            raise ValueError("max_wall_seconds cannot be negative")
+        if (
+            self.resume not in (None, "", RESUME_LATEST)
+            and CHECKPOINT_ID.fullmatch(self.resume) is None
+        ):
+            raise ValueError("resume must be a step checkpoint ID or the literal 'latest'")
 
 
 def accepted_identity() -> dict[str, object]:
@@ -84,9 +109,42 @@ def request_from_payload(payload: dict[str, object]) -> ProductionRequest:
     return ProductionRequest(**request)  # type: ignore[arg-type]
 
 
-def build_training_command(request: ProductionRequest, *, run_root: Path) -> list[str]:
+def checkpoint_dir(request: ProductionRequest, *, run_root: Path) -> Path:
+    return run_root / request.run_id / "checkpoints"
+
+
+def resolve_resume(request: ProductionRequest, *, run_root: Path) -> dict[str, object]:
+    """Resolve the segment this attempt must run, so a retry continues the run.
+
+    An absent or ``latest`` resume takes the newest complete local checkpoint;
+    an explicit checkpoint ID is honoured as supplied.
+    """
+
+    if request.resume and request.resume != RESUME_LATEST:
+        resume, completed = request.resume, int(request.resume.split("-", 1)[1])
+    else:
+        latest = find_latest_complete_checkpoint(checkpoint_dir(request, run_root=run_root))
+        resume = None if latest is None else str(latest["checkpoint_id"])
+        completed = 0 if latest is None else int(latest["step"])
+    if completed > request.total_steps:
+        raise RuntimeError("resumed checkpoint exceeds the absolute production step target")
+    return {
+        "resume": resume,
+        "completed_steps": completed,
+        "remaining_steps": request.total_steps - completed,
+    }
+
+
+def build_training_command(
+    request: ProductionRequest, *, run_root: Path, plan: Mapping[str, object] | None = None,
+) -> list[str]:
     """Build a command whose architecture identity cannot fall back to an M0/M1 pilot."""
 
+    plan = plan if plan is not None else resolve_resume(request, run_root=run_root)
+    remaining = int(plan["remaining_steps"])
+    if remaining <= 0:
+        raise ValueError("the absolute production step target is already reached")
+    resume = plan["resume"]
     run_dir = run_root / request.run_id
     command = [
         sys.executable,
@@ -99,7 +157,7 @@ def build_training_command(request: ProductionRequest, *, run_root: Path) -> lis
         "--experiment-dir",
         str(run_dir / "artifacts"),
         "--steps",
-        str(request.steps),
+        str(remaining),
         "--model-size",
         "accepted",
         "--architecture",
@@ -122,11 +180,17 @@ def build_training_command(request: ProductionRequest, *, run_root: Path) -> lis
         request.source_commit,
         "--checkpoint-every-steps",
         str(request.checkpoint_every_steps),
+        "--keep-last-checkpoints",
+        str(request.keep_last_checkpoints),
+        "--milestone-every-steps",
+        str(request.milestone_every_steps),
+        "--max-wall-seconds",
+        format(float(request.max_wall_seconds), ".17g"),
         "--validation-blocks",
         str(request.validation_blocks),
     ]
-    if request.resume:
-        command += ["--resume", request.resume]
+    if resume:
+        command += ["--resume", str(resume)]
     if request.sequences_per_block is not None:
         command += ["--sequences-per-block", str(request.sequences_per_block)]
     return command
@@ -157,35 +221,91 @@ def prepare_dataset(request: ProductionRequest) -> dict[str, object]:
     }
 
 
+def _child_event(line: str, name: str) -> Mapping[str, object] | None:
+    try:
+        value = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(value, Mapping):
+        return None
+    event = value.get(name)
+    return event if isinstance(event, Mapping) else None
+
+
 def run_provider_payload(
     payload: dict[str, object],
     *,
     run_root: Path,
     repo_root: Path,
     volume_commit: Callable[[], object] | None = None,
+    popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
 ) -> dict[str, object]:
+    """Run one segment, committing the run volume behind every local checkpoint."""
+
     request = request_from_payload(payload)
-    command = build_training_command(request, run_root=run_root)
-    completed = subprocess.run(command, cwd=repo_root, text=True, check=False)
-    if completed.returncode != 0:
-        raise RuntimeError(f"accepted MoE trainer exited with status {completed.returncode}")
-    if volume_commit is not None:
-        volume_commit()
-    return {
+    plan = resolve_resume(request, run_root=run_root)
+    result: dict[str, object] = {
         "status": "complete",
         "run_id": request.run_id,
-        "steps_requested": request.steps,
+        "steps_requested": request.total_steps,
+        "total_steps": request.total_steps,
+        "resumed_from": plan["resume"],
+        "resumed_step": plan["completed_steps"],
+        "steps_launched": plan["remaining_steps"],
         "identity": accepted_identity(),
-        "checkpoint_dir": str(run_root / request.run_id / "checkpoints"),
+        "checkpoint_dir": str(checkpoint_dir(request, run_root=run_root)),
     }
+    if int(plan["remaining_steps"]) <= 0:
+        result["steps_launched"] = 0
+        if volume_commit is not None:
+            volume_commit()
+        return result
+
+    command = build_training_command(request, run_root=run_root, plan=plan)
+    committed: list[str] = []
+    drained: Mapping[str, object] | None = None
+    process = popen_factory(command, cwd=str(repo_root), text=True, bufsize=1,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        if process.stdout is None:
+            raise RuntimeError("accepted MoE trainer did not expose a stdout stream")
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            checkpoint = _child_event(line, "local_checkpoint")
+            if checkpoint is not None:
+                checkpoint_id = checkpoint.get("checkpoint_id")
+                if not isinstance(checkpoint_id, str) or CHECKPOINT_ID.fullmatch(checkpoint_id) is None:
+                    raise RuntimeError("child local_checkpoint event has an invalid checkpoint ID")
+                if volume_commit is not None:
+                    volume_commit()
+                committed.append(checkpoint_id)
+                continue
+            drained = _child_event(line, "drained") or drained
+        code = process.wait()
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    if code != 0:
+        raise RuntimeError(f"accepted MoE trainer exited with status {code}")
+    if volume_commit is not None:
+        volume_commit()
+    result["committed_checkpoints"] = committed
+    result["drained"] = None if drained is None else dict(drained)
+    if drained is not None:
+        result["status"] = "drained"
+    return result
 
 
 __all__ = [
+    "RESUME_LATEST",
     "ProductionRequest",
     "accepted_identity",
     "build_training_command",
+    "checkpoint_dir",
     "prepare_dataset",
     "request_from_payload",
     "request_payload",
+    "resolve_resume",
     "run_provider_payload",
 ]
