@@ -48,7 +48,7 @@ def _require_source_commit(source_commit: str) -> None:
     image=CPU_IMAGE,
     cpu=2,
     memory="8Gi",
-    timeout=1800,
+    timeout=24 * 60 * 60,
     retries=1,
     secrets=SECRETS,
     volumes=[_base.DATA_VOLUME, _base.RUN_VOLUME, _base.CACHE_VOLUME],
@@ -58,7 +58,7 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     """Decode a real training block with the accepted 8,000-token semantic bound."""
 
     request = _production.request_from_payload(payload)
-    return _production.prepare_dataset(request)
+    return _production.prepare_dataset(request, run_root=RUN_ROOT)
 
 
 @_base.function(
@@ -86,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--dataset-dir", required=True)
+    parser.add_argument("--dataset-shard-bucket", default="")
+    parser.add_argument("--dataset-shard-run-id", default="")
     parser.add_argument("--steps", type=int, required=True)
     parser.add_argument("--source-commit", required=True)
     # Qualified on RTX 4090 (2026-09-12): BF16, microbatch 16 keeps 2x headroom for capacity spikes.
@@ -122,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         validation_blocks=None if args.validation_blocks < 0 else args.validation_blocks,
         compile_mode=args.compile_mode,
         allow_partial_corpus=args.allow_partial_corpus,
+        dataset_shard_bucket=args.dataset_shard_bucket,
+        dataset_shard_run_id=args.dataset_shard_run_id,
     )
     payload = _production.request_payload(request)
     display = {

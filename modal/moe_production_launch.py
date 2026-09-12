@@ -47,6 +47,14 @@ CACHE_VOLUME = _base.CACHE_VOLUME
 TRAINING_SECRET = _base.TRAINING_SECRET
 
 
+def _dataset_volume(request: _production.ProductionRequest):
+    destination = Path(request.dataset_dir).resolve()
+    for root, volume in ((DATA_ROOT, DATA_VOLUME), (CACHE_ROOT, CACHE_VOLUME), (RUN_ROOT, RUN_VOLUME)):
+        if destination.is_relative_to(root):
+            return volume
+    raise ValueError("streaming dataset_dir must be inside a mounted data, cache or run volume")
+
+
 def _require_source_commit(source_commit: str) -> None:
     actual = _base._local_source_commit()
     if source_commit != actual:
@@ -58,11 +66,11 @@ def _require_source_commit(source_commit: str) -> None:
 @app.function(
     cpu=2,
     memory=8192,
-    timeout=30 * 60,
+    timeout=24 * 60 * 60,
     retries=1,
     secrets=[TRAINING_SECRET],
     volumes={
-        str(DATA_ROOT): DATA_VOLUME.with_mount_options(read_only=True),
+        str(DATA_ROOT): DATA_VOLUME,
         str(RUN_ROOT): RUN_VOLUME,
         str(CACHE_ROOT): CACHE_VOLUME,
     },
@@ -71,7 +79,13 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     """Decode a real training block with the accepted 8,000-token semantic bound."""
 
     request = _production.request_from_payload(payload)
-    return _production.prepare_dataset(request)
+    if request.streaming:
+        volume = _dataset_volume(request)
+        volume.reload()
+    result = _production.prepare_dataset(request, run_root=RUN_ROOT)
+    if request.streaming:
+        volume.commit()
+    return result
 
 
 @app.function(
@@ -81,7 +95,7 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     single_use_containers=True,
     secrets=[TRAINING_SECRET],
     volumes={
-        str(DATA_ROOT): DATA_VOLUME.with_mount_options(read_only=True),
+        str(DATA_ROOT): DATA_VOLUME,
         str(RUN_ROOT): RUN_VOLUME,
         str(CACHE_ROOT): CACHE_VOLUME,
     },
@@ -89,6 +103,9 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
 def train_production_h100(payload: dict[str, object]) -> dict[str, object]:
     """Run only ``MoEModelConfig.accepted()`` on the production H100 path."""
 
+    request = _production.request_from_payload(payload)
+    if request.streaming:
+        _dataset_volume(request).reload()
     return _production.run_provider_payload(
         payload,
         run_root=RUN_ROOT,
@@ -114,6 +131,8 @@ def main(
     validation_blocks: int = -1,
     compile_mode: str = "blocks",
     allow_partial_corpus: bool = False,
+    dataset_shard_bucket: str = "",
+    dataset_shard_run_id: str = "",
     dry_run: bool = False,
 ) -> None:
     """CPU-gate the dataset, then dispatch the accepted 64E/Top-2 model to H100."""
@@ -135,6 +154,8 @@ def main(
         validation_blocks=None if validation_blocks < 0 else validation_blocks,
         compile_mode=compile_mode,
         allow_partial_corpus=allow_partial_corpus,
+        dataset_shard_bucket=dataset_shard_bucket,
+        dataset_shard_run_id=dataset_shard_run_id,
     )
     payload = _production.request_payload(request)
     payload["provider"] = "modal"
