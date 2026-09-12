@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     # The Beam GPU function has no wall-clock timeout, so draining stays off by default.
     parser.add_argument("--max-wall-seconds", type=float, default=0.0)
     parser.add_argument("--validation-blocks", type=int, default=0)
+    parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="off")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
@@ -116,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
         milestone_every_steps=args.milestone_every_steps,
         max_wall_seconds=args.max_wall_seconds,
         validation_blocks=args.validation_blocks,
+        compile_mode=args.compile_mode,
     )
     payload = _production.request_payload(request)
     display = {

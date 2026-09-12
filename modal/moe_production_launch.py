@@ -104,6 +104,7 @@ def main(
     milestone_every_steps: int = 0,
     max_wall_seconds: float = 23 * 60 * 60,
     validation_blocks: int = 0,
+    compile_mode: str = "off",
     dry_run: bool = False,
 ) -> None:
     """CPU-gate the dataset, then dispatch the accepted 64E/Top-2 model to H100."""
@@ -123,6 +124,7 @@ def main(
         milestone_every_steps=milestone_every_steps,
         max_wall_seconds=max_wall_seconds,
         validation_blocks=validation_blocks,
+        compile_mode=compile_mode,
     )
     payload = _production.request_payload(request)
     payload["provider"] = "modal"

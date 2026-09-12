@@ -49,6 +49,7 @@ class ProductionRequest:
     keep_last_checkpoints: int = 3
     milestone_every_steps: int = 0
     max_wall_seconds: float = 0.0
+    compile_mode: str = "off"
 
     def __post_init__(self) -> None:
         if _RUN_ID.fullmatch(self.run_id) is None:
@@ -75,6 +76,8 @@ class ProductionRequest:
             raise ValueError("milestone_every_steps cannot be negative")
         if self.max_wall_seconds < 0:
             raise ValueError("max_wall_seconds cannot be negative")
+        if self.compile_mode not in {"off", "blocks"}:
+            raise ValueError("compile_mode must be off or blocks")
         if (
             self.resume not in (None, "", RESUME_LATEST)
             and CHECKPOINT_ID.fullmatch(self.resume) is None
@@ -188,6 +191,8 @@ def build_training_command(
         format(float(request.max_wall_seconds), ".17g"),
         "--validation-blocks",
         str(request.validation_blocks),
+        "--compile",
+        request.compile_mode,
     ]
     if resume:
         command += ["--resume", str(resume)]
