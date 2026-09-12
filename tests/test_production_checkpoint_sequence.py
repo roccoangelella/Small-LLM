@@ -330,14 +330,16 @@ class AutoResumeTests(unittest.TestCase):
         return production.ProductionRequest(**values)
 
     def test_production_retention_requires_zero_or_at_least_two(self) -> None:
-        for keep_last in (-1, 1):
-            with self.subTest(keep_last=keep_last):
-                with self.assertRaisesRegex(ValueError, "0 or at least 2"):
-                    self._request(Path("unused"), keep_last_checkpoints=keep_last)
-        for keep_last in (0, 2, 3):
-            with self.subTest(keep_last=keep_last):
-                request = self._request(Path("unused"), keep_last_checkpoints=keep_last)
-                self.assertEqual(request.keep_last_checkpoints, keep_last)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for keep_last in (-1, 1):
+                with self.subTest(keep_last=keep_last):
+                    with self.assertRaisesRegex(ValueError, "0 or at least 2"):
+                        self._request(root, keep_last_checkpoints=keep_last)
+            for keep_last in (0, 2, 3):
+                with self.subTest(keep_last=keep_last):
+                    request = self._request(root, keep_last_checkpoints=keep_last)
+                    self.assertEqual(request.keep_last_checkpoints, keep_last)
 
     def test_absent_resume_starts_fresh_with_the_absolute_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
