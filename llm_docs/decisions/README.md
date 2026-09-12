@@ -62,6 +62,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0058-produce-10b-shards-concurrently-with-modal-training.md`](0058-produce-10b-shards-concurrently-with-modal-training.md)
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md`](0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md)
+- [`0182-stream-the-moe-corpus-while-it-is-produced.md`](0182-stream-the-moe-corpus-while-it-is-produced.md)
 
 ### 4. Post-Training & R-SFT Reasoning
 - [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)
