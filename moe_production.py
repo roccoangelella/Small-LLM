@@ -71,6 +71,7 @@ class ProductionRequest:
     milestone_every_steps: int = 0
     max_wall_seconds: float = 0.0
     compile_mode: str = "off"
+    allow_partial_corpus: bool = False
 
     def __post_init__(self) -> None:
         if _RUN_ID.fullmatch(self.run_id) is None:
@@ -300,10 +301,35 @@ def prepare_dataset(request: ProductionRequest) -> dict[str, object]:
     first = reader.next_batch()
     if first.sequence_count <= 0:
         raise RuntimeError("production dataset contains an empty first training block")
+    validation = SchemaV2ShardReader(
+        root,
+        split="validation",
+        sequences_per_block=request.sequences_per_block,
+        semantic_vocab_size=config.semantic_vocab_size,
+        context_length=config.max_seq_len,
+    )
+    schedule = resolve_schedule(root)
+    wanted_validation = (
+        int(schedule["validation_blocks"]) if request.validation_blocks is None
+        else request.validation_blocks
+    )
+    # A static corpus that ends early looks like a finished run to the trainer, so the
+    # block budget is checked here, before any GPU is billed.
+    if reader.block_count < request.total_steps and not request.allow_partial_corpus:
+        raise RuntimeError(
+            f"staged corpus has {reader.block_count} train blocks, fewer than the"
+            f" {request.total_steps} updates requested; stage the rest or pass allow_partial_corpus"
+        )
+    if validation.block_count < wanted_validation:
+        raise RuntimeError(
+            f"staged corpus has {validation.block_count} validation blocks, fewer than the"
+            f" {wanted_validation} requested"
+        )
     return {
         "status": "ready",
         "dataset_dir": str(root),
         "train_blocks": reader.block_count,
+        "validation_blocks": validation.block_count,
         "first_block_id": first.block_id,
         "first_block_sequences": first.sequence_count,
         "identity": accepted_identity(),
@@ -383,8 +409,14 @@ def run_provider_payload(
         volume_commit()
     result["committed_checkpoints"] = committed
     result["drained"] = None if drained is None else dict(drained)
+    latest = find_latest_complete_checkpoint(checkpoint_dir(request, run_root=run_root))
+    reached = 0 if latest is None else int(latest["step"])
+    result["steps_reached"] = reached
     if drained is not None:
         result["status"] = "drained"
+    elif reached < request.total_steps:
+        # The trainer exits 0 when the corpus ends; only the step count tells the truth.
+        result["status"] = "incomplete"
     return result
 
 

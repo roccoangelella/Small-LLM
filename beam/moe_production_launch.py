@@ -100,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     # Negative means "as many as the corpus run contract plans".
     parser.add_argument("--validation-blocks", type=int, default=-1)
     parser.add_argument("--compile", dest="compile_mode", choices=("off", "blocks"), default="off")
+    parser.add_argument("--allow-partial-corpus", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
@@ -119,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         max_wall_seconds=args.max_wall_seconds,
         validation_blocks=None if args.validation_blocks < 0 else args.validation_blocks,
         compile_mode=args.compile_mode,
+        allow_partial_corpus=args.allow_partial_corpus,
     )
     payload = _production.request_payload(request)
     display = {
@@ -140,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("CPU production preparation returned a different model identity")
     result = train_production_rtx4090.remote(payload)
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    if result.get("status") == "incomplete":
+        raise SystemExit(f"segment ended at step {result.get('steps_reached')} before the target: corpus exhausted")
     return 0
 
 

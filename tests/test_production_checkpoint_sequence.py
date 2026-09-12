@@ -535,3 +535,94 @@ class VolumeCommitPerCheckpointTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalBestWithoutRemoteRepoTests(unittest.TestCase):
+    def test_best_pointer_is_written_without_a_best_model_repo(self) -> None:
+        engine = _Engine()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            session = _Session(engine, checkpoint_root=root)
+            argv = [
+                "--dataset-dir", directory, "--checkpoint-dir", directory, "--steps", "4",
+                "--checkpoint-every-steps", "1", "--keep-last-checkpoints", "1",
+                "--validation-blocks", "1", "--evaluation-every-steps", "1",
+            ]
+            trainer_config = SimpleNamespace(evaluation_every_steps=1, checkpoint_every_steps=1)
+            with (
+                patch("trainer.cli.setup",
+                      return_value=(object(), trainer_config, engine, session, object())),
+                patch("trainer.cli.validation_reader", return_value=_ValidationReader()),
+                patch("trainer.cli.configure_remote_publication", return_value=None),
+                patch("trainer.cli.configure_wandb", return_value=None),
+                patch("trainer.cli.torch.cuda.is_available", return_value=False),
+                patch("trainer.cli.publish_dedicated_best_model") as publish,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(main(argv), 0)
+            publish.assert_not_called()
+            self.assertEqual(json.loads((root / "best_checkpoint.json").read_text()),
+                             {"checkpoint_id": "step-00000001", "metric": -2.0})
+            self.assertEqual(_steps_on_disk(root), ["step-00000001", "step-00000004"])
+
+
+class IncompleteCorpusTests(unittest.TestCase):
+    def test_a_child_that_ends_before_the_target_is_reported_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ensure_contract(root)
+            request = production.ProductionRequest(
+                run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
+                precision="bf16", microbatch_size=8, source_commit="a" * 40,
+            )
+            result = production.run_provider_payload(
+                production.request_payload(request), run_root=root / "runs", repo_root=ROOT,
+                popen_factory=lambda *args, **kwargs: _Process([], code=0),
+            )
+        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["steps_reached"], 0)
+
+    def test_preflight_refuses_a_corpus_shorter_than_the_target(self) -> None:
+        class _Reader:
+            def __init__(self, root, *, split, **kwargs):
+                self.block_count = 5 if split == "train" else 16
+
+            def next_batch(self):
+                return SimpleNamespace(sequence_count=64, block_id=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ensure_contract(root)
+            request = production.ProductionRequest(
+                run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
+                precision="bf16", microbatch_size=8, source_commit="a" * 40,
+            )
+            with patch("moe_production.SchemaV2ShardReader", _Reader):
+                with self.assertRaisesRegex(RuntimeError, "fewer than the 10 updates"):
+                    production.prepare_dataset(request)
+                partial = production.ProductionRequest(
+                    run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
+                    precision="bf16", microbatch_size=8, source_commit="a" * 40,
+                    allow_partial_corpus=True,
+                )
+                prepared = production.prepare_dataset(partial)
+        self.assertEqual((prepared["train_blocks"], prepared["validation_blocks"]), (5, 16))
+
+    def test_preflight_refuses_too_few_validation_blocks(self) -> None:
+        class _Reader:
+            def __init__(self, root, *, split, **kwargs):
+                self.block_count = 100 if split == "train" else 3
+
+            def next_batch(self):
+                return SimpleNamespace(sequence_count=64, block_id=0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ensure_contract(root)
+            request = production.ProductionRequest(
+                run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=10,
+                precision="bf16", microbatch_size=8, source_commit="a" * 40,
+            )
+            with patch("moe_production.SchemaV2ShardReader", _Reader):
+                with self.assertRaisesRegex(RuntimeError, "validation blocks"):
+                    production.prepare_dataset(request)

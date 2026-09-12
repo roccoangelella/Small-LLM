@@ -293,35 +293,35 @@ def main(
 
     def publish_best_model_if_improved(checkpoint_id: str) -> None:
         nonlocal best_model_metric, best_local_checkpoint_id
-        if not is_primary_process or not best_model_repo:
+        if not is_primary_process:
             return
         metric = _validation_metric(validation)
         if metric is None or (best_model_metric is not None and metric <= best_model_metric):
             return
-        run_id = getattr(args, "wandb_run_id", None)
-        if not isinstance(run_id, str) or not run_id:
-            raise RuntimeError("dedicated best-model publication lost its stable run ID")
-        checkpoint_path = ensure_local_checkpoint(checkpoint_id)
-        started = time.perf_counter()
-        result = publish_dedicated_best_model(
-            repo_id=str(best_model_repo),
-            run_id=run_id,
-            checkpoint_dir=checkpoint_path,
-            checkpoint_id=checkpoint_id,
-            metric=metric,
-            validation_loss=-metric,
-            token=best_model_token,
-            recreate=bool(getattr(args, "best_model_recreate", False)),
-        )
-        if keep_last_checkpoints > 0:
+        if best_model_repo:
+            run_id = getattr(args, "wandb_run_id", None)
+            if not isinstance(run_id, str) or not run_id:
+                raise RuntimeError("dedicated best-model publication lost its stable run ID")
+            checkpoint_path = ensure_local_checkpoint(checkpoint_id)
+            started = time.perf_counter()
+            result = publish_dedicated_best_model(
+                repo_id=str(best_model_repo),
+                run_id=run_id,
+                checkpoint_dir=checkpoint_path,
+                checkpoint_id=checkpoint_id,
+                metric=metric,
+                validation_loss=-metric,
+                token=best_model_token,
+                recreate=bool(getattr(args, "best_model_recreate", False)),
+            )
+            event = {**dict(result), "elapsed_seconds": time.perf_counter() - started}
+            print(json.dumps({"best_model_publication": event}, sort_keys=True), flush=True)
+        # The local best pointer protects the checkpoint from retention whether or not a
+        # dedicated remote repository exists.
+        if keep_last_checkpoints > 0 and checkpoint_id in saved:
             write_json_atomic(best_checkpoint_path, {"checkpoint_id": checkpoint_id, "metric": metric})
+            best_local_checkpoint_id = checkpoint_id
         best_model_metric = metric
-        best_local_checkpoint_id = checkpoint_id
-        event = {
-            **dict(result),
-            "elapsed_seconds": time.perf_counter() - started,
-        }
-        print(json.dumps({"best_model_publication": event}, sort_keys=True), flush=True)
 
     def publish_remote_checkpoint(checkpoint_id: str, *, final: bool) -> None:
         nonlocal best_remote_metric

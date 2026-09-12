@@ -97,7 +97,19 @@ class TestProductionDatasetGate(unittest.TestCase):
                 }
             ],
         }
+        (root / "validation").mkdir()
+        (root / "validation" / "000.bin").write_bytes(payload)
+        manifest["shards"].append({**manifest["shards"][0], "filename": "validation/000.bin",
+                                   "split": "validation"})
         (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        # The production gate also reads the corpus run contract for the schedule.
+        (root / "run_contract.json").write_text(json.dumps({
+            "version": 1, "run_id": "gate", "schema_version": 2, "context_length": 2_048,
+            "sequences_per_block": 1, "trainer": {
+                "schedule": "wsd", "steps": 2, "warmup_tokens": 2_048, "stable_tokens": 2_048,
+                "decay_tokens": 2_048, "minimum_lr_ratio": 0.1, "validation_blocks": 1,
+            },
+        }), encoding="utf-8")
         return root
 
     def _request(self, dataset: Path) -> ProductionRequest:

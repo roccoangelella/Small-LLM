@@ -105,6 +105,7 @@ def main(
     max_wall_seconds: float = 23 * 60 * 60,
     validation_blocks: int = -1,
     compile_mode: str = "off",
+    allow_partial_corpus: bool = False,
     dry_run: bool = False,
 ) -> None:
     """CPU-gate the dataset, then dispatch the accepted 64E/Top-2 model to H100."""
@@ -125,6 +126,7 @@ def main(
         max_wall_seconds=max_wall_seconds,
         validation_blocks=None if validation_blocks < 0 else validation_blocks,
         compile_mode=compile_mode,
+        allow_partial_corpus=allow_partial_corpus,
     )
     payload = _production.request_payload(request)
     payload["provider"] = "modal"
@@ -143,6 +145,8 @@ def main(
         raise RuntimeError("CPU production preparation returned a different model identity")
     result = train_production_h100.remote(_production.request_payload(request))
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    if result.get("status") == "incomplete":
+        raise SystemExit(f"segment ended at step {result.get('steps_reached')} before the target: corpus exhausted")
 
 
 if __name__ == "__main__":
