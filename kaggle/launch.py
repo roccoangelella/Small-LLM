@@ -17,4 +17,7 @@ _TARGET = _SRC_DIR / "launch.py"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-runpy.run_path(str(_TARGET), run_name="__main__")
+if __name__ == "__main__":
+    runpy.run_path(str(_TARGET), run_name="__main__")
+else:
+    globals().update(runpy.run_path(str(_TARGET), run_name=__name__))
