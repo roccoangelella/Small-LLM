@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 import json
+import os
 import re
 from pathlib import Path
 import subprocess
@@ -21,8 +22,13 @@ from MOE_model.config import MoEModelConfig
 from dataset.incremental_frontier import (
     DEFAULT_TRAINING_VALIDATION_BLOCKS,
     RUN_CONTRACT_FILENAME,
+    read_frontier,
+    read_run_contract,
     standard_wsd_plan,
 )
+from dataset.incremental_cache import IncrementalRollingShardCache
+from dataset.incremental_stage import stage_incremental_window_when_ready
+from dataset.src.hf_bucket_shards import HuggingFaceBucketShardStore
 from dataset.src.checkpoint_sequence import (
     CHECKPOINT_ID, complete_checkpoint, find_latest_complete_checkpoint,
 )
@@ -33,6 +39,7 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 
 RESUME_LATEST = "latest"
+SHARD_WAIT_TIMEOUT_SECONDS = 3 * 60 * 60
 _SCHEDULE_KEYS = ("steps", "warmup_tokens", "stable_tokens", "decay_tokens", "minimum_lr_ratio")
 # The recipe the pilot pins explicitly (moe_pilot.build_pilot_command); the trainer defaults
 # reproduce them today, but a production command must not depend on defaults.
@@ -72,12 +79,16 @@ class ProductionRequest:
     max_wall_seconds: float = 0.0
     compile_mode: str = "off"
     allow_partial_corpus: bool = False
+    dataset_shard_bucket: str = ""
+    dataset_shard_run_id: str = ""
 
     def __post_init__(self) -> None:
         if _RUN_ID.fullmatch(self.run_id) is None:
             raise ValueError("run_id must contain only letters, digits, '.', '_' or '-'")
         if not self.dataset_dir:
             raise ValueError("dataset_dir is required")
+        if bool(self.dataset_shard_bucket) != bool(self.dataset_shard_run_id):
+            raise ValueError("dataset_shard_bucket and dataset_shard_run_id must be supplied together")
         if self.total_steps <= 0:
             raise ValueError("total_steps must be positive")
         if self.precision not in {"fp16", "bf16", "fp32"}:
@@ -105,6 +116,10 @@ class ProductionRequest:
             and CHECKPOINT_ID.fullmatch(self.resume) is None
         ):
             raise ValueError("resume must be a step checkpoint ID or the literal 'latest'")
+
+    @property
+    def streaming(self) -> bool:
+        return bool(self.dataset_shard_bucket and self.dataset_shard_run_id)
 
 
 def accepted_identity() -> dict[str, object]:
@@ -283,21 +298,82 @@ def build_training_command(
         command += ["--resume", str(resume)]
     if request.sequences_per_block is not None:
         command += ["--sequences-per-block", str(request.sequences_per_block)]
+    if request.streaming:
+        command += [
+            "--dataset-shard-bucket", request.dataset_shard_bucket,
+            "--dataset-shard-run-id", request.dataset_shard_run_id,
+            "--dataset-manifest", str(Path(request.dataset_dir) / "manifest.json"),
+            "--dataset-shard-prefetch", "1",
+            "--dataset-shard-token-env", "HF_TOKEN",
+            "--dataset-shard-wait-timeout-seconds", str(SHARD_WAIT_TIMEOUT_SECONDS),
+        ]
     return command
 
 
-def prepare_dataset(request: ProductionRequest) -> dict[str, object]:
-    """CPU gate the manifest geometry and decode the first train block with vocab=8000."""
+def _dataset_store(request: ProductionRequest) -> HuggingFaceBucketShardStore:
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN is required for rolling dataset shard reads")
+    return HuggingFaceBucketShardStore(request.dataset_shard_bucket, token=token, create_bucket=False)
+
+
+def prepare_dataset(
+    request: ProductionRequest, *, run_root: Path | None = None,
+) -> dict[str, object]:
+    """CPU-stage the next window when streaming, then decode its first block with vocab=8000."""
 
     config = MoEModelConfig.accepted()
     root = Path(request.dataset_dir)
+    cache = None
+    start_block = 0
+    if request.streaming:
+        if run_root is not None:
+            plan = resolve_resume(request, run_root=run_root)
+            if int(plan["remaining_steps"]) == 0:
+                return {"status": "ready", "dataset_dir": str(root), "identity": accepted_identity(),
+                        "training_complete": True}
+            start_block = int(plan["completed_steps"])
+        elif request.resume:
+            raise ValueError("streaming resume preparation requires run_root")
+        store = _dataset_store(request)
+        staged = stage_incremental_window_when_ready(
+            store=store, run_id=request.dataset_shard_run_id, destination=root,
+            start_block_id=start_block, ensure_bucket=False,
+        )
+        if staged.get("status") != "ready":
+            raise RuntimeError(f"incremental production staging is not ready: {staged!r}")
+        # The existing stager freezes the bootstrap shard inventory and work-plan
+        # identity; only shard_frontier.json grows. Keep that manifest unchanged
+        # across segments so reader state and checkpoint_identity remain stable.
+        contract = json.loads((root / RUN_CONTRACT_FILENAME).read_text(encoding="utf-8"))
+        if not isinstance(contract.get("trainer"), Mapping):
+            raise ValueError("incremental production run contract has no trainer plan")
+        schedule = resolve_schedule(root)
+        if request.total_steps > int(schedule["steps"]):
+            raise ValueError("total_steps exceeds the corpus trainer plan")
+        cache = IncrementalRollingShardCache(
+            root=root, run_id=request.dataset_shard_run_id, contract=contract, store=store,
+            prefetch_shards=1, wait_timeout_seconds=SHARD_WAIT_TIMEOUT_SECONDS,
+        )
+    try:
+        return _verify_dataset(request, config=config, root=root, cache=cache, start_block=start_block)
+    finally:
+        if cache is not None:
+            cache.close(wait=True)
+
+
+def _verify_dataset(request: ProductionRequest, *, config: MoEModelConfig, root: Path,
+                    cache: object | None, start_block: int) -> dict[str, object]:
     reader = SchemaV2ShardReader(
         root,
         split="train",
         sequences_per_block=request.sequences_per_block,
         semantic_vocab_size=config.semantic_vocab_size,
         context_length=config.max_seq_len,
+        cache_manager=cache,
     )
+    if start_block:
+        reader.load_state_dict({**reader.state_dict(), "last_consumed_block_id": start_block - 1})
     first = reader.next_batch()
     if first.sequence_count <= 0:
         raise RuntimeError("production dataset contains an empty first training block")
@@ -315,7 +391,8 @@ def prepare_dataset(request: ProductionRequest) -> dict[str, object]:
     )
     # A static corpus that ends early looks like a finished run to the trainer, so the
     # block budget is checked here, before any GPU is billed.
-    if reader.block_count < request.total_steps and not request.allow_partial_corpus:
+    if (not request.streaming and reader.block_count < request.total_steps
+            and not request.allow_partial_corpus):
         raise RuntimeError(
             f"staged corpus has {reader.block_count} train blocks, fewer than the"
             f" {request.total_steps} updates requested; stage the rest or pass allow_partial_corpus"
@@ -417,6 +494,21 @@ def run_provider_payload(
     elif reached < request.total_steps:
         # The trainer exits 0 when the corpus ends; only the step count tells the truth.
         result["status"] = "incomplete"
+        if request.streaming:
+            store = _dataset_store(request)
+            contract = read_run_contract(store, run_id=request.dataset_shard_run_id)
+            local_contract = json.loads(
+                (Path(request.dataset_dir) / RUN_CONTRACT_FILENAME).read_text(encoding="utf-8")
+            )
+            if contract.get("contract_sha256") != local_contract.get("contract_sha256"):
+                raise RuntimeError("incremental production run contract changed during training")
+            frontier = read_frontier(store, run_id=request.dataset_shard_run_id, contract=contract)
+            result["frontier"] = {
+                key: frontier.get(key) for key in
+                ("run_id", "contract_sha256", "last_ready_train_block_id", "producer_complete")
+            }
+            if frontier.get("producer_complete") is not True:
+                result["status"] = "waiting_for_corpus"
     return result
 
 
