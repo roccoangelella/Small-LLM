@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from dataset.incremental_cache import IncrementalRollingShardCache
@@ -61,6 +62,47 @@ def _row(index: int, payload: bytes) -> dict[str, object]:
 
 
 class IncrementalCacheTests(unittest.TestCase):
+    def test_wait_timeout_tracks_ready_progress_and_zero_keeps_waiting(self) -> None:
+        for timeout, progress, completes in ((3, False, False), (3, True, False), (0, False, True)):
+            with self.subTest(timeout=timeout, progress=progress), tempfile.TemporaryDirectory() as tmp:
+                contract = {"run_id": "test", "contract_sha256": "c" * 64,
+                            "planned_train_blocks": 3}
+                frontier = {"version": 1, "run_id": "test", "contract_sha256": "c" * 64,
+                            "ready_train_shards": [], "frozen_validation_shards": [],
+                            "producer_complete": False}
+                store = FakeStore(frontier)
+                cache = IncrementalRollingShardCache(
+                    root=Path(tmp), run_id="test", contract=contract, store=store,
+                    poll_seconds=1, wait_timeout_seconds=timeout,
+                )
+                clock = [0.0]
+
+                def sleep(seconds):
+                    clock[0] += seconds
+                    if progress and clock[0] >= 2:
+                        frontier["ready_train_shards"] = [_row(0, b"a" * 16)]
+                    if completes and clock[0] >= 5:
+                        frontier["ready_train_shards"] = [
+                            _row(i, b"a" * 16) for i in range(3)
+                        ]
+
+                try:
+                    with patch("dataset.incremental_cache.time.monotonic", side_effect=lambda: clock[0]), \
+                         patch("dataset.incremental_cache.time.sleep", side_effect=sleep):
+                        if completes:
+                            self.assertEqual(cache._wait_for_shard(2).last_block_id, 2)
+                        else:
+                            with self.assertRaisesRegex(TimeoutError, "no incremental READY progress"):
+                                cache._wait_for_shard(2)
+                    self.assertEqual(clock[0], 5 if progress or completes else 3)
+                finally:
+                    cache.close()
+
+    def test_wait_timeout_rejects_invalid_values(self) -> None:
+        for timeout in (-1, float("inf"), float("nan")):
+            with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, "wait timeout"):
+                IncrementalRollingShardCache(wait_timeout_seconds=timeout)
+
     def test_acknowledge_rejects_unsafe_filename_before_deletion(self) -> None:
         run_id = "dataset-001"
         contract = {

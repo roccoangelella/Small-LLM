@@ -47,6 +47,10 @@ def parser() -> argparse.ArgumentParser:
         default=1,
         help="Number of future train shards prefetched asynchronously; default keeps current + next.",
     )
+    p.add_argument(
+        "--dataset-shard-wait-timeout-seconds", type=float, default=0.0,
+        help="Fail after this many seconds without incremental READY progress; zero waits forever.",
+    )
     p.add_argument("--checkpoint-dir", type=Path, required=True)
     p.add_argument("--steps", type=int, required=True)
     p.add_argument("--resume")
@@ -300,6 +304,9 @@ def parse_args(
         raise SystemExit("--source-commit must be a full Git SHA")
     if args.dataset_shard_prefetch < 1:
         raise SystemExit("--dataset-shard-prefetch must be at least one")
+    if (not math.isfinite(args.dataset_shard_wait_timeout_seconds)
+            or args.dataset_shard_wait_timeout_seconds < 0):
+        raise SystemExit("--dataset-shard-wait-timeout-seconds must be finite and non-negative")
     if bool(args.dataset_shard_bucket) != bool(args.dataset_shard_run_id):
         raise SystemExit(
             "--dataset-shard-bucket and --dataset-shard-run-id must be supplied together"

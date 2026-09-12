@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Mapping
 from concurrent.futures import Future
@@ -23,7 +24,10 @@ from dataset.src.remote import _safe_relative_path as safe_path
 class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
     """Poll HF only at frontier boundaries and keep async work per shard."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, *, wait_timeout_seconds: float = 0.0, **kwargs: object) -> None:
+        if not math.isfinite(wait_timeout_seconds) or wait_timeout_seconds < 0:
+            raise ValueError("incremental shard wait timeout must be finite and non-negative")
+        self.wait_timeout_seconds = wait_timeout_seconds
         super().__init__(**kwargs)
         self._cached_train: list[FrontierShard] = []
         self._cached_producer_complete = False
@@ -73,6 +77,8 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         cached = self._cached_shard(block_id)
         if cached is not None:
             return cached
+        last_progress = time.monotonic()
+        ready_count = len(self._cached_train)
         while True:
             self._refresh_ready_prefix()
             cached = self._cached_shard(block_id)
@@ -80,7 +86,20 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
                 return cached
             if self._cached_producer_complete:
                 raise RuntimeError(f"producer completed without required train block {block_id}")
-            time.sleep(self.poll_seconds)
+            now = time.monotonic()
+            if len(self._cached_train) > ready_count:
+                ready_count = len(self._cached_train)
+                last_progress = now
+            delay = self.poll_seconds
+            if self.wait_timeout_seconds:
+                remaining = self.wait_timeout_seconds - (now - last_progress)
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"no incremental READY progress for {self.wait_timeout_seconds:g} seconds "
+                        f"waiting for train block {block_id}; ready_train_shards={ready_count}"
+                    )
+                delay = min(delay, remaining)
+            time.sleep(delay)
 
     def _shard_future(self, shard: FrontierShard) -> Future[Path]:
         with self._lock:
@@ -174,6 +193,11 @@ class IncrementalRollingShardCache(_BaseIncrementalRollingShardCache):
         shard = self._wait_for_shard(next_block)
         self._shard_future(shard).result()
         self._prefetch_successor(shard)
+
+    def close(self, *, wait: bool = False) -> None:
+        # CPU stagers must finish local verification before committing a provider
+        # volume, which requires all files closed. Training keeps its old default.
+        self._executor.shutdown(wait=wait, cancel_futures=True)
 
 
 __all__ = ["IncrementalRollingShardCache"]

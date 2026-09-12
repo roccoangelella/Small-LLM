@@ -87,6 +87,7 @@ def _rolling_cache(args: object) -> object | None:
             contract=contract,
             store=store,
             prefetch_shards=prefetch,
+            wait_timeout_seconds=getattr(args, "dataset_shard_wait_timeout_seconds", 0.0),
         )
 
     from dataset.rolling_cache import RollingShardCache
