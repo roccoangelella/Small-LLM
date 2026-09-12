@@ -15,7 +15,6 @@ import json
 import math
 import os
 from pathlib import Path
-import pickle
 import re
 import subprocess
 import sys
@@ -23,7 +22,12 @@ import time
 
 from dataset.qualification import get_profile
 from dataset.qualification_report import derive_plan
-from dataset.src.joint_checkpoint import verify_local_manifest
+from dataset.src.checkpoint_sequence import (
+    INVALID_CHECKPOINT,
+    checkpoint_step,
+    complete_checkpoint,
+    find_latest_complete_checkpoint,
+)
 from dataset.src.storage import read_json, write_json_atomic
 from dataset.src.verify import verify
 
@@ -242,45 +246,8 @@ def prepare_pilot(request: PilotRequest) -> PilotSpec:
     return PilotSpec(request, plan, namespace, checkpoint_dir, experiment_dir, checkpoints, profiles)
 
 
-def _step(path: Path) -> int | None:
-    match = _CHECKPOINT_ID.fullmatch(path.name)
-    return None if match is None else int(match.group(1))
-
-
-def _complete_checkpoint(path: Path) -> dict[str, object]:
-    step = _step(path)
-    if step is None or path.is_symlink() or not path.is_dir():
-        raise ValueError("invalid checkpoint directory")
-    verify_local_manifest(path)
-    payload = read_json(path / "checkpoint.json")
-    pipeline = payload.get("pipeline_state") if isinstance(payload, Mapping) else None
-    if (not isinstance(payload, Mapping) or payload.get("checkpoint_id") != path.name or
-        payload.get("optimizer_step_complete") is not True or not isinstance(pipeline, Mapping) or
-        pipeline.get("gradient_accumulation_position", 0) != 0 or
-        pipeline.get("last_consumed_block_id") != step - 1):
-        raise ValueError("checkpoint metadata does not describe this completed update")
-    with (path / "trainer_state.pkl").open("rb") as handle:
-        state = pickle.load(handle)
-    if not isinstance(state, Mapping) or state.get("global_step") != step:
-        raise ValueError("checkpoint state step differs from its identity")
-    tokens = state.get("consumed_tokens")
-    if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
-        raise ValueError("invalid checkpoint target count")
-    return {"checkpoint_id": path.name, "step": step, "path": path, "consumed_tokens": tokens}
-
-
-def find_latest_complete_checkpoint(checkpoint_dir: Path) -> dict[str, object] | None:
-    if not checkpoint_dir.is_dir() or checkpoint_dir.is_symlink():
-        return None
-    candidates = sorted((p for p in checkpoint_dir.iterdir() if p.is_dir()),
-                        key=lambda p: _step(p) if _step(p) is not None else -1, reverse=True)
-    for path in candidates:
-        try:
-            return _complete_checkpoint(path)
-        except (OSError, EOFError, ValueError, TypeError, AttributeError, ImportError,
-                IndexError, pickle.PickleError, RuntimeError):
-            continue
-    return None
+_step = checkpoint_step
+_complete_checkpoint = complete_checkpoint
 
 
 def build_pilot_command(spec: PilotSpec, *, remaining_steps: int, resume: str | None,
@@ -336,8 +303,7 @@ def _event_checkpoint(spec: PilotSpec, event: Mapping[str, object]) -> tuple[str
         complete = _complete_checkpoint(path)
         if complete["step"] > spec.request.steps:
             raise ValueError("checkpoint exceeds the frozen cap")
-    except (OSError, EOFError, ValueError, TypeError, AttributeError, ImportError,
-            IndexError, pickle.PickleError, RuntimeError) as error:
+    except INVALID_CHECKPOINT as error:
         raise RuntimeError(f"child announced an incomplete or invalid checkpoint: {path}") from error
     return checkpoint_id, path
 

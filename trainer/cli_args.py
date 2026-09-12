@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from pathlib import Path
 
@@ -124,6 +125,30 @@ def parser() -> argparse.ArgumentParser:
         help="Positive WSqD power-law exponent after settling; 0.5 is inverse square root.",
     )
     p.add_argument("--checkpoint-every-steps", type=int, default=0)
+    p.add_argument(
+        "--keep-last-checkpoints",
+        type=int,
+        default=0,
+        help=(
+            "Retain only the newest N local step checkpoints, plus the best, the resume "
+            "source and milestones. Zero keeps every checkpoint."
+        ),
+    )
+    p.add_argument(
+        "--milestone-every-steps",
+        type=int,
+        default=0,
+        help="Local checkpoints whose update number is a multiple of M are never pruned.",
+    )
+    p.add_argument(
+        "--max-wall-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Drain budget measured from process start. When the next update would exceed it, "
+            "save a checkpoint and exit zero. Zero disables the budget."
+        ),
+    )
     p.add_argument("--evaluation-every-steps", type=int, default=0)
     p.add_argument("--validation-blocks", type=int, default=0)
     p.add_argument("--checkpoint-at-steps", type=_steps, default=(),
@@ -259,6 +284,12 @@ def parse_args(
         raise SystemExit("--validation-blocks cannot be negative")
     if args.probe_sequences < 0:
         raise SystemExit("--probe-sequences cannot be negative")
+    if args.keep_last_checkpoints < 0:
+        raise SystemExit("--keep-last-checkpoints cannot be negative")
+    if args.milestone_every_steps < 0:
+        raise SystemExit("--milestone-every-steps cannot be negative")
+    if not math.isfinite(args.max_wall_seconds) or args.max_wall_seconds < 0:
+        raise SystemExit("--max-wall-seconds must be finite and non-negative")
     if (args.profile_at_steps or args.probe_sequences) and args.experiment_dir is None:
         raise SystemExit("profiling and probes require --experiment-dir")
     if 0 in args.profile_at_steps:

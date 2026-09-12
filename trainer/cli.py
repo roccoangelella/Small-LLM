@@ -13,6 +13,8 @@ from pathlib import Path
 
 import torch
 
+from dataset.src.checkpoint_sequence import prune_checkpoints
+
 from .cli_args import parse_args
 from .best_model import (
     checkpoint_validation_loss,
@@ -95,6 +97,7 @@ def main(
     argv: list[str] | None = None, *, setup_fn=None, validation_reader_fn=None,
     parse_args_fn=None,
 ) -> int:
+    started_wall = time.monotonic()
     args = (parse_args_fn or parse_args)(argv)
     model_config, trainer_config, engine, session, coordinator = (setup_fn or setup)(args)
     observer = None
@@ -178,6 +181,10 @@ def main(
     remotely_published: set[str] = set()
     completed = 0
     last_validation_step = None
+    keep_last_checkpoints = int(getattr(args, "keep_last_checkpoints", 0) or 0)
+    milestone_every_steps = int(getattr(args, "milestone_every_steps", 0) or 0)
+    max_wall_seconds = float(getattr(args, "max_wall_seconds", 0.0) or 0.0)
+    best_local_checkpoint_id: str | None = None
 
     def run_validation() -> dict[str, object]:
         nonlocal last_validation_step
@@ -251,10 +258,34 @@ def main(
             )
         if observer is not None:
             observer.checkpoint(checkpoint_id, elapsed_seconds=elapsed, byte_size=byte_size)
+        prune_local_checkpoints()
         return path
 
+    def prune_local_checkpoints() -> None:
+        if keep_last_checkpoints <= 0 or not is_primary_process:
+            return
+        protected = {
+            value for value in (best_local_checkpoint_id, getattr(args, "resume", None))
+            if isinstance(value, str) and value
+        }
+        removed = prune_checkpoints(
+            Path(args.checkpoint_dir),
+            keep_last=keep_last_checkpoints,
+            protected=protected,
+            milestone_every_steps=milestone_every_steps,
+        )
+        if not removed:
+            return
+        event = {
+            "removed": sorted(removed),
+            "keep_last": keep_last_checkpoints,
+            "milestone_every_steps": milestone_every_steps,
+            "protected": sorted(protected),
+        }
+        print(json.dumps({"checkpoint_retention": event}, sort_keys=True), flush=True)
+
     def publish_best_model_if_improved(checkpoint_id: str) -> None:
-        nonlocal best_model_metric
+        nonlocal best_model_metric, best_local_checkpoint_id
         if not is_primary_process or not best_model_repo:
             return
         metric = _validation_metric(validation)
@@ -276,6 +307,7 @@ def main(
             recreate=bool(getattr(args, "best_model_recreate", False)),
         )
         best_model_metric = metric
+        best_local_checkpoint_id = checkpoint_id
         event = {
             **dict(result),
             "elapsed_seconds": time.perf_counter() - started,
@@ -352,12 +384,15 @@ def main(
             if args.validation_blocks:
                 validation = run_validation()
             ensure_local_checkpoint(f"step-{engine.global_step:08d}")
+        drained_reason: str | None = None
         for _ in range(args.steps):
+            step_started = time.monotonic()
             try:
                 with observer.profile(engine.global_step + 1) if observer else nullcontext():
                     metrics = session.step()
             except StopIteration:
                 break
+            step_seconds = time.monotonic() - step_started
             completed += 1
             if observer is not None:
                 observer.training(metrics)
@@ -381,6 +416,12 @@ def main(
             publish_best_model_if_improved(checkpoint_id)
             if remote is not None and engine.global_step % remote.every_steps == 0:
                 publish_remote_checkpoint(checkpoint_id, final=False)
+            if (
+                max_wall_seconds
+                and time.monotonic() - started_wall + step_seconds >= max_wall_seconds
+            ):
+                drained_reason = "max_wall_seconds"
+                break
 
         if args.validation_blocks and last_validation_step != engine.global_step:
             validation = run_validation()
@@ -389,6 +430,16 @@ def main(
         publish_best_model_if_improved(checkpoint_id)
         publish_remote_checkpoint(checkpoint_id, final=True)
         print(json.dumps({"checkpoint_id": checkpoint_id}, sort_keys=True), flush=True)
+        if drained_reason is not None:
+            drained = {
+                "checkpoint_id": checkpoint_id,
+                "reason": drained_reason,
+                "completed_steps": completed,
+                "global_step": engine.global_step,
+                "elapsed_seconds": time.monotonic() - started_wall,
+                "max_wall_seconds": max_wall_seconds,
+            }
+            print(json.dumps({"drained": drained}, sort_keys=True), flush=True)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
     except BaseException:
