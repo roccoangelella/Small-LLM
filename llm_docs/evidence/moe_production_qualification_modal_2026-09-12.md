@@ -135,3 +135,26 @@ of GPU at list price.** Cost of this follow-up ≈ 0.39 USD.
   bit-identical to eager only on identical inputs (CPU), on H100 it differs at rounding level
   (0.0332623720 vs 0.0332735777 after the first update); a per-parameter gradient comparison on
   GPU and a compiled resume remain to be run.
+
+## Addendum — Beam RTX 4090, same day (source `db9c4f1`, runner `beam/moe_qualification.py`)
+
+Same protocol on Beam (serverless function, `LEGACY_SERVERLESS_IMAGE`, torch 2.10.0+cu126, corpus
+staged in the Beam `small-llm-data` volume). Production CLI: continuous exit 0, resume exit 0,
+step-4 loss identical (8.953808 / 8.953808), step-5 within nondeterminism (3.0e-5), state differs on
+412/430 tensors with max 6.9e-4; fp16 finite; checkpoint 1,161,776,976 bytes; cold first update
+≈ 250 s.
+
+| microbatch | compile | median update s (steps 4–8) | targets/s | peak allocated |
+|---:|---|---:|---:|---:|
+| 16 | off | 0.862 | 152,036 | 14.16 GiB |
+| **16** | **blocks** | **0.683** | **191,999** | 9.46 GiB |
+| 16 | blocks + reduce-overhead | failed (same CUDA-graphs overwrite error as on H100) | — | — |
+
+Beam list price read the same day: RTX 4090 0.000191667 USD/s (0.69 USD/h, shown "with committed
+spend"), CPU 0.0000125 USD/s per core, RAM 0.0000021 USD/s per GiB; the launcher requests 4 cores and
+32 GiB, so ≈ 1.11 USD/h all-in; the page also shows a 1.77 USD/h example for the same shape whose
+basis is not stated. **Per 10⁹ tokens with the compile lane: 1.60–2.56 USD on the 4090 against 2.76
+USD on the Modal H100 at microbatch 64; calendar 6.0 days against 2.9.** Beam functions run with
+`timeout=-1`, so a 4090 run needs no 23-hour segments. The RTX 5090 arm did not obtain capacity on
+the first attempt ("GPU capacity for RTX5090 is currently low"); a retry is pending. GPU cost of the
+4090 arm ≈ 0.25 USD.
