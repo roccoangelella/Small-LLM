@@ -18,7 +18,9 @@ import sys
 from typing import Callable
 
 from MOE_model.config import MoEModelConfig
-from dataset.src.checkpoint_sequence import CHECKPOINT_ID, find_latest_complete_checkpoint
+from dataset.src.checkpoint_sequence import (
+    CHECKPOINT_ID, complete_checkpoint, find_latest_complete_checkpoint,
+)
 from trainer.shards import SchemaV2ShardReader
 
 
@@ -70,8 +72,8 @@ class ProductionRequest:
             raise ValueError("checkpoint_every_steps cannot be negative")
         if self.validation_blocks < 0:
             raise ValueError("validation_blocks cannot be negative")
-        if self.keep_last_checkpoints < 0:
-            raise ValueError("keep_last_checkpoints cannot be negative")
+        if self.keep_last_checkpoints < 0 or self.keep_last_checkpoints == 1:
+            raise ValueError("keep_last_checkpoints must be 0 or at least 2")
         if self.milestone_every_steps < 0:
             raise ValueError("milestone_every_steps cannot be negative")
         if self.max_wall_seconds < 0:
@@ -124,7 +126,8 @@ def resolve_resume(request: ProductionRequest, *, run_root: Path) -> dict[str, o
     """
 
     if request.resume and request.resume != RESUME_LATEST:
-        resume, completed = request.resume, int(request.resume.split("-", 1)[1])
+        checkpoint = complete_checkpoint(checkpoint_dir(request, run_root=run_root) / request.resume)
+        resume, completed = request.resume, int(checkpoint["step"])
     else:
         latest = find_latest_complete_checkpoint(checkpoint_dir(request, run_root=run_root))
         resume = None if latest is None else str(latest["checkpoint_id"])

@@ -13,7 +13,8 @@ from pathlib import Path
 
 import torch
 
-from dataset.src.checkpoint_sequence import prune_checkpoints
+from dataset.src.checkpoint_sequence import CHECKPOINT_ID, prune_checkpoints
+from dataset.src.storage import read_json, write_json_atomic
 
 from .cli_args import parse_args
 from .best_model import (
@@ -185,6 +186,12 @@ def main(
     milestone_every_steps = int(getattr(args, "milestone_every_steps", 0) or 0)
     max_wall_seconds = float(getattr(args, "max_wall_seconds", 0.0) or 0.0)
     best_local_checkpoint_id: str | None = None
+    best_checkpoint_path = Path(args.checkpoint_dir) / "best_checkpoint.json"
+    if keep_last_checkpoints > 0 and is_primary_process and best_checkpoint_path.exists():
+        best_local_checkpoint_id = read_json(best_checkpoint_path)["checkpoint_id"]
+        if (not isinstance(best_local_checkpoint_id, str)
+                or CHECKPOINT_ID.fullmatch(best_local_checkpoint_id) is None):
+            raise ValueError("best_checkpoint.json has an invalid checkpoint ID")
 
     def run_validation() -> dict[str, object]:
         nonlocal last_validation_step
@@ -306,6 +313,8 @@ def main(
             token=best_model_token,
             recreate=bool(getattr(args, "best_model_recreate", False)),
         )
+        if keep_last_checkpoints > 0:
+            write_json_atomic(best_checkpoint_path, {"checkpoint_id": checkpoint_id, "metric": metric})
         best_model_metric = metric
         best_local_checkpoint_id = checkpoint_id
         event = {

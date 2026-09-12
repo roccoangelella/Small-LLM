@@ -13,6 +13,7 @@ from pathlib import Path
 import pickle
 import re
 import shutil
+import time
 
 from .joint_checkpoint import verify_local_manifest
 from .storage import read_json
@@ -65,17 +66,23 @@ def complete_checkpoint(path: Path, *, verify_state: bool = True) -> dict[str, o
 
 
 def find_latest_complete_checkpoint(checkpoint_dir: Path) -> dict[str, object] | None:
+    """Quarantine invalid step directories and return the newest complete checkpoint."""
+
     if not checkpoint_dir.is_dir() or checkpoint_dir.is_symlink():
         return None
-    candidates = sorted((p for p in checkpoint_dir.iterdir() if p.is_dir()),
-                        key=lambda p: checkpoint_step(p) if checkpoint_step(p) is not None else -1,
-                        reverse=True)
-    for path in candidates:
-        try:
-            return complete_checkpoint(path)
-        except INVALID_CHECKPOINT:
+    latest = None
+    for path in list(checkpoint_dir.iterdir()):
+        if checkpoint_step(path) is None or not path.is_dir():
             continue
-    return None
+        try:
+            checkpoint = complete_checkpoint(path)
+        except INVALID_CHECKPOINT:
+            quarantine = path.with_name(f"{path.name}.invalid-{time.time_ns()}")
+            path.rename(quarantine)
+            continue
+        if latest is None or checkpoint["step"] > latest["step"]:
+            latest = checkpoint
+    return latest
 
 
 def prune_checkpoints(checkpoint_dir: Path, *, keep_last: int,

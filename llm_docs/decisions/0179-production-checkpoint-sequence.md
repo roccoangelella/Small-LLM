@@ -81,7 +81,8 @@ of every existing run and break resume.
 
 ### Positive
 
-- Worst-case loss from a container death is one checkpoint interval, about 36 minutes.
+- Once commits keep pace, loss from a container death is bounded by one checkpoint
+  interval, about 36 minutes; an in-flight commit can extend that window.
 - Volume storage is bounded at 3 checkpoints plus best plus milestones.
 - Modal retries and manual relaunches continue the run; a finished run relaunches
   into a no-op instead of restarting training.
@@ -95,7 +96,16 @@ of every existing run and break resume.
   reads the checkpoint once (about 1.16 GB) per interval.
 - Auto-resume trusts the local volume; a lost volume still loses everything not
   published remotely.
-- Per-checkpoint commits make the volume commit cost part of the training loop.
+- The child emits and flushes the checkpoint event, then prunes without waiting
+  for the parent's volume commit. Stdout flush is not a commit acknowledgement.
+  This is acceptable at the production cadence of every 1,000+ updates with
+  keep-last 3: the rolling window leaves two previous complete checkpoints and
+  tens of minutes between saves for the parent to commit. This relies on commit
+  latency staying well below that window; it is not a synchronization guarantee.
+  Interval 1 with keep-last 1 is unsafe: the child can prune the only previous
+  checkpoint while the parent is still committing it. Production requests now
+  require keep-last 0 (retention off) or at least 2; this guard does not make
+  arbitrarily short intervals safe.
 
 ## Validation
 

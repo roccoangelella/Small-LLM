@@ -259,6 +259,31 @@ class LocalRetentionTests(unittest.TestCase):
                 self.assertEqual(main(argv), 0)
             self.assertEqual(publish.call_count, 1)
             self.assertEqual(_steps_on_disk(root), ["step-00000001", "step-00000004"])
+            self.assertEqual(json.loads((root / "best_checkpoint.json").read_text()),
+                             {"checkpoint_id": "step-00000001", "metric": -2.0})
+            restarted_engine = _Engine()
+            restarted_engine.global_step = 4
+            _run_cli(
+                ["--dataset-dir", directory, "--checkpoint-dir", directory, "--steps", "3",
+                 "--checkpoint-every-steps", "1", "--keep-last-checkpoints", "1",
+                 "--resume", "step-00000004"],
+                _Session(restarted_engine, checkpoint_root=root), restarted_engine,
+                checkpoint_every_steps=1,
+            )
+            self.assertEqual(_steps_on_disk(root),
+                             ["step-00000001", "step-00000004", "step-00000007"])
+
+    def test_retention_off_ignores_the_best_checkpoint_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "best_checkpoint.json"
+            marker.write_text("invalid JSON")
+            engine = _Engine()
+            _run_cli(
+                ["--dataset-dir", directory, "--checkpoint-dir", directory, "--steps", "1"],
+                _Session(engine, checkpoint_root=root), engine,
+            )
+            self.assertEqual(marker.read_text(), "invalid JSON")
 
     def test_trainer_never_deletes_the_resume_source(self) -> None:
         engine = _Engine()
@@ -291,6 +316,16 @@ class AutoResumeTests(unittest.TestCase):
         values.update(overrides)
         return production.ProductionRequest(**values)
 
+    def test_production_retention_requires_zero_or_at_least_two(self) -> None:
+        for keep_last in (-1, 1):
+            with self.subTest(keep_last=keep_last):
+                with self.assertRaisesRegex(ValueError, "0 or at least 2"):
+                    self._request(Path("unused"), keep_last_checkpoints=keep_last)
+        for keep_last in (0, 2, 3):
+            with self.subTest(keep_last=keep_last):
+                request = self._request(Path("unused"), keep_last_checkpoints=keep_last)
+                self.assertEqual(request.keep_last_checkpoints, keep_last)
+
     def test_absent_resume_starts_fresh_with_the_absolute_target(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -318,13 +353,55 @@ class AutoResumeTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--resume") + 1], "step-00000006")
                 self.assertEqual(command[command.index("--steps") + 1], "4")
 
+    def test_auto_resume_quarantines_all_invalid_steps_and_allows_resaving(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            complete = _write_checkpoint(root, 1000)
+            corrupt = _write_checkpoint(root, 2000)
+            (corrupt / "trainer_state.pkl").write_bytes(b"corrupt")
+            (root / "step-00000500").mkdir()
+            (root / "unrelated").mkdir()
+            latest = find_latest_complete_checkpoint(root)
+            self.assertEqual(latest["checkpoint_id"], complete.name)
+            self.assertTrue(complete.is_dir())
+            self.assertTrue((root / "unrelated").is_dir())
+            for step in (500, 2000):
+                checkpoint_id = f"step-{step:08d}"
+                self.assertFalse((root / checkpoint_id).exists())
+                self.assertEqual(len(list(root.glob(f"{checkpoint_id}.invalid-*"))), 1)
+            self.assertEqual(_write_checkpoint(root, 2000), corrupt)
+            self.assertEqual(find_latest_complete_checkpoint(root)["step"], 2000)
+
     def test_an_explicit_checkpoint_id_is_honoured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             request = self._request(root, resume="step-00000003")
+            _write_checkpoint(production.checkpoint_dir(request, run_root=root / "runs"), 3)
             plan = production.resolve_resume(request, run_root=root / "runs")
             self.assertEqual(plan, {"resume": "step-00000003", "completed_steps": 3,
                                     "remaining_steps": 7})
+
+    def test_explicit_resume_requires_a_complete_checkpoint_even_at_target(self) -> None:
+        for state in ("missing", "incomplete", "corrupt", "complete"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                request = self._request(root, resume="step-00000010")
+                checkpoints = production.checkpoint_dir(request, run_root=root / "runs")
+                if state == "incomplete":
+                    (checkpoints / request.resume).mkdir(parents=True)
+                elif state in ("corrupt", "complete"):
+                    path = _write_checkpoint(checkpoints, 10)
+                    if state == "corrupt":
+                        (path / "trainer_state.pkl").write_bytes(b"corrupt")
+                if state == "complete":
+                    self.assertEqual(production.resolve_resume(
+                        request, run_root=root / "runs")["remaining_steps"], 0)
+                else:
+                    with self.assertRaises((ValueError, OSError, RuntimeError)):
+                        production.run_provider_payload(
+                            production.request_payload(request), run_root=root / "runs",
+                            repo_root=ROOT, popen_factory=_forbidden_popen,
+                        )
 
     def test_a_finished_run_is_not_relaunched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
