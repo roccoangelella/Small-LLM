@@ -119,6 +119,7 @@ def apply_compile_lane(
     *,
     backend: str | None = None,
     dynamic: bool | None = True,
+    torch_mode: str | None = None,
 ) -> None:
     """Apply the requested compile mode to ``model`` in place.
 
@@ -128,7 +129,8 @@ def apply_compile_lane(
     same parameter objects and checkpoints stay compatible in both directions.
 
     ``backend=None`` keeps ``torch.compile``'s own default (Inductor); tests pass
-    ``"aot_eager"`` to keep CPU compile time bounded.
+    ``"aot_eager"`` to keep CPU compile time bounded. ``torch_mode`` forwards
+    ``torch.compile(mode=...)`` (for example ``"reduce-overhead"``) for measurements.
     """
 
     if not isinstance(mode, str) or mode not in COMPILE_MODES:
@@ -142,6 +144,8 @@ def apply_compile_lane(
     options: dict[str, object] = {"dynamic": dynamic}
     if backend is not None:
         options["backend"] = backend
+    if torch_mode is not None:
+        options["mode"] = torch_mode
     for block in decoder_blocks(model):
         if not isinstance(block, MoEDecoderBlock):
             raise TypeError(
