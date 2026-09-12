@@ -115,3 +115,23 @@ output of CUDAGraphs that has been overwritten by a subsequent run"* at the padd
 breaks per block the expected gain is small; parked. Best measured production configuration:
 **H100, `--compile blocks`, microbatch 64, BF16: 100 B tokens in 2.9 update-clock days, ≈ 276 USD
 of GPU at list price.** Cost of this follow-up ≈ 0.39 USD.
+
+## Addendum — after external review (Astra, same day)
+
+- **Common update window.** The main table's medians used steps 2–8 for eager and 4–12 for the
+  compile lane. Recomputed on steps 4–8 for both arms: H100 278,873 → 381,138 (+36.7 %), L40S
+  126,931 → 160,243 (+26.2 %), A10 63,882 → 88,476 (+38.5 %). Conclusions unchanged.
+- **What the resume check does and does not prove.** The identical step-4 loss proves the model
+  weights, selection bias, RNG and data cursor were restored; it is computed before the first
+  post-resume optimizer update, so it says nothing about the optimizer moments. The first
+  post-resume update is step 5. On the A10 control, the continuous-vs-resumed step-5 loss differs
+  by 4.3e-5 while two continuous runs from scratch differ by 7.5e-5 at the same step: the first
+  resumed update lies inside run-to-run nondeterminism, which is the evidence that the optimizer
+  state was restored. Step-4 gradient norms differ at 1e-6 for the same reason (H100 0.4670625925
+  vs 0.4670630991). Resume **with the compile lane armed** has not been exercised: pending.
+- **Compile lane, open before adoption** (ADR 0180): the compiled backward's autocast contract
+  (torch 2.10 defaults `backward_pass_autocast="same_as_forward"`, the eager step calls
+  `.backward()` outside autocast) is being pinned to the eager behaviour; the selection bias is
+  bit-identical to eager only on identical inputs (CPU), on H100 it differs at rounding level
+  (0.0332623720 vs 0.0332735777 after the first update); a per-parameter gradient comparison on
+  GPU and a compiled resume remain to be run.
