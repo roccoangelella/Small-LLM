@@ -25,6 +25,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md`](0020-qualify-fla-gdn2-with-full-fp32-kernel-execution.md)
 - [`0021-qualify-fla-gdn2-v052-and-resume-step4000.md`](0021-qualify-fla-gdn2-v052-and-resume-step4000.md)
 - [`0035-retire-completed-fla-investigation-scripts-from-kaggle.md`](0035-retire-completed-fla-investigation-scripts-from-kaggle.md)
+- [`0180-opt-in-torch-compile-lane-for-moe-blocks.md`](0180-opt-in-torch-compile-lane-for-moe-blocks.md)
 
 ### 2. Pretraining & Infrastructure (Modal, Beam, Kaggle)
 - [`0004-run-100m-in-one-session-with-250-step-durability.md`](0004-run-100m-in-one-session-with-250-step-durability.md)
