@@ -8,7 +8,15 @@ import json
 from pathlib import Path
 import sys
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SOURCE_FILE = Path(__file__).resolve()
+_REMOTE_REPO_ROOT = Path("/root/small-llm")
+# Modal copies the entrypoint to /root while the repository is mounted at /root/small-llm.
+if _SOURCE_FILE.parent == Path("/root") and (
+    _REMOTE_REPO_ROOT / "modal" / "launch.py"
+).is_file():
+    _REPO_ROOT = _REMOTE_REPO_ROOT
+else:
+    _REPO_ROOT = _SOURCE_FILE.parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
