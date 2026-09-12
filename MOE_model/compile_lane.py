@@ -43,16 +43,18 @@ Quantile Balancing
 ``no_grad`` bookkeeping over host-side Python state (the score frontier and the
 target rank) that decides the selection bias. Tracing them would let Dynamo
 specialise on that state, so they are excluded with ``torch.compiler.disable``
-and keep running in eager exactly as before — the selection bias is therefore
-bit-identical with the lane on. ``_observe_scores`` is called from inside the
-compiled block, so its exclusion is what splits the router graph; the other two
+and keep running in eager exactly as before. Selection bias is bit-identical
+only for identical router inputs, as in the CPU aot_eager test. GPU Inductor
+can change those inputs through rounding: H100 first-update layer0 bias absmax
+was 0.0332623720 eager versus 0.0332735777 compiled. ``_observe_scores`` is called
+from inside the compiled block, so its exclusion is what splits the router graph; the other two
 are called from :mod:`MOE_model.step`, outside any compiled region, and are
 excluded defensively.
 """
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Callable, Iterable
 
 import torch
 from torch import nn
@@ -117,7 +119,7 @@ def apply_compile_lane(
     model: nn.Module,
     mode: str,
     *,
-    backend: str | None = None,
+    backend: str | Callable | None = None,
     dynamic: bool | None = True,
     torch_mode: str | None = None,
 ) -> None:
@@ -139,6 +141,13 @@ def apply_compile_lane(
         )
     if mode == "off":
         return
+
+    from torch._functorch import config as functorch_config
+
+    # MoE_model.step calls backward outside the forward autocast context. Keep
+    # this setting active for lazy tracing and subsequent recompilations too.
+    if hasattr(functorch_config, "backward_pass_autocast"):
+        functorch_config.backward_pass_autocast = "off"
 
     exclude_router_bookkeeping()
     options: dict[str, object] = {"dynamic": dynamic}

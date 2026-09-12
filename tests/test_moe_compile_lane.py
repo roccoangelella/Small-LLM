@@ -1,11 +1,11 @@
 """CPU contracts for the opt-in ``torch.compile`` execution lane.
 
-Everything here runs with ``backend="aot_eager"``: Inductor's CPU lowering of the
-padded expert ``bmm`` is what the production lane exercises on CUDA, and
-compiling it on CPU costs tens of seconds per block for no extra signal about the
-properties under test (identical numerics, identical state-dict keys, identical
-Quantile Balancing bias, bounded graphs, no capacity-driven recompiles). The GPU
-measurement that has to justify adopting the lane runs the Inductor backend.
+Numerical comparisons use ``backend="aot_eager"`` on CPU: FP32 agreement,
+unchanged state-dict keys, bounded graphs and capacity-driven recompilation.
+Selection bias is bit-identical only when the router inputs are identical, as
+in this CPU test. On GPU with Inductor, H100 first-update layer0 bias absmax
+was 0.0332623720 eager versus 0.0332735777 compiled, a rounding-level difference.
+CPU coverage does not establish GPU backward equivalence.
 """
 
 from __future__ import annotations
@@ -98,6 +98,18 @@ class CompileLaneContract(unittest.TestCase):
         apply_compile_lane(model, "off")
         self.assertEqual(compiled_block_count(model), 0)
 
+    def test_armed_lane_matches_backward_outside_autocast(self) -> None:
+        from torch._functorch import config as functorch_config
+
+        if not hasattr(functorch_config, "backward_pass_autocast"):
+            self.skipTest("this torch version has no backward autocast setting")
+        with functorch_config.patch(backward_pass_autocast="same_as_forward"):
+            model = _model()
+            apply_compile_lane(model, "off")
+            self.assertEqual(functorch_config.backward_pass_autocast, "same_as_forward")
+            apply_compile_lane(model, "blocks", backend=BACKEND)
+            self.assertEqual(functorch_config.backward_pass_autocast, "off")
+
     def test_unknown_mode_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             apply_compile_lane(_model(), "graphs")
@@ -149,8 +161,64 @@ class CompiledMatchesEager(unittest.TestCase):
             )
 
 
+    def test_backward_matches_eager_across_two_capacities(self) -> None:
+        """CPU aot_eager backward agrees within FP32 tolerance at both capacities."""
+        from torch._dynamo.backends.registry import lookup_backend
+
+        eager = _model()
+        compiled = _model()
+        compiled.load_state_dict(eager.state_dict())
+        index = eager.layer_kinds.index("mha")
+        eager_block, compiled_block = eager.blocks[index], compiled.blocks[index]
+        executed_frames = 0
+        aot_eager = lookup_backend(BACKEND)
+
+        def counting_backend(graph, example_inputs):
+            compiled_graph = aot_eager(graph, example_inputs)
+
+            def execute(*args):
+                nonlocal executed_frames
+                executed_frames += 1
+                return compiled_graph(*args)
+
+            return execute
+
+        dynamo.reset()
+        self.addCleanup(dynamo.reset)
+        apply_compile_lane(compiled, "blocks", backend=counting_backend)
+        capacities = []
+        for sequences in (2, 4):
+            hidden = eager.token_embedding(
+                _tokens(eager, sequences=sequences, length=16, seed=sequences * 7)
+            ).detach()
+            eager_input = hidden.clone().requires_grad_()
+            compiled_input = hidden.clone().requires_grad_()
+            eager_block.zero_grad(set_to_none=True)
+            compiled_block.zero_grad(set_to_none=True)
+            expected, eager_z, eager_telemetry = eager_block(eager_input)
+            before = executed_frames
+            actual, compiled_z, telemetry = compiled_block(compiled_input)
+            (expected.square().mean() + eager_z).backward()
+            (actual.square().mean() + compiled_z).backward()
+            self.assertGreater(executed_frames, before, "no compiled frame executed")
+            capacity = int(telemetry.expert_counts.max())
+            self.assertEqual(capacity, int(eager_telemetry.expert_counts.max()))
+            capacities.append(capacity)
+            torch.testing.assert_close(compiled_input.grad, eager_input.grad,
+                                       rtol=1e-5, atol=1e-6)
+            for (name, parameter), (actual_name, actual_parameter) in zip(
+                eager_block.named_parameters(), compiled_block.named_parameters(), strict=True
+            ):
+                self.assertEqual(name, actual_name)
+                self.assertIsNotNone(parameter.grad, name)
+                self.assertIsNotNone(actual_parameter.grad, name)
+                torch.testing.assert_close(actual_parameter.grad, parameter.grad,
+                                           rtol=1e-5, atol=1e-6, msg=name)
+        self.assertEqual(len(set(capacities)), 2, "test did not vary the expert capacity")
+
+
 class QuantileBiasIsBitIdentical(unittest.TestCase):
-    """The balancing bias is host bookkeeping; compiling must not move a single bit."""
+    """CPU aot_eager bias is bit-identical only with identical router inputs."""
 
     @staticmethod
     def _one_step(model: MoESmallLLM, microbatches: list[torch.Tensor]) -> list[torch.Tensor]:

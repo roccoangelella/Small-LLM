@@ -47,6 +47,12 @@ after the model is built and before the engine builds the optimizer.
 
 Because:
 
+- **Backward matches eager autocast scope.** Forward in `MOE_model/step.py` runs
+  under autocast; `.backward()` runs after leaving that context. When the lane is
+  armed, it sets `torch._functorch.config.backward_pass_autocast = "off"` if the
+  setting exists (`hasattr` guard), overriding PyTorch 2.10's `"same_as_forward"`
+  default. The setting stays active for lazy tracing and later recompilation;
+  it is process-global. With the lane off, it is unchanged.
 - **Identity is untouched.** `nn.Module.compile()` installs a compiled `_compiled_call_impl` on the
   block itself instead of wrapping it in an `OptimizedModule` child, so `state_dict()` keys, the
   parameter objects and their `id()`s are unchanged; the optimizer built afterwards captures exactly
@@ -73,8 +79,9 @@ Because:
 - **Quantile Balancing is excluded, not traced.** `SwitchTopKRouter.begin_step`, `_observe_scores`
   and `commit_load` are wrapped once with `torch.compiler.disable` when the lane is armed;
   `_observe_scores` is the only one called from inside a compiled block, and its exclusion is what
-  splits the router graph. Measured: the selection bias after one full logical step is
-  **bit-identical** compiled versus eager.
+  splits the router graph. Measured on CPU with `aot_eager`: the selection bias after one full logical step
+  is **bit-identical only when the router inputs are identical**. Keeping the
+  bookkeeping eager does not guarantee identical upstream scores on GPU.
 
 Option A remains the status quo and stays in force until the GPU measurement below lands: this ADR
 is `proposed`, not `accepted`, and the default is unchanged.
@@ -88,13 +95,16 @@ is `proposed`, not `accepted`, and the default is unchanged.
 - The whole elementwise/copy region after the capacity sync sits in one graph, which is exactly the
   region the profile blames.
 - The lane is falsifiable: the graph-break count, the absence of capacity recompiles, numeric
-  agreement and bias bit-identity are all asserted on CPU in `tests/test_moe_compile_lane.py`.
+  agreement and bias bit-identity for identical router inputs are asserted on CPU in `tests/test_moe_compile_lane.py`.
 
 ### Negative or limiting
 
 - **Rounding changes.** Inductor refuses no reassociation the eager kernels make, but it does fuse
   and reorder them, so compiled BF16 training is not bit-identical to eager training. Adoption
-  therefore needs a learning comparison, not only a throughput number.
+  therefore needs a learning comparison, not only a throughput number. The H100
+  Inductor measurement already shows a rounding-level difference in first-update
+  `layer0_bias_absmax`: **0.0332623720 eager vs 0.0332735777 compiled**. This
+  disproves unconditional bias bit-identity; it does not establish harmful drift.
 - Compilation is not free: one warm-up cost per distinct graph at the start of a run, and Inductor
   autotuning time on top if it is ever enabled.
 - Graph breaks remain. Measured on CPU with `aot_eager`: an MHA block is **8 graphs / 7 breaks**, a
@@ -119,13 +129,17 @@ is `proposed`, not `accepted`, and the default is unchanged.
 
 ## Validation
 
-Already measured (CPU, `tests/test_moe_compile_lane.py`, 13 tests, `backend="aot_eager"`):
+Already measured (CPU, `tests/test_moe_compile_lane.py`, `backend="aot_eager"`):
 
 - compiled versus eager loss and every parameter gradient agree within FP32 tolerance on identical
   weights and inputs;
+- an MHA block runs backward across two observed expert capacities, with input and
+  parameter gradients matching eager within FP32 tolerance; an execution counter
+  asserts that compiled frames actually run for each capacity;
 - `state_dict()` keys, `named_parameters()` and parameter `id()`s are unchanged with the lane armed,
   and checkpoints cross-load between an eager and a compiled model;
-- the Quantile Balancing selection bias after one logical step is bit-identical;
+- the Quantile Balancing selection bias after one logical step is bit-identical
+  only with identical router inputs in the CPU test;
 - graph counts are recorded in the test log and asserted bounded (MHA ≤ 10, GDN ≤ 24);
 - three consecutive microbatches with different expert loads, and four microbatch sizes on one
   block, reuse one compilation with zero recompiles;

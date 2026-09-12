@@ -16,6 +16,8 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Execution profiles
 
+- [`production_review_fixes_2026-09-12.md`](production_review_fixes_2026-09-12.md) — six verified production review fixes, per-fix CPU test results, and pending commits blocked by worktree metadata permissions.
+
 - [`moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md`](moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md) — first measurement of the accepted 64-expert Top-2 geometry: batched expert GEMM against the per-expert loop over identical weights, 60,657 versus 7,240 warm targets/s, launches down 82 %, and the run-cost projections that follow.
 - [`moe_execution_ab_modal_a10_2026-09-10.md`](moe_execution_ab_modal_a10_2026-09-10.md) — paired A/B of ADRs 0170-0172 on one Modal A10: +19.6 % throughput, -1.89 GiB, and microbatch 4 unlocked because the old code dies on the 1.54 GiB logits tensor.
 
