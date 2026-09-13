@@ -62,6 +62,16 @@ class TestProductionCommand(unittest.TestCase):
         )
         self.assertEqual(identity["load_balancing"], "quantile")
 
+    def test_production_gpu_does_not_blind_retry_upload_or_oom_failures(self) -> None:
+        import ast
+        tree = ast.parse((ROOT / "modal" / "moe_production_launch.py").read_text())
+        function = next(node for node in tree.body
+                        if isinstance(node, ast.FunctionDef) and node.name == "train_production_h100")
+        retry_values = [ast.literal_eval(keyword.value) for decorator in function.decorator_list
+                        if isinstance(decorator, ast.Call) for keyword in decorator.keywords
+                        if keyword.arg == "retries"]
+        self.assertEqual(retry_values, [0])
+
     def test_historical_pilot_launchers_remain_separate(self) -> None:
         for provider, gpu in (("modal", 'gpu="H100"'), ("beam", 'gpu="RTX4090"')):
             source = (ROOT / provider / "moe_production_launch.py").read_text(encoding="utf-8")

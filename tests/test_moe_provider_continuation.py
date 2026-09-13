@@ -89,7 +89,8 @@ def _tree_equal(left, right):
         assert left == right
 
 
-def test_real_checkpoint_crosses_empty_provider_with_new_microbatch(tmp_path, corpus):
+@pytest.mark.parametrize("source_upgrade", [False, True])
+def test_real_checkpoint_crosses_empty_provider_with_new_microbatch(tmp_path, corpus, source_upgrade):
     root, request, model_config, config, store, _ = corpus
     a, b = tmp_path / "provider-a", tmp_path / "provider-b"
     assert restore_checkpoint(request, run_root=a) is None
@@ -107,8 +108,19 @@ def test_real_checkpoint_crosses_empty_provider_with_new_microbatch(tmp_path, co
     new_data = tmp_path / "dataset-b"
     shutil.copytree(root, new_data)
     migrated_request = replace(request, dataset_dir=str(new_data), resume="latest", microbatch_size=2)
+    if source_upgrade:
+        migrated_request = replace(migrated_request, source_commit="b" * 40,
+                                   resume_source_commit=request.source_commit,
+                                   validation_microbatch_size=4, async_checkpoint_upload=True)
     previous = restore_checkpoint(migrated_request, run_root=b)
     prepare_receipt(migrated_request, run_root=b, previous=previous)
+    receipt = json.loads(receipt_path(migrated_request, b).read_text())
+    if source_upgrade:
+        # Old executors require this exact v1 receipt, including the original commit.
+        assert receipt == previous
+        assert receipt["source_commit"] == request.source_commit
+        prepare_receipt(migrated_request, run_root=b, previous=receipt)
+        assert receipt == json.loads(receipt_path(migrated_request, b).read_text())
     assert resolve_resume(migrated_request, run_root=b)["remaining_steps"] == 2
     target_config = replace(config, microbatch_size=2, checkpoint_every_steps=2, evaluation_every_steps=2)
     restored, target_coordinator = _session(new_data, model_config, target_config,
@@ -128,6 +140,15 @@ def test_real_checkpoint_crosses_empty_provider_with_new_microbatch(tmp_path, co
     assert resumed_metrics.step == 3
     assert restored.source.last_acknowledged_block_id == 2
     assert restored.engine.consumed_tokens == 96
+    if source_upgrade:
+        target_coordinator.executor_metadata = {
+            "version": 1, "source_commit": migrated_request.source_commit,
+            "run_source_commit": request.source_commit,
+        }
+        saved = restored.save_checkpoint(target_coordinator, "step-00000003")
+        metadata = json.loads((saved / "checkpoint.json").read_text())
+        assert metadata["executor"]["source_commit"] == "b" * 40
+        assert metadata["executor"]["run_source_commit"] == "a" * 40
     assert resumed_metrics.loss == pytest.approx(continuous_metrics.loss, abs=2e-5)
     for key, value in session.engine.model.state_dict().items():
         torch.testing.assert_close(value, restored.engine.model.state_dict()[key], atol=2e-5, rtol=2e-5)
@@ -323,3 +344,75 @@ def test_real_cli_publishes_and_continues_wandb_on_a_new_account(tmp_path, corpu
         state = load_trainer_state_file(b / "portable/checkpoints/step-00000004/trainer_state.pkl")
         assert state["global_step"] == 4 and state["consumed_tokens"] == 128
         assert state["config"]["microbatch_size"] == 4
+
+
+@pytest.mark.parametrize("changes", [
+    {"wandb_entity": "other"}, {"checkpoint_bucket": "other/bucket"},
+    {"resume_source_commit": "c" * 40}, {"validation_blocks": 2},
+])
+def test_source_migration_never_authorizes_other_identity_drift(tmp_path, corpus, changes):
+    _, request, _, _, _, _ = corpus
+    prepare_receipt(request, run_root=tmp_path, previous=None)
+    receipt = json.loads(receipt_path(request, tmp_path).read_text())
+    migrated = replace(request, resume="latest", source_commit="b" * 40,
+                       resume_source_commit="a" * 40)
+    with pytest.raises(ValueError, match="identity mismatch"):
+        prepare_receipt(replace(migrated, **changes), run_root=tmp_path, previous=receipt)
+    assert json.loads(receipt_path(request, tmp_path).read_text()) == receipt
+
+
+def test_source_migration_requires_complete_checkpoint(tmp_path, corpus):
+    _, request, _, _, _, _ = corpus
+    prepare_receipt(request, run_root=tmp_path, previous=None)
+    receipt = json.loads(receipt_path(request, tmp_path).read_text())
+    migrated = replace(request, resume="latest", source_commit="b" * 40,
+                       resume_source_commit="a" * 40)
+    with pytest.raises(ValueError, match="complete resume checkpoint"):
+        prepare_receipt(migrated, run_root=tmp_path, previous=receipt)
+
+
+def test_previous_executor_resumes_new_checkpoint(tmp_path, corpus):
+    import os
+    from dataclasses import asdict
+    import pickle
+    import subprocess
+    old_checkout = os.environ.get("SMALL_LLM_ROLLBACK_CHECKOUT")
+    if not old_checkout:
+        pytest.skip("set SMALL_LLM_ROLLBACK_CHECKOUT for cross-executor rollback proof")
+    root, request, model_config, config, _, _ = corpus
+    run_root = tmp_path / "rollback"
+    prepare_receipt(request, run_root=run_root, previous=None)
+    receipt = json.loads(receipt_path(request, run_root).read_text())
+    checkpoint_root = run_root / request.run_id / "checkpoints"
+    session, coordinator = _session(root, model_config, config, checkpoint_root)
+    session.step()
+    coordinator.executor_metadata = {"version": 1, "source_commit": "b" * 40,
+                                     "run_source_commit": request.source_commit}
+    session.save_checkpoint(coordinator, "step-00000001")
+    # The previous executable receives the original receipt and unchanged tensor format.
+    setup_file = tmp_path / "rollback-input.pkl"
+    result_file = tmp_path / "rollback-output.pkl"
+    setup_file.write_bytes(pickle.dumps((root, model_config, config, checkpoint_root,
+                                        asdict(replace(request, resume="latest")), run_root, receipt)))
+    program = """
+import dataclasses, pickle, sys
+from tests.test_moe_provider_continuation import _session
+from moe_checkpoint_transport import prepare_receipt
+from moe_production import ProductionRequest
+root, model, config, checkpoint_root, request, run_root, receipt = pickle.load(open(sys.argv[1], 'rb'))
+# Reconstruct the original request using the previous executable field set.
+request = ProductionRequest(**{field.name: request[field.name] for field in dataclasses.fields(ProductionRequest)})
+prepare_receipt(request, run_root=run_root, previous=receipt)
+session, coordinator = _session(root, model, config, checkpoint_root)
+session.load_checkpoint(coordinator, 'step-00000001')
+session.step()
+pickle.dump(session.engine.state_dict(), open(sys.argv[2], 'wb'))
+"""
+    env = {**os.environ, "PYTHONPATH": old_checkout, "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
+    subprocess.run([sys.executable, "-c", program, str(setup_file), str(result_file)],
+                   cwd=old_checkout, env=env, check=True, capture_output=True, text=True)
+    session.step()
+    old_state = pickle.loads(result_file.read_bytes())
+    state = session.engine.state_dict()
+    for key in ("model", "optimizer", "scheduler", "scaler", "consumed_tokens", "global_step"):
+        _tree_equal(state[key], old_state[key])

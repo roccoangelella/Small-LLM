@@ -395,6 +395,8 @@ class CheckpointCoordinator:
                 "schema_hash": self.schema_hash, "optimizer_step_complete": True,
                 "pipeline_state": dict(pipeline_state), "validation_metrics": dict(validation_metrics or {}),
             }
+            if getattr(self, "executor_metadata", None) is not None:
+                payload["executor"] = dict(self.executor_metadata)
             write_json_atomic(staging / "checkpoint.json", payload, fsync=checkpoint_fsync)
             manifest = {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
                                   {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")}]} 

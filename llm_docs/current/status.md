@@ -4,6 +4,11 @@ Last reviewed: 2026-09-13
 
 Verification: [CPU provider continuation](../evidence/moe_provider_continuation_cpu_2026-09-13.md).
 
+Runtime-efficiency candidate: explicit source-origin/executor separation preserves
+v1 receipt rollback; validation batching and single-worker asynchronous upload are
+opt-in. Active production checkout remains independently pinned at556f4f7.
+[Controls, tests and adoption limits](../runbooks/runtime-efficiency.md).
+
 ## Current accepted MoE work
 
 The production path is the accepted E64/Top-2, L8/d256/h352 GDN-2 hybrid with
@@ -21,10 +26,11 @@ is required for first launch. Offline tests cover real tiny-MoE continuation thr
 the actual CLI and byte-accurate bucket/W&B fakes. Live cross-GPU migration with this
 integration has not been run. [Procedure](../runbooks/moe-provider-continuation.md).
 
-Edo explicitly chose credit exhaustion followed by checkpoint recovery; no credit
-monitor or preventive budget shutdown is requested. No new training was launched
-in this implementation session. The earlier 100B launch is recorded locally as
-stopped before its first checkpoint; cloud status has not been re-queried.
+The authorized 100B run is active on Modal after an OOM recovery at microbatch32;
+remote checkpoints through32500 were observed by the local supervisor on September13.
+The runtime-efficiency candidate has not been deployed. Current account, checkpoint,
+corpus hold and billing observations live in the Small-LM project hub monitoring lane.
+No additional GPU experiment was launched for these runtime changes.
 
 Corpus discussion is next: the current producer excludes programming cluster 11
 but retains mathematics clusters. It does not guarantee conversational-only or

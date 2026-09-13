@@ -70,6 +70,9 @@ class ProductionRequest:
     precision: str
     microbatch_size: int
     source_commit: str
+    validation_microbatch_size: int = 1
+    async_checkpoint_upload: bool = False
+    resume_source_commit: str = ""
     resume: str | None = None
     sequences_per_block: int | None = None
     checkpoint_every_steps: int = 1000
@@ -96,6 +99,10 @@ class ProductionRequest:
             raise ValueError("total_steps must be positive")
         if self.precision not in {"fp16", "bf16", "fp32"}:
             raise ValueError("precision must be fp16, bf16 or fp32")
+        if self.validation_microbatch_size <= 0:
+            raise ValueError("validation_microbatch_size must be positive")
+        if self.resume_source_commit and (_SHA.fullmatch(self.resume_source_commit) is None or self.resume != "latest"):
+            raise ValueError("resume_source_commit requires a full Git SHA and --resume latest")
         if self.microbatch_size <= 0:
             raise ValueError("microbatch_size must be positive")
         if _SHA.fullmatch(self.source_commit) is None:
@@ -269,6 +276,11 @@ def build_training_command(
         "hybrid_muon_adamw",
         "--precision",
         request.precision,
+        "--run-source-commit",
+        request.resume_source_commit or request.source_commit,
+        "--validation-microbatch-size",
+        str(request.validation_microbatch_size),
+        *(["--async-checkpoint-upload"] if request.async_checkpoint_upload else []),
         "--microbatch-size",
         str(request.microbatch_size),
         "--source-commit",

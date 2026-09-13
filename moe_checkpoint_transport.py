@@ -120,7 +120,7 @@ def prepare_receipt(request: object, *, run_root: Path,
     receipt = {
         "version": 1, "run_id": request.run_id, "shards": [],
         "checkpoint_bucket": bucket_id(request),
-        "source_commit": request.source_commit,
+        "source_commit": getattr(request, "resume_source_commit", "") or request.source_commit,
         "dataset_manifest_sha256": sha256_path(dataset_root / "manifest.json"),
         "run_contract_sha256": sha256_path(dataset_root / "run_contract.json"),
         "validation_blocks": validation_blocks,
@@ -129,6 +129,14 @@ def prepare_receipt(request: object, *, run_root: Path,
     if previous is not None and dict(previous) != receipt:
         changed = sorted(key for key in set(previous) | set(receipt) if previous.get(key) != receipt.get(key))
         raise ValueError(f"cross-provider run identity mismatch: {changed}")
+    if getattr(request, "resume_source_commit", ""):
+        if previous is None or request.resume != "latest":
+            raise ValueError("source transition cannot initialize a new run")
+        checkpoint = find_latest_complete_checkpoint(run_root / request.run_id / "checkpoints")
+        if checkpoint is None:
+            raise ValueError("source transition requires a verified complete resume checkpoint")
+        # v1 remains byte/schema compatible with the original executor for rollback.
+        # The actual clean checkout commit is recorded separately in checkpoint.json.
     write_json_atomic(receipt_path(request, run_root), receipt)
 
 

@@ -104,7 +104,7 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
 @app.function(
     gpu="H100",
     timeout=24 * 60 * 60,
-    retries=3,
+    retries=0,  # Recovery requires verified latest/single-writer preflight, never blind GPU retries.
     single_use_containers=True,
     secrets=[TRAINING_SECRET],
     volumes={
@@ -137,6 +137,9 @@ def main(
     source_commit: str,
     precision: str = "bf16",
     microbatch_size: int = 64,
+    validation_microbatch_size: int = 1,
+    async_checkpoint_upload: bool = False,
+    resume_source_commit: str = "",
     resume: str = "latest",
     sequences_per_block: int = 0,
     checkpoint_every_steps: int = 1000,
@@ -162,6 +165,9 @@ def main(
         total_steps=steps,
         precision=precision,
         microbatch_size=microbatch_size,
+        validation_microbatch_size=validation_microbatch_size,
+        async_checkpoint_upload=async_checkpoint_upload,
+        resume_source_commit=resume_source_commit,
         source_commit=source_commit,
         resume=resume or None,
         sequences_per_block=sequences_per_block or None,

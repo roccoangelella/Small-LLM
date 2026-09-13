@@ -93,6 +93,9 @@ def main(argv: list[str] | None = None) -> int:
     # Qualified on RTX 4090 (2026-09-12): BF16, microbatch 16 keeps 2x headroom for capacity spikes.
     parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="bf16")
     parser.add_argument("--microbatch-size", type=int, default=16)
+    parser.add_argument("--validation-microbatch-size", type=int, default=1)
+    parser.add_argument("--async-checkpoint-upload", action="store_true")
+    parser.add_argument("--resume-source-commit", default="")
     parser.add_argument("--resume", default="latest", help="Use 'new' only for the first launch.")
     parser.add_argument("--checkpoint-bucket", default="auto")
     parser.add_argument("--wandb-entity", default="")
@@ -117,6 +120,9 @@ def main(argv: list[str] | None = None) -> int:
         total_steps=args.steps,
         precision=args.precision,
         microbatch_size=args.microbatch_size,
+        validation_microbatch_size=args.validation_microbatch_size,
+        async_checkpoint_upload=args.async_checkpoint_upload,
+        resume_source_commit=args.resume_source_commit,
         source_commit=args.source_commit,
         resume=args.resume,
         sequences_per_block=args.sequences_per_block,
