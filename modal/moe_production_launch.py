@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -55,6 +56,14 @@ def _dataset_volume(request: _production.ProductionRequest):
     raise ValueError("streaming dataset_dir must be inside a mounted data, cache or run volume")
 
 
+def _runtime_request(payload: dict[str, object]) -> _production.ProductionRequest:
+    request = _production.request_from_payload(payload)
+    # Modal mounts are aliases; pass their canonical paths to the existing
+    # transport, which correctly rejects symlinks inside dataset/checkpoint trees.
+    _dataset_volume(request)
+    return replace(request, dataset_dir=str(Path(request.dataset_dir).resolve()))
+
+
 def _require_source_commit(source_commit: str) -> None:
     actual = _base._local_source_commit()
     if source_commit != actual:
@@ -78,13 +87,13 @@ def _require_source_commit(source_commit: str) -> None:
 def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     """Decode a real training block with the accepted 8,000-token semantic bound."""
 
-    request = _production.request_from_payload(payload)
+    request = _runtime_request(payload)
     if request.checkpoint_bucket:
         RUN_VOLUME.reload()
     if request.streaming:
         volume = _dataset_volume(request)
         volume.reload()
-    result = _production.prepare_dataset(request, run_root=RUN_ROOT)
+    result = _production.prepare_dataset(request, run_root=RUN_ROOT.resolve())
     if request.streaming:
         volume.commit()
     if request.checkpoint_bucket:
@@ -107,14 +116,14 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
 def train_production_h100(payload: dict[str, object]) -> dict[str, object]:
     """Run only ``MoEModelConfig.accepted()`` on the production H100 path."""
 
-    request = _production.request_from_payload(payload)
+    request = _runtime_request(payload)
     if request.checkpoint_bucket:
         RUN_VOLUME.reload()
     if request.streaming:
         _dataset_volume(request).reload()
     return _production.run_provider_payload(
-        payload,
-        run_root=RUN_ROOT,
+        _production.request_payload(request),
+        run_root=RUN_ROOT.resolve(),
         repo_root=REMOTE_REPO,
         volume_commit=RUN_VOLUME.commit,
     )
