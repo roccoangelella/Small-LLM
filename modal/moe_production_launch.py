@@ -50,7 +50,7 @@ TRAINING_SECRET = _base.TRAINING_SECRET
 def _dataset_volume(request: _production.ProductionRequest):
     destination = Path(request.dataset_dir).resolve()
     for root, volume in ((DATA_ROOT, DATA_VOLUME), (CACHE_ROOT, CACHE_VOLUME), (RUN_ROOT, RUN_VOLUME)):
-        if destination.is_relative_to(root):
+        if destination.is_relative_to(root.resolve()):
             return volume
     raise ValueError("streaming dataset_dir must be inside a mounted data, cache or run volume")
 
