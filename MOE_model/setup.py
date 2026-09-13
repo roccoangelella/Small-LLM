@@ -135,6 +135,17 @@ def setup(args: object):
     )
     if args.resume:
         session.load_checkpoint(coordinator, args.resume)
+        if model_config.version == 3:
+            # New checkpoints describe the actual execution configuration after
+            # migration; the loaded snapshot remains immutable.
+            current = checkpoint_identity(
+                args.dataset_dir, model_config=model_config, trainer_config=trainer_config,
+                manifest_path=args.dataset_manifest, context_length=model_config.max_seq_len,
+                sequences_per_block=args.sequences_per_block,
+            )
+            if current[1:] != identities[1:]:
+                raise ValueError("resumed MoE dataset identity differs from the current corpus")
+            coordinator.configuration_hash = current[0]
     return model_config, trainer_config, engine, session, coordinator
 
 

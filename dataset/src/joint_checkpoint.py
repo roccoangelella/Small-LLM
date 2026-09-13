@@ -496,11 +496,12 @@ def restore_on_empty_vps(*, publisher: TwoPhaseCheckpointPublisher, store: Any, 
             raise FileExistsError(f"checkpoint destination already exists: {checkpoint_root}")
         os.replace(staging, checkpoint_root)
         installed = True
-        parent_fd = os.open(checkpoints_root, os.O_RDONLY)
-        try:
-            os.fsync(parent_fd)
-        finally:
-            os.close(parent_fd)
+        if _checkpoint_fsync_enabled():
+            parent_fd = os.open(checkpoints_root, os.O_RDONLY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         return checkpoint_root
     finally:
         if not installed:

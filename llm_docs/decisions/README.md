@@ -53,6 +53,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
 - [`0179-production-checkpoint-sequence.md`](0179-production-checkpoint-sequence.md)
 - [`0181-take-the-production-schedule-from-the-corpus-run-contract.md`](0181-take-the-production-schedule-from-the-corpus-run-contract.md)
+- [`0183-continue-moe-training-across-provider-accounts.md`](0183-continue-moe-training-across-provider-accounts.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)

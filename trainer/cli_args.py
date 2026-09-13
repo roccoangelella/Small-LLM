@@ -215,6 +215,8 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create the configured private Hugging Face Storage Bucket if missing.",
     )
+    p.add_argument("--remote-keep-latest-and-best", action="store_true",
+                   help="Retain only latest and validation-best checkpoints in a Storage Bucket.")
     p.add_argument(
         "--remote-rolling-latest-only",
         action="store_true",
@@ -331,6 +333,11 @@ def parse_args(
         raise SystemExit(
             "--remote-rolling-latest-only requires --remote-publish-every-steps"
         )
+    if args.remote_keep_latest_and_best and (
+        not args.remote_checkpoint_bucket or not args.remote_publish_every_steps
+        or args.remote_rolling_latest_only
+    ):
+        raise SystemExit("latest-and-best retention requires bucket publication and excludes latest-only mode")
     if args.best_model_recreate and not args.best_model_repo:
         raise SystemExit("--best-model-recreate requires --best-model-repo")
     if args.best_model_repo and not args.best_model_recreate:

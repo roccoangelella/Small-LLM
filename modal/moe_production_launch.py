@@ -79,12 +79,16 @@ def prepare_production_cpu(payload: dict[str, object]) -> dict[str, object]:
     """Decode a real training block with the accepted 8,000-token semantic bound."""
 
     request = _production.request_from_payload(payload)
+    if request.checkpoint_bucket:
+        RUN_VOLUME.reload()
     if request.streaming:
         volume = _dataset_volume(request)
         volume.reload()
     result = _production.prepare_dataset(request, run_root=RUN_ROOT)
     if request.streaming:
         volume.commit()
+    if request.checkpoint_bucket:
+        RUN_VOLUME.commit()
     return result
 
 
@@ -104,6 +108,8 @@ def train_production_h100(payload: dict[str, object]) -> dict[str, object]:
     """Run only ``MoEModelConfig.accepted()`` on the production H100 path."""
 
     request = _production.request_from_payload(payload)
+    if request.checkpoint_bucket:
+        RUN_VOLUME.reload()
     if request.streaming:
         _dataset_volume(request).reload()
     return _production.run_provider_payload(
@@ -122,7 +128,7 @@ def main(
     source_commit: str,
     precision: str = "bf16",
     microbatch_size: int = 64,
-    resume: str = "",
+    resume: str = "latest",
     sequences_per_block: int = 0,
     checkpoint_every_steps: int = 1000,
     keep_last_checkpoints: int = 3,
@@ -133,6 +139,9 @@ def main(
     allow_partial_corpus: bool = False,
     dataset_shard_bucket: str = "",
     dataset_shard_run_id: str = "",
+    checkpoint_bucket: str = "auto",
+    wandb_entity: str = "",
+    wandb_project: str = "Small-LLM",
     dry_run: bool = False,
 ) -> None:
     """CPU-gate the dataset, then dispatch the accepted 64E/Top-2 model to H100."""
@@ -156,6 +165,9 @@ def main(
         allow_partial_corpus=allow_partial_corpus,
         dataset_shard_bucket=dataset_shard_bucket,
         dataset_shard_run_id=dataset_shard_run_id,
+        checkpoint_bucket=checkpoint_bucket,
+        wandb_entity=wandb_entity,
+        wandb_project=wandb_project,
     )
     payload = _production.request_payload(request)
     payload["provider"] = "modal"
@@ -172,8 +184,13 @@ def main(
         raise RuntimeError(f"CPU production preparation did not authorize H100 dispatch: {prepared!r}")
     if prepared.get("identity") != _production.accepted_identity():
         raise RuntimeError("CPU production preparation returned a different model identity")
+    if prepared.get("training_complete"):
+        print(json.dumps(prepared, sort_keys=True), flush=True)
+        return
     result = train_production_h100.remote(_production.request_payload(request))
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    if not isinstance(result, dict):
+        raise RuntimeError("Modal returned no training result; recover with --resume latest")
     if result.get("status") == "incomplete":
         raise SystemExit(f"segment ended at step {result.get('steps_reached')} before the target: corpus exhausted")
 

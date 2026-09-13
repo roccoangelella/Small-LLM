@@ -81,6 +81,9 @@ class ProductionRequest:
     allow_partial_corpus: bool = False
     dataset_shard_bucket: str = ""
     dataset_shard_run_id: str = ""
+    checkpoint_bucket: str = ""
+    wandb_entity: str = ""
+    wandb_project: str = "Small-LLM"
 
     def __post_init__(self) -> None:
         if _RUN_ID.fullmatch(self.run_id) is None:
@@ -112,10 +115,12 @@ class ProductionRequest:
         if self.compile_mode not in {"off", "blocks"}:
             raise ValueError("compile_mode must be off or blocks")
         if (
-            self.resume not in (None, "", RESUME_LATEST)
+            self.resume not in (None, "", RESUME_LATEST, "new")
             and CHECKPOINT_ID.fullmatch(self.resume) is None
         ):
-            raise ValueError("resume must be a step checkpoint ID or the literal 'latest'")
+            raise ValueError("resume must be a step checkpoint ID, 'latest', or 'new'")
+        if self.checkpoint_bucket and (self.checkpoint_every_steps <= 0 or self.validation_blocks == 0):
+            raise ValueError("durable production requires periodic checkpoints and validation")
 
     @property
     def streaming(self) -> bool:
@@ -195,7 +200,7 @@ def resolve_resume(request: ProductionRequest, *, run_root: Path) -> dict[str, o
     an explicit checkpoint ID is honoured as supplied.
     """
 
-    if request.resume and request.resume != RESUME_LATEST:
+    if request.resume and request.resume not in (RESUME_LATEST, "new"):
         checkpoint = complete_checkpoint(checkpoint_dir(request, run_root=run_root) / request.resume)
         resume, completed = request.resume, int(checkpoint["step"])
     else:
@@ -307,6 +312,10 @@ def build_training_command(
             "--dataset-shard-token-env", "HF_TOKEN",
             "--dataset-shard-wait-timeout-seconds", str(SHARD_WAIT_TIMEOUT_SECONDS),
         ]
+    if request.checkpoint_bucket:
+        from moe_checkpoint_transport import training_flags
+        command += training_flags(request, run_root=run_root, display=schedule is DISPLAY_SCHEDULE,
+                                  resumed=bool(resume))
     return command
 
 
@@ -324,15 +333,23 @@ def prepare_dataset(
 
     config = MoEModelConfig.accepted()
     root = Path(request.dataset_dir)
+    previous_receipt = None
+    if request.checkpoint_bucket:
+        if run_root is None:
+            raise ValueError("checkpoint transport requires run_root")
+        from moe_checkpoint_transport import restore_checkpoint
+        previous_receipt = restore_checkpoint(request, run_root=run_root)
     cache = None
     start_block = 0
     if request.streaming:
         if run_root is not None:
             plan = resolve_resume(request, run_root=run_root)
-            if int(plan["remaining_steps"]) == 0:
+            if int(plan["remaining_steps"]) == 0 and not request.checkpoint_bucket:
                 return {"status": "ready", "dataset_dir": str(root), "identity": accepted_identity(),
                         "training_complete": True}
             start_block = int(plan["completed_steps"])
+            if int(plan["remaining_steps"]) == 0:
+                start_block = max(0, start_block - 1)
         elif request.resume:
             raise ValueError("streaming resume preparation requires run_root")
         store = _dataset_store(request)
@@ -356,7 +373,15 @@ def prepare_dataset(
             prefetch_shards=1, wait_timeout_seconds=SHARD_WAIT_TIMEOUT_SECONDS,
         )
     try:
-        return _verify_dataset(request, config=config, root=root, cache=cache, start_block=start_block)
+        result = _verify_dataset(request, config=config, root=root, cache=cache, start_block=start_block)
+        if request.checkpoint_bucket:
+            from moe_checkpoint_transport import prepare_receipt
+            prepare_receipt(request, run_root=run_root, previous=previous_receipt)
+            if resolve_resume(request, run_root=run_root)["remaining_steps"] == 0:
+                from moe_checkpoint_transport import finalize_completed_run
+                finalize_completed_run(request, run_root=run_root)
+                result["training_complete"] = True
+        return result
     finally:
         if cache is not None:
             cache.close(wait=True)

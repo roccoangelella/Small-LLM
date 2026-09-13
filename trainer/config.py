@@ -15,6 +15,12 @@ Precision = Literal["fp32", "fp16", "bf16"]
 ScheduleKind = Literal["constant", "wsd", "wsqd"]
 OptimizerKind = Literal["adamw", "hybrid_muon_adamw"]
 
+# The accepted MoE permits these changes on resume. Dense/historical loaders
+# retain their strict full-config equality check.
+MOE_RESUME_EXECUTION_FIELDS = frozenset({
+    "microbatch_size", "checkpoint_every_steps", "evaluation_every_steps", "log_every_steps",
+})
+
 
 @dataclass(frozen=True, slots=True)
 class TrainerConfig:

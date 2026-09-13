@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,28 @@ class RemotePublication:
     drive_manifest: dict[str, object]
     every_steps: int
     rolling_latest_only: bool = False
+    keep_latest_and_best: bool = False
+
+
+def promote_best_pointer(store: object, *, run_id: str, latest: Mapping[str, object],
+                         metric: float | None, best_metric: float | None) -> bool:
+    """Point best at an already verified latest tree, without uploading a duplicate."""
+    if metric is None:
+        return False
+    if not math.isfinite(metric) or (best_metric is not None and not math.isfinite(best_metric)):
+        raise RuntimeError("best checkpoint metrics must be finite")
+    if best_metric is not None and metric <= best_metric:
+        return False
+    checkpoint_id = latest.get("checkpoint_id")
+    prefix, manifest = latest.get("last_prefix"), latest.get("checkpoint_manifest")
+    if prefix != f"run/{run_id}/checkpoints/{checkpoint_id}/last" or not isinstance(manifest, Mapping):
+        raise RuntimeError("verified latest pointer is missing its manifest or prefix")
+    store.write_json(f"run/{run_id}/best.json", {
+        "checkpoint_id": checkpoint_id, "best_prefix": prefix,
+        "checkpoint_manifest": dict(manifest), "metric": metric,
+        "source_checkpoint_id": checkpoint_id,
+    })
+    return True
 
 
 def _read_drive_manifest(path: Path) -> dict[str, object]:
@@ -100,6 +123,7 @@ def configure_remote_publication(args: object) -> RemotePublication | None:
         drive_manifest=drive_manifest,
         every_steps=every_steps,
         rolling_latest_only=bool(getattr(args, "remote_rolling_latest_only", False)),
+        keep_latest_and_best=bool(getattr(args, "remote_keep_latest_and_best", False)),
     )
 
 
@@ -110,7 +134,8 @@ def cleanup_remote_publication(
 ) -> dict[str, object] | None:
     """Prune superseded objects only after the new latest pointer is durable."""
 
-    if not bool(getattr(remote, "rolling_latest_only", False)):
+    keep_best = bool(getattr(remote, "keep_latest_and_best", False))
+    if not bool(getattr(remote, "rolling_latest_only", False)) and not keep_best:
         return None
 
     run_id = remote.drive_manifest.get("run_id")
@@ -120,7 +145,11 @@ def cleanup_remote_publication(
     store = getattr(remote.publisher, "store", None)
     prune = getattr(store, "prune_run_checkpoints", None)
     if callable(prune):
+        if keep_best:
+            return dict(prune(run_id=run_id, checkpoint_id=checkpoint_id, keep_best=True))
         return dict(prune(run_id=run_id, checkpoint_id=checkpoint_id))
+    if keep_best:
+        raise RuntimeError("latest-and-best retention requires a checkpoint bucket")
 
     # Compatibility path for existing Git-backed checkpoint users. Modal uses a
     # Storage Bucket under ADR 0047, so this destructive history-squash path is

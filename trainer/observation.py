@@ -16,6 +16,7 @@ import torch
 from torch.nn import functional as F
 
 from .identity import canonical_hash
+from .config import MOE_RESUME_EXECUTION_FIELDS
 from .precision import autocast_context
 
 
@@ -115,7 +116,13 @@ class RunObservation:
         }
         identity_path = self.root / "identity.json"
         if identity_path.exists():
-            if json.loads(identity_path.read_text()) != json.loads(json.dumps(identity)):
+            previous_identity = json.loads(identity_path.read_text())
+            current_identity = json.loads(json.dumps(identity))
+            if getattr(model_config, "version", None) == 3:
+                for value in (previous_identity, current_identity):
+                    value["trainer"] = {key: item for key, item in value["trainer"].items()
+                                        if key not in MOE_RESUME_EXECUTION_FIELDS}
+            if previous_identity != current_identity:
                 raise ValueError("experiment directory belongs to a different model, recipe or dataset")
         else:
             write_json(identity_path, identity)

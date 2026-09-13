@@ -93,7 +93,10 @@ def main(argv: list[str] | None = None) -> int:
     # Qualified on RTX 4090 (2026-09-12): BF16, microbatch 16 keeps 2x headroom for capacity spikes.
     parser.add_argument("--precision", choices=("fp16", "bf16", "fp32"), default="bf16")
     parser.add_argument("--microbatch-size", type=int, default=16)
-    parser.add_argument("--resume")
+    parser.add_argument("--resume", default="latest", help="Use 'new' only for the first launch.")
+    parser.add_argument("--checkpoint-bucket", default="auto")
+    parser.add_argument("--wandb-entity", default="")
+    parser.add_argument("--wandb-project", default="Small-LLM")
     parser.add_argument("--sequences-per-block", type=int)
     parser.add_argument("--checkpoint-every-steps", type=int, default=1000)
     parser.add_argument("--keep-last-checkpoints", type=int, default=3)
@@ -126,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         allow_partial_corpus=args.allow_partial_corpus,
         dataset_shard_bucket=args.dataset_shard_bucket,
         dataset_shard_run_id=args.dataset_shard_run_id,
+        checkpoint_bucket=args.checkpoint_bucket,
+        wandb_entity=args.wandb_entity,
+        wandb_project=args.wandb_project,
     )
     payload = _production.request_payload(request)
     display = {
@@ -145,8 +151,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if prepared.get("identity") != _production.accepted_identity():
         raise RuntimeError("CPU production preparation returned a different model identity")
+    if prepared.get("training_complete"):
+        print(json.dumps(prepared, sort_keys=True), flush=True)
+        return 0
     result = train_production_rtx4090.remote(payload)
     print(json.dumps(result, indent=2, sort_keys=True), flush=True)
+    if not isinstance(result, dict):
+        raise RuntimeError("Beam returned no training result; recover with --resume latest")
     if result.get("status") == "incomplete":
         raise SystemExit(f"segment ended at step {result.get('steps_reached')} before the target: corpus exhausted")
     return 0

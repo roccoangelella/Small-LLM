@@ -23,7 +23,7 @@ from .best_model import (
     publish_dedicated_best_model,
 )
 from .cli_setup import setup, validation_reader
-from .remote_publication import cleanup_remote_publication, configure_remote_publication
+from .remote_publication import cleanup_remote_publication, configure_remote_publication, promote_best_pointer
 from .wandb_logging import configure_wandb
 
 
@@ -323,14 +323,15 @@ def main(
             best_local_checkpoint_id = checkpoint_id
         best_model_metric = metric
 
-    def publish_remote_checkpoint(checkpoint_id: str, *, final: bool) -> None:
+    def publish_remote_checkpoint(checkpoint_id: str, *, final: bool,
+                                  verified_latest: Mapping[str, object] | None = None) -> None:
         nonlocal best_remote_metric
         if remote is None or checkpoint_id in remotely_published:
             return
         ensure_local_checkpoint(checkpoint_id)
         metric = _validation_metric(validation)
         started = time.perf_counter()
-        result = coordinator.publish(
+        result = {"latest": verified_latest} if verified_latest is not None else coordinator.publish(
             remote.publisher,
             checkpoint_id=checkpoint_id,
             drive_manifest=remote.drive_manifest,
@@ -351,20 +352,8 @@ def main(
             write_json = getattr(store, "write_json", None)
             if not isinstance(run_id, str) or not run_id or not callable(write_json):
                 raise RuntimeError("remote publication cannot write the best pointer")
-            checkpoint_manifest = latest.get("checkpoint_manifest")
-            last_prefix = latest.get("last_prefix")
-            if not isinstance(checkpoint_manifest, Mapping) or not isinstance(last_prefix, str):
-                raise RuntimeError("verified latest pointer is missing its manifest or prefix")
-            write_json(
-                f"run/{run_id}/best.json",
-                {
-                    "checkpoint_id": checkpoint_id,
-                    "best_prefix": last_prefix,
-                    "checkpoint_manifest": dict(checkpoint_manifest),
-                    "metric": metric,
-                    "source_checkpoint_id": checkpoint_id,
-                },
-            )
+            promote_best_pointer(store, run_id=run_id, latest=latest,
+                                 metric=metric, best_metric=best_remote_metric)
             best_remote_metric = metric
             best_updated = True
         cleanup = cleanup_remote_publication(remote, checkpoint_id=checkpoint_id)
@@ -388,6 +377,13 @@ def main(
         remotely_published.add(checkpoint_id)
 
     try:
+        # A provider can die after a local save but before its remote upload.
+        # Repair that boundary before computing more updates on this provider.
+        if remote is not None and getattr(remote, "keep_latest_and_best", False) and args.resume:
+            validation = read_json(Path(args.checkpoint_dir) / args.resume / "checkpoint.json").get("validation_metrics") or None
+            latest = remote.publisher.store.read_json(f"run/{remote.drive_manifest['run_id']}/latest.json")
+            publish_remote_checkpoint(args.resume, final=False,
+                verified_latest=latest if latest is not None and latest.get("checkpoint_id") == args.resume else None)
         checkpoint_steps = set(getattr(args, "checkpoint_at_steps", ()))
         if engine.global_step in checkpoint_steps:
             if args.validation_blocks:
