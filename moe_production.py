@@ -468,6 +468,7 @@ def run_provider_payload(
     repo_root: Path,
     volume_commit: Callable[[], object] | None = None,
     popen_factory: Callable[..., subprocess.Popen] = subprocess.Popen,
+    event_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     """Run one segment, committing the run volume behind every local checkpoint."""
 
@@ -502,6 +503,8 @@ def run_provider_payload(
             raise RuntimeError("accepted MoE trainer did not expose a stdout stream")
         for line in process.stdout:
             print(line, end="", flush=True)
+            if event_callback is not None:
+                event_callback(line)
             checkpoint = _child_event(line, "local_checkpoint")
             if checkpoint is not None:
                 checkpoint_id = checkpoint.get("checkpoint_id")

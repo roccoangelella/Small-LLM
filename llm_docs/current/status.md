@@ -188,3 +188,8 @@ than the training lock. Evaluation tooling must not perturb the training
 environment.
 
 Cache integration (2026-09-08): ADR0169 now wires reviewed Triton seed restore/harvest into both pilot wrappers. Local lifecycle tests cover failure and publication paths; GPU cache-hit/durability/savings checks are pending the next authorized useful run. No dedicated cache build or new GPU run was launched.
+
+
+## Durable Modal continuation candidate — 14 September2026
+
+Remote spawn and atomic run/attempt claims plus remote HF corpus hold implemented; numerical trainer unchanged from runtime candidate9e31d88. Not yet adopted at this documentation snapshot. See [runbook](../runbooks/modal-durable-continuation.md). Live source/checkpoint/app and adoption evidence are tracked in the Small-LM project hub run lane.
