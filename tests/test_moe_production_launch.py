@@ -174,9 +174,12 @@ def _provider_launcher(provider, tmp_path):
         LEGACY_SERVERLESS_IMAGE=object(), RUNTIME_ENV={}, _GPU_FUNCTION_KWARGS={},
         NOOP_VOLUME=Mock(), function=decorator, _repo_root=lambda: ROOT,
         _local_source_commit=lambda: "a" * 40,
-        modal=SimpleNamespace(App=lambda *a, **kw: SimpleNamespace(
-            function=decorator, local_entrypoint=decorator,
-        )),
+        modal=SimpleNamespace(
+            App=lambda *a, **kw: SimpleNamespace(
+                function=decorator, local_entrypoint=decorator,
+            ),
+            Dict=SimpleNamespace(from_name=lambda *a, **kw: Mock(name="production-control")),
+        ),
     )
 
     class Loader(importlib.abc.Loader):

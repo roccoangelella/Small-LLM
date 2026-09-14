@@ -1,12 +1,12 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-14
 
 Verification: [CPU provider continuation](../evidence/moe_provider_continuation_cpu_2026-09-13.md).
 
 Runtime-efficiency candidate: explicit source-origin/executor separation preserves
 v1 receipt rollback; validation batching and single-worker asynchronous upload are
-opt-in. Active production checkout remains independently pinned at556f4f7.
+opt-in. Active Modal H100 executor is97af6ea (edo/modal-durable), scientific origin556f4f7. Same run resumed HF50000 through durable spawn; launcher exited while GPU advanced beyond51100. Remote ownership/data guards are active; local observer is optional. First subsequent remote checkpoint verification is recorded in the hub adoption lane. Async upload remains OFF, validation microbatch1.
 [Controls, tests and adoption limits](../runbooks/runtime-efficiency.md).
 
 ## Current accepted MoE work
