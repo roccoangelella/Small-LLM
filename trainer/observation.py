@@ -122,6 +122,15 @@ class RunObservation:
                 for value in (previous_identity, current_identity):
                     value["trainer"] = {key: item for key, item in value["trainer"].items()
                                         if key not in MOE_RESUME_EXECUTION_FIELDS}
+            run_source = getattr(args, "run_source_commit", None)
+            if (getattr(model_config, "version", None) == 3
+                    and getattr(args, "resume", None) and run_source):
+                if previous_identity["source_commit"] != run_source:
+                    raise ValueError("observation origin differs from declared run source")
+                # Root identity remains immutable; each segment records its executor.
+                for value in (previous_identity, current_identity):
+                    for key in ("source_commit", "source_tree_sha256", "source_tree_dirty"):
+                        value.pop(key, None)
             if previous_identity != current_identity:
                 raise ValueError("experiment directory belongs to a different model, recipe or dataset")
         else:
@@ -163,6 +172,7 @@ class RunObservation:
 
         manifest_payload = {
             **identity,
+            "run_source_commit": getattr(args, "run_source_commit", None) or identity["source_commit"],
             "model_class": f"{type(engine.model).__module__}.{type(engine.model).__name__}",
             "model_state_sha256": _model_hash(engine.model),
             "parameters": sum(p.numel() for p in engine.model.parameters()),
