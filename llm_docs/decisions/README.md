@@ -64,6 +64,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md`](0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md)
 - [`0182-stream-the-moe-corpus-while-it-is-produced.md`](0182-stream-the-moe-corpus-while-it-is-produced.md)
+- [`0184-select-the-corpus-tokenizer-by-contract-id.md`](0184-select-the-corpus-tokenizer-by-contract-id.md) — status: proposed, pending owner acceptance
 
 ### 4. Post-Training & R-SFT Reasoning
 - [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)
