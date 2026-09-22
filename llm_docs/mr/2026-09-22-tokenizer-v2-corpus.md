@@ -144,3 +144,26 @@ consumer behaviour mid-run and deserves its own decision. Flagged in ADR 0184.
       existing category.
 - [ ] Decide whether ADR 0183 should get the YAML frontmatter its own repo test
       requires (out of scope here).
+
+---
+
+## Second commit: `tools/pack_regions_to_shards/`
+
+The converter that turns the 100B v2 region corpus into the schema-v2 shards this trainer consumes
+(`run/moe-100b-superbpe-b64-dataset-002/...` in bucket `roccoangelella/small-llm-corpus-100b-v2-dataset`).
+It drives this repository's own producer classes and `verify()`; nothing about the format is
+reimplemented. Evidence recorded in the project hub investigation of 2026-09-22:
+
+- shards byte-identical between the reference `SequencePacker` path (`--packer slow`) and the
+  vectorised `FastBlockPacker` (`--packer fast`), on real regions;
+- `verify(full_scan=True)` passes; max token id 7992; separators counted;
+- crash after a checkpoint + resume reproduces the uninterrupted output byte for byte;
+- contract/frontier/manifest read back with `incremental_frontier.read_run_contract/read_frontier`.
+
+`config.EOD_TOKEN_ID` is forced to 7992 at import — the producer classes insert it and the module
+default is GPT-2's 50256, outside the 8000-entry vocabulary. The default `--tokenizer` is
+`tokenizer/superbpe_8000_v2.json` (first commit), i.e. the artifact the regions were built with.
+
+Run from the repo root; `SMALL_LLM_BUILDER_ROOT` points at the corpus builder checkout (its
+`merge_workers.load_workers` reads the worker receipts). This copy is the versioned twin of the
+script currently producing the 002 dataset from the builder directory.
