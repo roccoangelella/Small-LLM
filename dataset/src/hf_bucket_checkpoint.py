@@ -200,22 +200,34 @@ class HuggingFaceBucketCheckpointStore:
             downloads.append((item, target))
         self._download_files(downloads)
 
-    def prune_run_checkpoints(self, *, run_id: str, checkpoint_id: str) -> dict[str, object]:
+    def prune_run_checkpoints(self, *, run_id: str, checkpoint_id: str,
+                              keep_best: bool = False) -> dict[str, object]:
         """Delete superseded checkpoint objects after latest.json points at current."""
 
         run_id = safe_path_component(run_id, label="run_id")
         checkpoint_id = safe_path_component(checkpoint_id, label="checkpoint_id")
         root = f"run/{run_id}/checkpoints/"
         current = f"{root}{checkpoint_id}/"
+        pointer = self.read_json(f"run/{run_id}/latest.json")
+        if not isinstance(pointer, Mapping) or pointer.get("checkpoint_id") != checkpoint_id:
+            raise RuntimeError("latest checkpoint pointer changed before bucket cleanup")
+        protected = [current]
+        if keep_best:
+            best = self.read_json(f"run/{run_id}/best.json")
+            if best is not None:
+                best_id = safe_path_component(best.get("checkpoint_id"), label="best checkpoint_id")
+                if best.get("best_prefix") not in {f"{root}{best_id}/last", f"{root}{best_id}/best"}:
+                    raise RuntimeError("best checkpoint pointer has an invalid prefix")
+                protected.append(f"{root}{best_id}/")
         files = self._list_files(prefix=root)
         delete = sorted(
             str(getattr(item, "path"))
             for item in files
             if str(getattr(item, "path")).startswith(root)
-            and not str(getattr(item, "path")).startswith(current)
+            and not any(str(getattr(item, "path")).startswith(prefix) for prefix in protected)
         )
         best_path = f"run/{run_id}/best.json"
-        if any(getattr(item, "path", None) == best_path for item in self._list_files(prefix=best_path)):
+        if not keep_best and any(getattr(item, "path", None) == best_path for item in self._list_files(prefix=best_path)):
             delete.append(best_path)
         if delete:
             self._require_method("batch_bucket_files")(

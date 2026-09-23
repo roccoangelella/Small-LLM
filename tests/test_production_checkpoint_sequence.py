@@ -455,6 +455,26 @@ class _Process:
 
 
 class VolumeCommitPerCheckpointTests(unittest.TestCase):
+    def test_remote_hold_callback_kills_child_and_preserves_exception(self) -> None:
+        from unittest.mock import Mock
+        from moe_remote_control import CorpusHold
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ensure_contract(root)
+            request = production.ProductionRequest(
+                run_id="moe-prod-001", dataset_dir=str(root / "dataset"), total_steps=5000,
+                precision="fp16", microbatch_size=8, source_commit="a" * 40,
+            )
+            child = Mock()
+            child.stdout = io.StringIO('{"remote_publication": {"checkpoint_id": "step-00002500"}}\n')
+            callback = Mock(side_effect=CorpusHold('checkpoint and hold verified'))
+            with self.assertRaisesRegex(CorpusHold, 'checkpoint and hold verified'):
+                production.run_provider_payload(production.request_payload(request),
+                    run_root=root / 'runs', repo_root=ROOT,
+                    popen_factory=lambda *args, **kwargs: child, event_callback=callback)
+            child.kill.assert_called_once_with()
+            child.wait.assert_called_once_with()
+
     def test_every_checkpoint_event_commits_the_run_volume(self) -> None:
         lines = [
             json.dumps({"step": 1, "loss": 2.0}),

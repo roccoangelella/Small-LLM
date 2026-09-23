@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -19,11 +20,17 @@ from dataset.src.streaming import SequencePacker, SourceDocument, StreamCacheCon
 from dataset.src.verify import _scan_uint16_ranges
 from dataset.src.workplan import WorkPlan
 from dataset.superbpe_retokenization import (
+    DEFAULT_TOKENIZER_CONTRACT_ID,
+    EXPECTED_SPECIAL_TOKENS,
     SOURCE_EOD_TOKEN_ID,
+    SUPERBPE_8000,
+    SUPERBPE_8000_V2,
     TARGET_EOD_TOKEN_ID,
     TARGET_SEMANTIC_VOCAB_SIZE,
     TARGET_SOURCE_VOCAB_SIZE,
+    TOKENIZER_IDENTITIES,
     install_superbpe_retokenization,
+    resolve_tokenizer_identity,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -192,6 +199,168 @@ class MoE100BProfileTests(unittest.TestCase):
         self.assertIn('"--hf-bucket-id", bucket_id', source)
         self.assertIn("private=False", source)
         self.assertIn("store.verify_bucket_visibility()", source)
+
+
+def _git_blob_sha1(path: Path) -> str:
+    digest = hashlib.sha1()  # noqa: S324 - Git object identity, not security
+    digest.update(f"blob {path.stat().st_size}\0".encode("ascii"))
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def _source_text_tokenizer(path: Path):
+    """Load an 8k artifact the way the producer does: specials unreachable from text."""
+    from tokenizers import Tokenizer
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["added_tokens"] = []
+    payload["model"]["vocab"] = {
+        token: token_id
+        for token, token_id in payload["model"]["vocab"].items()
+        if token_id < TARGET_SOURCE_VOCAB_SIZE
+    }
+    return Tokenizer.from_str(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+class TokenizerContractSelectionTests(unittest.TestCase):
+    """Two frozen 8k artifacts share geometry but not vocabulary (ADR 0184)."""
+
+    def test_default_contract_is_still_run_001_artifact(self) -> None:
+        self.assertEqual(DEFAULT_TOKENIZER_CONTRACT_ID, "superbpe_8000")
+        self.assertIs(resolve_tokenizer_identity(), SUPERBPE_8000)
+        self.assertEqual(SUPERBPE_8000.relative_path, "tokenizer/superbpe_8000.json")
+        self.assertEqual(
+            SUPERBPE_8000.expected_git_blob_sha1,
+            "a4daaa638a4d9db10270a65e8a6b55a9b94a9fd4",
+        )
+
+    def test_every_registered_artifact_matches_its_pin_on_disk(self) -> None:
+        for contract_id, identity in sorted(TOKENIZER_IDENTITIES.items()):
+            with self.subTest(contract=contract_id):
+                path = ROOT / identity.relative_path
+                self.assertTrue(path.is_file(), f"missing tokenizer artifact {path}")
+                self.assertEqual(_git_blob_sha1(path), identity.expected_git_blob_sha1)
+
+    def test_v2_artifact_is_the_corpus_v2_file(self) -> None:
+        path = ROOT / SUPERBPE_8000_V2.relative_path
+        self.assertEqual(
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            "068e20ef8a16b1bff2a2a1d161e5a6f1cfd0935befa7c0ae734c9ec376d373bb",
+        )
+        self.assertEqual(
+            SUPERBPE_8000_V2.expected_git_blob_sha1,
+            "961597b0a1196a5dbfe1c0a18f2659f908b425ae",
+        )
+
+    def test_both_artifacts_share_geometry_but_not_vocabulary(self) -> None:
+        payloads = {
+            contract_id: json.loads(
+                (ROOT / identity.relative_path).read_text(encoding="utf-8")
+            )
+            for contract_id, identity in TOKENIZER_IDENTITIES.items()
+        }
+        for contract_id, payload in payloads.items():
+            with self.subTest(contract=contract_id):
+                vocab = payload["model"]["vocab"]
+                self.assertEqual(
+                    sorted(vocab.values()), list(range(TARGET_SEMANTIC_VOCAB_SIZE))
+                )
+                self.assertEqual(
+                    {i: t for t, i in vocab.items() if i >= TARGET_SOURCE_VOCAB_SIZE},
+                    EXPECTED_SPECIAL_TOKENS,
+                )
+        legacy, v2 = payloads["superbpe_8000"], payloads["superbpe_8000_v2"]
+        self.assertEqual(legacy["pre_tokenizer"], v2["pre_tokenizer"])
+        self.assertEqual(legacy["decoder"], v2["decoder"])
+        self.assertEqual(legacy["added_tokens"], v2["added_tokens"])
+        self.assertNotEqual(legacy["model"]["vocab"], v2["model"]["vocab"])
+        self.assertNotEqual(legacy["model"]["merges"], v2["model"]["merges"])
+
+    def test_the_two_artifacts_encode_ordinary_text_differently(self) -> None:
+        legacy = _source_text_tokenizer(ROOT / SUPERBPE_8000.relative_path)
+        v2 = _source_text_tokenizer(ROOT / SUPERBPE_8000_V2.relative_path)
+        for text in (
+            "The quick brown fox jumps over the lazy dog.",
+            "Mixture-of-experts routing keeps the active parameter count small.",
+            "A corpus must never mix two tokenizers that share a vocabulary size.",
+        ):
+            with self.subTest(text=text):
+                legacy_ids = legacy.encode(text, add_special_tokens=False).ids
+                v2_ids = v2.encode(text, add_special_tokens=False).ids
+                self.assertNotEqual(legacy_ids, v2_ids)
+                self.assertEqual(legacy.decode(legacy_ids, skip_special_tokens=False), text)
+                self.assertEqual(v2.decode(v2_ids, skip_special_tokens=False), text)
+
+    def test_installing_v2_reports_the_v2_artifact_and_restores(self) -> None:
+        from dataset.src import streaming
+
+        original_eod = config.EOD_TOKEN_ID
+        original_validator = streaming.validate_record
+        installed = install_superbpe_retokenization(
+            ROOT, tokenizer_contract="superbpe_8000_v2"
+        )
+        try:
+            contract = installed.contract
+            self.assertEqual(contract["output_tokenizer_id"], "superbpe_8000_v2")
+            self.assertEqual(contract["tokenizer_artifact"], "tokenizer/superbpe_8000_v2.json")
+            self.assertEqual(
+                contract["tokenizer_git_blob_sha1"], SUPERBPE_8000_V2.expected_git_blob_sha1
+            )
+            self.assertEqual(
+                contract["tokenizer_sha256"],
+                "068e20ef8a16b1bff2a2a1d161e5a6f1cfd0935befa7c0ae734c9ec376d373bb",
+            )
+            self.assertEqual(contract["semantic_vocab_size"], TARGET_SEMANTIC_VOCAB_SIZE)
+            self.assertEqual(contract["eod_token_id"], TARGET_EOD_TOKEN_ID)
+            self.assertEqual(config.CORPUS_OUTPUT_TOKENIZER_ID, "superbpe_8000_v2")
+        finally:
+            installed.restore()
+        self.assertEqual(config.EOD_TOKEN_ID, original_eod)
+        self.assertIs(streaming.validate_record, original_validator)
+        self.assertIsNone(getattr(config, "CORPUS_OUTPUT_TOKENIZER_ID", None))
+
+    def test_default_installation_still_reports_run_001_artifact(self) -> None:
+        installed = install_superbpe_retokenization(ROOT)
+        try:
+            contract = installed.contract
+            self.assertEqual(contract["output_tokenizer_id"], "superbpe_8000")
+            self.assertEqual(contract["tokenizer_artifact"], "tokenizer/superbpe_8000.json")
+            self.assertEqual(
+                contract["tokenizer_git_blob_sha1"], SUPERBPE_8000.expected_git_blob_sha1
+            )
+        finally:
+            installed.restore()
+
+    def test_unknown_contract_id_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_tokenizer_identity("superbpe_8000_v3")
+        with self.assertRaises(ValueError):
+            install_superbpe_retokenization(ROOT, tokenizer_contract="gpt2")
+
+    def test_production_cli_exposes_both_superbpe_contracts(self) -> None:
+        from dataset.production.cli import build_parser
+
+        action = next(
+            item
+            for item in build_parser()._actions
+            if item.dest == "tokenizer_contract"
+        )
+        self.assertEqual(action.default, "gpt2")
+        self.assertEqual(
+            sorted(action.choices), ["gpt2", "superbpe_8000", "superbpe_8000_v2"]
+        )
+
+    def test_training_runtime_does_not_load_a_tokenizer_artifact(self) -> None:
+        """The trainer reads token IDs, not a tokenizer JSON; chat and packer do load one."""
+        offenders = []
+        for path in sorted(ROOT.rglob("*.py")):
+            relative = path.relative_to(ROOT)
+            head = relative.parts[0]
+            if head in {"dataset", "tests", "tools", ".venv", "build", "__pycache__"} or relative == Path("chat.py"):
+                continue
+            if "superbpe_8000" in path.read_text(encoding="utf-8", errors="ignore"):
+                offenders.append(str(relative))
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":

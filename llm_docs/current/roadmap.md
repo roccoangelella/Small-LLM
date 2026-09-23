@@ -1,9 +1,29 @@
 ---
 status: current
-last_reviewed: 2026-09-10
+last_reviewed: 2026-09-13
 ---
 
 # Current roadmap
+
+## Current MoE next step (2026-09-13)
+
+Implementing HF latest/best checkpoints, account/GPU continuation and stable W&B
+identity is authorized by Edo and covered by ADR 0183. Local verification covers
+actual tiny-MoE CLI continuation on CPU with remote SDK fakes; a live cross-GPU
+handoff remains to be exercised in an authorized segment. No new paid run is
+authorized here, and no credit monitor or new architecture/optimizer sweep is needed.
+
+Next discuss the source corpus with Edo/Rocco: the present ClimbMix filter excludes
+programming cluster 11 but includes mathematics. The tokenizer's separate build
+corpus and its 10 GB / 2 GB stages are recorded in ADR 0175. Do not silently change
+the corpus, tokenizer or training recipe while completing provider continuity.
+
+## Historical roadmap through 2026-09-10
+
+The remaining entries preserve earlier dense/pilot context; they are not the active
+MoE execution queue. In particular, E64 GEMM batching, Quantile Balancing, compile,
+production checkpoint lifecycle and corpus streaming have already been implemented
+and qualified within the limits of their evidence records.
 
 MoE branch: qualify and run the paired M0/M1 pilot per [ADR 0168](../decisions/0168-moe-paired-pilot-controller-and-observation.md) and the [pilot runbook](../runbooks/moe-paired-pilot.md), after explicit launch authorization. This is the MoE branch priority; the dense/SFT lifecycle below retains its earlier scope.
 

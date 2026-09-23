@@ -209,12 +209,19 @@ def configure_wandb(
         init_kwargs["id"] = str(args.wandb_run_id)
     if args.wandb_resume != "never":
         init_kwargs["resume"] = str(args.wandb_resume)
+    if getattr(args, "remote_keep_latest_and_best", False):
+        init_kwargs["job_type"] = "pretraining"
+        init_kwargs["allow_val_change"] = True
 
     run = wandb.init(**init_kwargs)
     if run is None:
         raise RuntimeError("wandb.init did not return a run")
     run.define_metric("trainer/global_step")
     run.define_metric("*", step_metric="trainer/global_step")
+    if getattr(args, "remote_keep_latest_and_best", False) and getattr(args, "resume", None):
+        run.log({"trainer/global_step": engine.global_step,
+                 "resume/checkpoint_id": args.resume,
+                 "resume/microbatch_size": trainer_config.microbatch_size})
     print(
         f"W&B telemetry enabled: project={args.wandb_project} "
         f"run_id={getattr(run, 'id', 'unknown')} mode={mode}",

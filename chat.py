@@ -20,6 +20,7 @@ SEED = 17
 import argparse
 import codecs
 import gc
+import hashlib
 import importlib.util
 import json
 import math
@@ -45,6 +46,18 @@ _SUPERBPE_SEMANTIC_VOCAB_SIZE = 8_000
 _SUPERBPE_EOS_TOKEN_ID = 7_992
 _DEFAULT_MOE_RUN_ID = "moe-100b-superbpe-003-chat-best-step-00075000"
 _INCOMPLETE_ALLOWED_RUNS = frozenset({_DEFAULT_MOE_RUN_ID, "moe-100b-superbpe-001"})
+# Same 8k geometry and EOS, but different ID-to-text mappings. Do not infer the
+# tokenizer from semantic_vocab_size or silently use v1 for an unknown run.
+_MOE_CHAT_TOKENIZERS = {
+    "moe-100b-superbpe-001": (
+        "superbpe_8000.json",
+        "4220ad83137407434877a128cb7f6b314161e8ed241514bfe9ba15045e899b06",
+    ),
+    _DEFAULT_MOE_RUN_ID: (
+        "superbpe_8000_v2.json",
+        "068e20ef8a16b1bff2a2a1d161e5a6f1cfd0935befa7c0ae734c9ec376d373bb",
+    ),
+}
 _R_SFT_CANONICAL_MARKERS = ("<think>", "</think>", "<answer>")
 _CHAT_MODEL_CACHE_DIR = Path(__file__).resolve().parent / "chat_models"
 _CHAT_MODEL_CACHE_METADATA = "cache.json"
@@ -100,7 +113,9 @@ class _TokenTextStreamer:
 class SuperBPEChatEncoding:
     """Tokenizer adapter for SuperBPE matching the tiktoken/ReasoningGPT2Encoder interface."""
 
-    def __init__(self, tokenizer_path: Path | None = None) -> None:
+    def __init__(
+        self, tokenizer_path: Path | None = None, *, expected_sha256: str | None = None
+    ) -> None:
         try:
             from tokenizers import Tokenizer
         except ImportError as error:
@@ -113,6 +128,13 @@ class SuperBPEChatEncoding:
             )
         if not tokenizer_path.is_file():
             raise RuntimeError(f"SuperBPE tokenizer artifact missing: {tokenizer_path}")
+        if expected_sha256 is not None:
+            actual_sha256 = hashlib.sha256(tokenizer_path.read_bytes()).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError(
+                    f"SuperBPE tokenizer artifact identity mismatch: {tokenizer_path} "
+                    f"(expected {expected_sha256}, got {actual_sha256})"
+                )
         self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
 
         bs = (
@@ -837,20 +859,34 @@ def _resolve_eos_token_id(config: object) -> int:
     return 50_256
 
 
+def _moe_chat_tokenizer(run_id: str | None) -> tuple[str, str]:
+    try:
+        return _MOE_CHAT_TOKENIZERS[run_id]
+    except KeyError:
+        raise RuntimeError(
+            f"no verified SuperBPE tokenizer identity for MoE run {run_id!r}; "
+            "a vocabulary size of 8,000 does not identify the BPE mapping"
+        ) from None
+
+
 def _build_chat_encoding(
     *,
     stage: str,
     reasoning_spec=None,
     base_encoding: object | None = None,
     config: object | None = None,
+    run_id: str | None = None,
 ):
-    """Select SuperBPE, normal GPT-2, or the artifact-defined R-SFT tokenizer."""
+    """Select the pinned MoE tokenizer, GPT-2, or the artifact-defined R-SFT tokenizer."""
 
-    if (
-        base_encoding is None
-        and getattr(config, "semantic_vocab_size", None) == _SUPERBPE_SEMANTIC_VOCAB_SIZE
-    ):
-        return SuperBPEChatEncoding()
+    if getattr(config, "semantic_vocab_size", None) == _SUPERBPE_SEMANTIC_VOCAB_SIZE:
+        if stage != _STAGE_PRETRAINED or reasoning_spec is not None or base_encoding is not None:
+            raise RuntimeError("MoE pretraining chat requires its pinned SuperBPE tokenizer")
+        filename, expected_sha256 = _moe_chat_tokenizer(run_id)
+        return SuperBPEChatEncoding(
+            Path(__file__).resolve().parent / "tokenizer" / filename,
+            expected_sha256=expected_sha256,
+        )
 
     if base_encoding is None:
         try:
@@ -876,8 +912,8 @@ def _build_chat_encoding(
     return base_encoding
 
 
-def _generation_settings(config, *, device) -> dict[str, object]:
-    return {
+def _generation_settings(config, *, device, run_id: str | None = None) -> dict[str, object]:
+    settings = {
         "temperature": TEMPERATURE,
         "top_p": TOP_P,
         "top_k": TOP_K,
@@ -888,9 +924,14 @@ def _generation_settings(config, *, device) -> dict[str, object]:
         "eos_token_id": _resolve_eos_token_id(config),
         "precision": "fp16" if getattr(device, "type", None) == "cuda" else "fp32",
     }
+    if getattr(config, "semantic_vocab_size", None) == _SUPERBPE_SEMANTIC_VOCAB_SIZE:
+        filename, expected_sha256 = _moe_chat_tokenizer(run_id)
+        settings["tokenizer_artifact"] = f"tokenizer/{filename}"
+        settings["tokenizer_sha256"] = expected_sha256
+    return settings
 
 
-def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
+def _chat(model, config, *, device, stage: str, reasoning_spec=None, run_id: str | None = None) -> None:
     from post_training.sft.schema import ChatMessage
     from post_training.sft.template import GPT2ChatTemplate
 
@@ -899,13 +940,14 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
         stage=stage,
         reasoning_spec=reasoning_spec,
         config=config,
+        run_id=run_id,
     )
     template = GPT2ChatTemplate(
         eos_token_id=eos_token_id,
         maximum_context_tokens=config.max_seq_len,
         maximum_assistant_tokens=min(MAX_NEW_TOKENS, 512),
     )
-    precision = str(_generation_settings(config, device=device)["precision"])
+    precision = str(_generation_settings(config, device=device, run_id=run_id)["precision"])
     max_prompt_tokens = config.max_seq_len - MAX_NEW_TOKENS
     if max_prompt_tokens <= 0:
         raise RuntimeError("MAX_NEW_TOKENS must be smaller than the model context length")
@@ -1002,13 +1044,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"cache_path={cache_root}."
     )
     print("Generation settings:")
-    print(json.dumps(_generation_settings(config, device=device), indent=2, sort_keys=True))
+    print(json.dumps(_generation_settings(config, device=device, run_id=run_id), indent=2, sort_keys=True))
     _chat(
         model,
         config,
         device=device,
         stage=args.stage,
         reasoning_spec=reasoning_spec,
+        run_id=run_id,
     )
     return 0
 

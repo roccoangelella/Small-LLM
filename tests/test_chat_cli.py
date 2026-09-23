@@ -446,7 +446,9 @@ def test_superbpe_eos_token_id_and_generation_settings() -> None:
     assert chat._resolve_eos_token_id(MoEConfig()) == 7_992
     assert chat._resolve_eos_token_id(StandardConfig()) == 50_256
 
-    settings = chat._generation_settings(MoEConfig(), device=Device())
+    settings = chat._generation_settings(
+        MoEConfig(), device=Device(), run_id=chat._DEFAULT_MOE_RUN_ID
+    )
     assert settings["eos_token_id"] == 7_992
     assert settings["precision"] == "fp32"
 
@@ -465,15 +467,50 @@ def test_superbpe_chat_encoding_encode_decode_stream() -> None:
     assert "".join(chunks) == text
 
 
-def test_build_chat_encoding_selects_superbpe_for_8k_vocab() -> None:
+def test_build_chat_encoding_selects_pinned_superbpe_per_run() -> None:
     class MoEConfig:
         semantic_vocab_size = 8_000
+        max_seq_len = 2048
 
-    encoding = chat._build_chat_encoding(
-        stage=chat._STAGE_PRETRAINED,
-        config=MoEConfig(),
+    for run_id, expected_filename in (
+        ("moe-100b-superbpe-001", "superbpe_8000.json"),
+        (chat._DEFAULT_MOE_RUN_ID, "superbpe_8000_v2.json"),
+    ):
+        encoding = chat._build_chat_encoding(
+            stage=chat._STAGE_PRETRAINED,
+            config=MoEConfig(),
+            run_id=run_id,
+        )
+        assert isinstance(encoding, chat.SuperBPEChatEncoding)
+        settings = chat._generation_settings(MoEConfig(), device=type("Device", (), {"type": "cpu"})(), run_id=run_id)
+        assert settings["tokenizer_artifact"] == f"tokenizer/{expected_filename}"
+        assert settings["tokenizer_sha256"] == chat._MOE_CHAT_TOKENIZERS[run_id][1]
+        assert encoding.decode(encoding.encode("The capital of France is Paris.")) == (
+            "The capital of France is Paris."
+        )
+
+    previous = chat._build_chat_encoding(
+        stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id="moe-100b-superbpe-001"
     )
-    assert isinstance(encoding, chat.SuperBPEChatEncoding)
+    latest = chat._build_chat_encoding(
+        stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id=chat._DEFAULT_MOE_RUN_ID
+    )
+    assert previous.encode("The capital of France is Paris.") != latest.encode(
+        "The capital of France is Paris."
+    )
+    with pytest.raises(RuntimeError, match="no verified SuperBPE tokenizer identity"):
+        chat._build_chat_encoding(
+            stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id="moe-unknown"
+        )
+    with pytest.raises(RuntimeError, match="no verified SuperBPE tokenizer identity"):
+        chat._generation_settings(MoEConfig(), device=type("Device", (), {"type": "cpu"})())
+
+
+def test_superbpe_artifact_drift_rejected(tmp_path) -> None:
+    path = tmp_path / "modified.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="artifact identity mismatch"):
+        chat.SuperBPEChatEncoding(path, expected_sha256=chat._MOE_CHAT_TOKENIZERS[chat._DEFAULT_MOE_RUN_ID][1])
 
 
 def test_load_completed_checkpoint_handles_moe_and_superbpe(tmp_path) -> None:

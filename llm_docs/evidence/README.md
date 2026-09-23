@@ -16,6 +16,9 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Execution profiles
 
+- [`moe_chat_tokenizer_mismatch_2026-09-23.md`](moe_chat_tokenizer_mismatch_2026-09-23.md) — paired v1/v2 tokenizer cross-entropy on two MoE checkpoints identifies the step-75k chat gibberish as an inference tokenizer mismatch; pretrained chat repetition remains.
+- [`moe_provider_continuation_cpu_2026-09-13.md`](moe_provider_continuation_cpu_2026-09-13.md) — actual tiny-MoE CLI continuation through fake remote SDKs, interruption recovery, latest/best retention, and live verification limits.
+
 - [`production_review_fixes_2026-09-12.md`](production_review_fixes_2026-09-12.md) — six verified production review fixes, per-fix CPU test results, and pending commits blocked by worktree metadata permissions.
 
 - [`moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md`](moe_accepted_geometry_dispatch_modal_a10_2026-09-10.md) — first measurement of the accepted 64-expert Top-2 geometry: batched expert GEMM against the per-expert loop over identical weights, 60,657 versus 7,240 warm targets/s, launches down 82 %, and the run-cost projections that follow.

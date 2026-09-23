@@ -1,6 +1,56 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-11
+Last reviewed: 2026-09-23
+
+Verification: [CPU provider continuation](../evidence/moe_provider_continuation_cpu_2026-09-13.md).
+
+Runtime-efficiency candidate: explicit source-origin/executor separation preserves
+v1 receipt rollback; validation batching and single-worker asynchronous upload are
+opt-in. Active Modal H100 executor is97af6ea (edo/modal-durable), scientific origin556f4f7. Same run resumed HF50000 through durable spawn; launcher exited while GPU advanced beyond51100. Remote ownership/data guards are active; local observer is optional. First subsequent remote checkpoint verification is recorded in the hub adoption lane. Async upload remains OFF, validation microbatch1.
+[Controls, tests and adoption limits](../runbooks/runtime-efficiency.md).
+
+## Current accepted MoE work
+
+The production path is the accepted E64/Top-2, L8/d256/h352 GDN-2 hybrid with
+SuperBPE 8,000 IDs (8,192 physical rows), BF16 and compiled blocks. The 2026-09-12
+qualification includes the real production CLI, checkpoint/resume, Modal container
+replacement, Beam streaming and 500 compiled H100 updates; see the final addenda in
+[the qualification evidence](../evidence/moe_production_qualification_modal_2026-09-12.md).
+Those are short qualifications, not a completed 100B trajectory.
+
+ADR 0183 now wires the MoE launchers to HF latest/best checkpoint durability and
+one stable W&B identity across accounts. The accepted loader allows microbatch and
+observation cadence changes while preserving the scientific recipe and data cursor.
+`--resume latest` fails if neither local nor remote progress exists; `--resume new`
+is required for first launch. Offline tests cover real tiny-MoE continuation through
+the actual CLI and byte-accurate bucket/W&B fakes. Live cross-GPU migration with this
+integration has not been run. [Procedure](../runbooks/moe-provider-continuation.md).
+
+The authorized 100B run is active on Modal after an OOM recovery at microbatch32;
+remote checkpoints through32500 were observed by the local supervisor on September13.
+The runtime-efficiency candidate has not been deployed. Current account, checkpoint,
+corpus hold and billing observations live in the Small-LM project hub monitoring lane.
+No additional GPU experiment was launched for these runtime changes.
+
+Corpus discussion is next: the current producer excludes programming cluster 11
+but retains mathematics clusters. It does not guarantee conversational-only or
+code-free text. Tokenizer provenance is ADR 0175: 10 GB decoded from the existing
+10B-token qualification corpus, with stage 2 on a 2 GB prefix. No tokenizer or
+dataset recipe is changed by the continuation work.
+
+MoE local chat: the pinned step-75,000 `moe-100b-superbpe-003` snapshot needs
+`tokenizer/superbpe_8000_v2.json`, not run 001's `superbpe_8000.json`.
+A same-checkpoint, same-text test scores 3.074 CE with v2 versus 10.569 with v1;
+run 001 reverses that relationship. Chat now pins and hashes the tokenizer per
+known run and rejects unknown 8k identities. This fixes the gibberish, **not**
+pretrained-model instruction following: greedy `hello` under the SFT-style chat
+template still loops on `Assistant:`. Dataset manifest tokenizer identity is not
+yet checked by the trainer. [Measured evidence](../evidence/moe_chat_tokenizer_mismatch_2026-09-23.md).
+
+## Historical detail through 2026-09-11
+
+The dated material below records earlier stages; its old MoE blockers/priorities
+are superseded by the current section above and ADRs 0173–0183.
 
 MoE branch execution efficiency (2026-09-10, local commits `b5e3ffb`, `8f195ee`, `fbe4ef2`, not pushed): ADR 0170 batches Muon Newton–Schulz by matrix shape, ADR 0171 fuses attention (SDPA) and scores the output loss in 4,096-token chunks with recompute, ADR 0172 sorts MoE dispatch with one host sync per layer. Equivalence to the previous implementations is proven on CPU (bit-identical for Muon and dispatch; FP32-rounding tolerance for attention and loss) by 18 new tests; the full suite (623 tests) shows no failing test id that was not already failing in the 2026-09-08 baseline log. Measured baseline motivating the work: [RTX 4090 profile](../evidence/moe_execution_profile_rtx4090_2026-09-08.md) — 11,073 targets/s, MFU ≈ 4 %, 521,704 launches and 5,120 `nonzero` syncs per update. **Measured on GPU the same day** by a paired A/B on one Modal A10 (same container, same data, same seed, code tree the only variable): **+19.6 % warm throughput** (8,990.7 → 10,750.0 targets/s), **−1.89 GiB peak** (14.31 → 12.43 GiB), **−21 % kernel launches**, **−66 % host synchronizations**, `nonzero` eliminated. The freed memory admits microbatch 4 for a further +13.2 % (**+35.3 % total**), which the old code cannot run: it dies on the 1.54 GiB FP32 logits tensor the chunked loss removes. The old arm reproduces the 2026-09-08 A10 figure to 0.5 %, validating the measurement chain. [Evidence](../evidence/moe_execution_ab_modal_a10_2026-09-10.md); contracts and remaining priorities in [`training_execution_efficiency.md`](../reference/training_execution_efficiency.md). Vast was unusable for this (no ssh from the team account).
 
@@ -22,7 +72,7 @@ MoE 100B SuperBPE dataset production is active on `moe-8e-top1` via a direct VPS
 - ADR 0149 corrects the Base Prompt v2 construction bug: the active full set now contains 120 unique prompt texts and IDs, with exactly 20 unique objective prompts in each of the five objective families and 20 unique qualitative prompts. Older recycled-template Base Prompt v2 aggregates are historical defective evidence and must not be interpreted as a 100-unique-prompt statistic.
 - ADR 0150 removes local substring/regex scoring from Base Prompt v2. The GPU evaluator now emits raw prompt/reference/continuation evidence with pending judge status; `trainer.base_prompt_judge` scores the 100 objective cases afterward through the same GemRouter endpoint used by R-SFT. Greedy and sampled views are judged semantically; the 20 qualitative cases remain unscored.
 - ADR 0151 makes `chat.py` persist downloaded local-chat artifacts under root-level `chat_models/<stage>/<run_id>/`, re-verify cached checkpoints before reuse, ignore that runtime cache in Git, and print the effective generation configuration at startup without changing the current sampling values.
-- MoE pretrained chat profile: `python chat.py --moe` loads a pinned, verified copy of the `moe-100b-superbpe-003` best checkpoint at step 75,000 (validation loss 2.725040; 9,830,400,000 consumed targets), stored as `run/moe-100b-superbpe-003-chat-best-step-00075000/latest.json` in `roccoangelella/small-llm-100m-qualification-checkpoints`. This separate run preserves the selected bytes if rolling training retention prunes the original best pointer. It dynamically resolves `MoESmallLLM`, uses the 8,000-token SuperBPE tokenizer (`tokenizer/superbpe_8000.json`, EOS 7,992), and accepts this intermediate checkpoint without `--allow-incomplete`; explicit `--run-id moe-100b-superbpe-001 --pre-trained` remains available. The pin is a snapshot, not a promise to track future best checkpoints. Synthetic param/token pairs like `(100M, 100B)` are not registered.
+- MoE pretrained chat profile: `python chat.py --moe` loads a pinned, verified copy of the `moe-100b-superbpe-003` best checkpoint at step 75,000 (validation loss 2.725040; 9,830,400,000 consumed targets), stored as `run/moe-100b-superbpe-003-chat-best-step-00075000/latest.json` in `roccoangelella/small-llm-100m-qualification-checkpoints`. This separate run preserves the selected bytes if rolling training retention prunes the original best pointer. It dynamically resolves `MoESmallLLM`, uses the pinned 8,000-token v2 SuperBPE tokenizer (`tokenizer/superbpe_8000_v2.json`, EOS 7,992), and accepts this intermediate checkpoint without `--allow-incomplete`; explicit `--run-id moe-100b-superbpe-001 --pre-trained` remains available and uses the v1 tokenizer. The pin is a snapshot, not a promise to track future best checkpoints. Synthetic param/token pairs like `(100M, 100B)` are not registered.
 - `small-llm-eval` / `trainer.eval_entrypoint` route pretrained checkpoint evaluation through `trainer.eval_suite_v2`.
 - `post_training.sft.eval_suite` is now the v2 SFT qualification entrypoint, so existing SFT launchers keep their module path while emitting v2 JSON.
 - SFT Behavior v2 is the primary instruction-following suite; the legacy 30-case behavior suite remains in the JSON only as `instruction_behavior_v1_legacy`.
@@ -148,3 +198,8 @@ than the training lock. Evaluation tooling must not perturb the training
 environment.
 
 Cache integration (2026-09-08): ADR0169 now wires reviewed Triton seed restore/harvest into both pilot wrappers. Local lifecycle tests cover failure and publication paths; GPU cache-hit/durability/savings checks are pending the next authorized useful run. No dedicated cache build or new GPU run was launched.
+
+
+## Durable Modal continuation candidate — 14 September2026
+
+Remote spawn and atomic run/attempt claims plus remote HF corpus hold implemented; numerical trainer unchanged from runtime candidate9e31d88. Not yet adopted at this documentation snapshot. See [runbook](../runbooks/modal-durable-continuation.md). Live source/checkpoint/app and adoption evidence are tracked in the Small-LM project hub run lane.

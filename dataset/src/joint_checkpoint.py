@@ -395,6 +395,8 @@ class CheckpointCoordinator:
                 "schema_hash": self.schema_hash, "optimizer_step_complete": True,
                 "pipeline_state": dict(pipeline_state), "validation_metrics": dict(validation_metrics or {}),
             }
+            if getattr(self, "executor_metadata", None) is not None:
+                payload["executor"] = dict(self.executor_metadata)
             write_json_atomic(staging / "checkpoint.json", payload, fsync=checkpoint_fsync)
             manifest = {"files": [{"name": "trainer_state.pkl", "sha256": sha256_path(trainer_state_path)},
                                   {"name": "checkpoint.json", "sha256": sha256_path(staging / "checkpoint.json")}]} 
@@ -496,11 +498,12 @@ def restore_on_empty_vps(*, publisher: TwoPhaseCheckpointPublisher, store: Any, 
             raise FileExistsError(f"checkpoint destination already exists: {checkpoint_root}")
         os.replace(staging, checkpoint_root)
         installed = True
-        parent_fd = os.open(checkpoints_root, os.O_RDONLY)
-        try:
-            os.fsync(parent_fd)
-        finally:
-            os.close(parent_fd)
+        if _checkpoint_fsync_enabled():
+            parent_fd = os.open(checkpoints_root, os.O_RDONLY)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
         return checkpoint_root
     finally:
         if not installed:

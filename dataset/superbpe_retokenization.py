@@ -11,6 +11,14 @@ Installation is intentionally process-local and reversible.  It patches the
 single validation hook imported by ``dataset.src.streaming`` and the EOD value
 read by its existing packer; the rest of the production/sharding/HF durability
 pipeline remains unchanged.
+
+Two frozen 8k artifacts exist and are selected by contract id (see ADR 0184):
+``superbpe_8000`` (the default, used by run
+``moe-100b-superbpe-b64-dataset-001``) and ``superbpe_8000_v2`` (the artifact the
+100B v2 corpus workers tokenized with).  They share geometry but not vocabulary,
+so a corpus must never mix them.  This module only concerns the *producer*: the
+trainer never loads either file, it reads ``semantic_vocab_size`` from
+``MOE_model.config`` and validates shard token ranges against it.
 """
 
 from __future__ import annotations
@@ -26,11 +34,43 @@ from dataset.src import records, streaming
 
 SOURCE_TOKENIZER_ID = "gpt2"
 SOURCE_EOD_TOKEN_ID = 50_256
-TARGET_TOKENIZER_ID = "superbpe_8000"
-TARGET_TOKENIZER_RELATIVE_PATH = "tokenizer/superbpe_8000.json"
-# Git blob identity reported for the frozen tokenizer artifact on moe-8e-top1.
-# This is intentionally independent of the runtime SHA-256 recorded in manifests.
-EXPECTED_TOKENIZER_GIT_BLOB_SHA1 = "a4daaa638a4d9db10270a65e8a6b55a9b94a9fd4"
+
+
+@dataclass(frozen=True)
+class TokenizerIdentity:
+    """One frozen 8k tokenizer artifact, pinned by its Git blob identity."""
+
+    contract_id: str
+    relative_path: str
+    expected_git_blob_sha1: str
+
+
+# The artifact frozen by ADR 0175 and used by run moe-100b-superbpe-b64-dataset-001.
+SUPERBPE_8000 = TokenizerIdentity(
+    contract_id="superbpe_8000",
+    relative_path="tokenizer/superbpe_8000.json",
+    # Git blob identity reported for the frozen tokenizer artifact on moe-8e-top1.
+    # This is intentionally independent of the runtime SHA-256 recorded in manifests.
+    expected_git_blob_sha1="a4daaa638a4d9db10270a65e8a6b55a9b94a9fd4",
+)
+# The artifact the 100B v2 corpus workers actually tokenized with: same geometry
+# (8,000 semantic IDs, EOD 7992, identical specials/pre-tokenizer/decoder) but a
+# different BPE vocabulary and merge table, so the two encode the same text
+# differently.  Kept as a separate file because run 001 pins the blob above.
+SUPERBPE_8000_V2 = TokenizerIdentity(
+    contract_id="superbpe_8000_v2",
+    relative_path="tokenizer/superbpe_8000_v2.json",
+    expected_git_blob_sha1="961597b0a1196a5dbfe1c0a18f2659f908b425ae",
+)
+TOKENIZER_IDENTITIES: dict[str, TokenizerIdentity] = {
+    identity.contract_id: identity for identity in (SUPERBPE_8000, SUPERBPE_8000_V2)
+}
+DEFAULT_TOKENIZER_CONTRACT_ID = SUPERBPE_8000.contract_id
+
+# Backwards-compatible aliases: unqualified names keep meaning run 001's artifact.
+TARGET_TOKENIZER_ID = SUPERBPE_8000.contract_id
+TARGET_TOKENIZER_RELATIVE_PATH = SUPERBPE_8000.relative_path
+EXPECTED_TOKENIZER_GIT_BLOB_SHA1 = SUPERBPE_8000.expected_git_blob_sha1
 TARGET_SEMANTIC_VOCAB_SIZE = 8_000
 TARGET_SOURCE_VOCAB_SIZE = 7_992
 TARGET_EOD_TOKEN_ID = 7_992
@@ -145,19 +185,22 @@ def _load_target_tokenizer(path: Path):
 class SuperBPERetokenizer:
     """Thread-safe immutable document converter used by parallel source readers."""
 
-    def __init__(self, tokenizer_path: Path) -> None:
+    def __init__(
+        self, tokenizer_path: Path, *, identity: TokenizerIdentity = SUPERBPE_8000
+    ) -> None:
         try:
             import tiktoken
         except ImportError as error:  # pragma: no cover - provider packaging guard
             raise RuntimeError(
                 "SuperBPE corpus production requires tiktoken==0.14.0"
             ) from error
+        self.identity = identity
         self.tokenizer_path = tokenizer_path.resolve(strict=True)
         self.tokenizer_git_blob_sha1 = _git_blob_sha1(self.tokenizer_path)
-        if self.tokenizer_git_blob_sha1 != EXPECTED_TOKENIZER_GIT_BLOB_SHA1:
+        if self.tokenizer_git_blob_sha1 != identity.expected_git_blob_sha1:
             raise RuntimeError(
-                "frozen SuperBPE tokenizer artifact changed: expected Git blob "
-                f"{EXPECTED_TOKENIZER_GIT_BLOB_SHA1}, got {self.tokenizer_git_blob_sha1}"
+                f"frozen SuperBPE tokenizer artifact {identity.contract_id} changed: expected "
+                f"Git blob {identity.expected_git_blob_sha1}, got {self.tokenizer_git_blob_sha1}"
             )
         self.tokenizer_sha256 = _sha256(self.tokenizer_path)
         self._gpt2 = tiktoken.get_encoding("gpt2")
@@ -168,8 +211,8 @@ class SuperBPERetokenizer:
         return {
             "source_tokenizer_id": SOURCE_TOKENIZER_ID,
             "source_eod_token_id": SOURCE_EOD_TOKEN_ID,
-            "output_tokenizer_id": TARGET_TOKENIZER_ID,
-            "tokenizer_artifact": TARGET_TOKENIZER_RELATIVE_PATH,
+            "output_tokenizer_id": self.identity.contract_id,
+            "tokenizer_artifact": self.identity.relative_path,
             "tokenizer_git_blob_sha1": self.tokenizer_git_blob_sha1,
             "tokenizer_sha256": self.tokenizer_sha256,
             "semantic_vocab_size": TARGET_SEMANTIC_VOCAB_SIZE,
@@ -244,16 +287,39 @@ class InstalledSuperBPERetokenization:
         self._active = False
 
 
+def resolve_tokenizer_identity(
+    contract: str | TokenizerIdentity = DEFAULT_TOKENIZER_CONTRACT_ID,
+) -> TokenizerIdentity:
+    """Map a contract id onto its pinned tokenizer artifact."""
+
+    if isinstance(contract, TokenizerIdentity):
+        return contract
+    try:
+        return TOKENIZER_IDENTITIES[contract]
+    except KeyError:
+        known = ", ".join(sorted(TOKENIZER_IDENTITIES))
+        raise ValueError(
+            f"unknown SuperBPE tokenizer contract {contract!r}; known contracts: {known}"
+        ) from None
+
+
 def install_superbpe_retokenization(
     repo_root: Path | str,
+    *,
+    tokenizer_contract: str | TokenizerIdentity = DEFAULT_TOKENIZER_CONTRACT_ID,
 ) -> InstalledSuperBPERetokenization:
-    """Install the accepted MoE corpus tokenizer contract for one producer process."""
+    """Install the selected MoE corpus tokenizer contract for one producer process.
+
+    The default stays run 001's frozen artifact, so existing callers keep
+    producing byte-identical shards.
+    """
 
     if getattr(config, "CORPUS_OUTPUT_TOKENIZER_ID", None) is not None:
         raise RuntimeError("a corpus tokenizer contract is already active in this process")
+    identity = resolve_tokenizer_identity(tokenizer_contract)
     root = Path(repo_root).resolve()
-    tokenizer_path = root / TARGET_TOKENIZER_RELATIVE_PATH
-    retokenizer = SuperBPERetokenizer(tokenizer_path)
+    tokenizer_path = root / identity.relative_path
+    retokenizer = SuperBPERetokenizer(tokenizer_path, identity=identity)
     original_dynamic = {
         name: (hasattr(config, name), getattr(config, name, None))
         for name in _DYNAMIC_CONFIG_FIELDS
@@ -267,24 +333,30 @@ def install_superbpe_retokenization(
     streaming.validate_record = retokenizer.validate_record
     config.EOD_TOKEN_ID = TARGET_EOD_TOKEN_ID
     config.CORPUS_SOURCE_TOKENIZER_ID = SOURCE_TOKENIZER_ID
-    config.CORPUS_OUTPUT_TOKENIZER_ID = TARGET_TOKENIZER_ID
-    config.CORPUS_TOKENIZER_ARTIFACT = TARGET_TOKENIZER_RELATIVE_PATH
+    config.CORPUS_OUTPUT_TOKENIZER_ID = identity.contract_id
+    config.CORPUS_TOKENIZER_ARTIFACT = identity.relative_path
     config.CORPUS_TOKENIZER_SHA256 = retokenizer.tokenizer_sha256
     config.CORPUS_SEMANTIC_VOCAB_SIZE = TARGET_SEMANTIC_VOCAB_SIZE
     return installed
 
 
 __all__ = [
+    "DEFAULT_TOKENIZER_CONTRACT_ID",
     "EXPECTED_SPECIAL_TOKENS",
     "EXPECTED_TOKENIZER_GIT_BLOB_SHA1",
     "SOURCE_EOD_TOKEN_ID",
     "SOURCE_TOKENIZER_ID",
+    "SUPERBPE_8000",
+    "SUPERBPE_8000_V2",
     "TARGET_EOD_TOKEN_ID",
     "TARGET_SEMANTIC_VOCAB_SIZE",
     "TARGET_SOURCE_VOCAB_SIZE",
     "TARGET_TOKENIZER_ID",
     "TARGET_TOKENIZER_RELATIVE_PATH",
+    "TOKENIZER_IDENTITIES",
     "InstalledSuperBPERetokenization",
     "SuperBPERetokenizer",
+    "TokenizerIdentity",
     "install_superbpe_retokenization",
+    "resolve_tokenizer_identity",
 ]

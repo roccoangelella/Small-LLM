@@ -86,6 +86,9 @@ def parser() -> argparse.ArgumentParser:
         default="hybrid_muon_adamw",
     )
     p.add_argument("--microbatch-size", type=int, default=1)
+    p.add_argument("--validation-microbatch-size", type=int, default=1)
+    p.add_argument("--async-checkpoint-upload", action="store_true")
+    p.add_argument("--run-source-commit", help="Immutable source anchor of a resumed run; executor uses --source-commit.")
     p.add_argument("--learning-rate", type=float, default=3e-4)
     p.add_argument("--weight-decay", type=float, default=0.1)
     p.add_argument("--muon-momentum", type=float, default=0.95)
@@ -215,6 +218,8 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Create the configured private Hugging Face Storage Bucket if missing.",
     )
+    p.add_argument("--remote-keep-latest-and-best", action="store_true",
+                   help="Retain only latest and validation-best checkpoints in a Storage Bucket.")
     p.add_argument(
         "--remote-rolling-latest-only",
         action="store_true",
@@ -284,6 +289,8 @@ def parse_args(
     args = (argument_parser or parser()).parse_args(argv)
     if args.steps <= 0:
         raise SystemExit("--steps must be positive")
+    if args.validation_microbatch_size <= 0:
+        raise SystemExit("--validation-microbatch-size must be positive")
     if args.validation_blocks < 0:
         raise SystemExit("--validation-blocks cannot be negative")
     if args.probe_sequences < 0:
@@ -300,6 +307,8 @@ def parse_args(
         raise SystemExit("profile update numbers must be positive")
     if args.probe_lm_logits and not args.probe_sequences:
         raise SystemExit("--probe-lm-logits requires --probe-sequences")
+    if args.run_source_commit and (not args.source_commit or re.fullmatch(r"[0-9a-f]{40}", args.run_source_commit) is None):
+        raise SystemExit("--run-source-commit requires a full Git SHA and --source-commit")
     if args.source_commit and re.fullmatch(r"[0-9a-f]{40}", args.source_commit) is None:
         raise SystemExit("--source-commit must be a full Git SHA")
     if args.dataset_shard_prefetch < 1:
@@ -331,6 +340,11 @@ def parse_args(
         raise SystemExit(
             "--remote-rolling-latest-only requires --remote-publish-every-steps"
         )
+    if args.remote_keep_latest_and_best and (
+        not args.remote_checkpoint_bucket or not args.remote_publish_every_steps
+        or args.remote_rolling_latest_only
+    ):
+        raise SystemExit("latest-and-best retention requires bucket publication and excludes latest-only mode")
     if args.best_model_recreate and not args.best_model_repo:
         raise SystemExit("--best-model-recreate requires --best-model-repo")
     if args.best_model_repo and not args.best_model_recreate:
