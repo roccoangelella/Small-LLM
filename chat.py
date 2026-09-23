@@ -1,17 +1,18 @@
 # Usage:
-#   python chat.py --model_params 100M --num_tokens 2B --pre-trained  # stable pretrained run
-#   python chat.py --model_params 100M --num_tokens 10B --pre-trained # completed 10B pretrained run
-#   python chat.py --model_params 20M --num_tokens 500M --sft        # completed SFT run
-#   python chat.py --model_params 100M --num_tokens 10B --sft        # completed 100M/10B SFT run
-#   python chat.py --model_params 100M --num_tokens 2B --r-sft       # accepted atomic R-SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --pre-trained   # stable pretrained run
+#   python chat.py --model_params 100M --num_tokens 10B --pre-trained  # completed 10B pretrained run
+#   python chat.py --moe  # pinned best step 75,000 from moe-100b-superbpe-003
+#   python chat.py --model_params 20M --num_tokens 500M --sft         # completed SFT run
+#   python chat.py --model_params 100M --num_tokens 10B --sft         # completed 100M/10B SFT run
+#   python chat.py --model_params 100M --num_tokens 2B --r-sft        # accepted atomic R-SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --sft --run-id RUN_ID     # explicit SFT experiment
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft --run-id RUN_ID  # explicit R-SFT experiment
 # --model_params: model parameter profile (for example 20M or 100M)
-# --num_tokens: parent pretraining token profile (for example 500M, 2B, or 10B)
+# --num_tokens: parent pretraining token profile (for example 500M, 2B, 10B, or 100B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
 
-TEMPERATURE = 1.0
-TOP_K = 50
+TEMPERATURE = 0.0
+TOP_K = 0
 TOP_P = 1.0
 MAX_NEW_TOKENS = 128
 SEED = 17
@@ -40,6 +41,10 @@ _STAGE_PRETRAINED = "pre-trained"
 _STAGE_SFT = "sft"
 _STAGE_R_SFT = "r-sft"
 _GPT2_SEMANTIC_VOCAB_SIZE = 50_257
+_SUPERBPE_SEMANTIC_VOCAB_SIZE = 8_000
+_SUPERBPE_EOS_TOKEN_ID = 7_992
+_DEFAULT_MOE_RUN_ID = "moe-100b-superbpe-003-chat-best-step-00075000"
+_INCOMPLETE_ALLOWED_RUNS = frozenset({_DEFAULT_MOE_RUN_ID, "moe-100b-superbpe-001"})
 _R_SFT_CANONICAL_MARKERS = ("<think>", "</think>", "<answer>")
 _CHAT_MODEL_CACHE_DIR = Path(__file__).resolve().parent / "chat_models"
 _CHAT_MODEL_CACHE_METADATA = "cache.json"
@@ -92,6 +97,53 @@ class _TokenTextStreamer:
         return self.decoder.decode(b"", final=True)
 
 
+class SuperBPEChatEncoding:
+    """Tokenizer adapter for SuperBPE matching the tiktoken/ReasoningGPT2Encoder interface."""
+
+    def __init__(self, tokenizer_path: Path | None = None) -> None:
+        try:
+            from tokenizers import Tokenizer
+        except ImportError as error:
+            raise RuntimeError(
+                "tokenizers is required for SuperBPE; install the project extras"
+            ) from error
+        if tokenizer_path is None:
+            tokenizer_path = (
+                Path(__file__).resolve().parent / "tokenizer" / "superbpe_8000.json"
+            )
+        if not tokenizer_path.is_file():
+            raise RuntimeError(f"SuperBPE tokenizer artifact missing: {tokenizer_path}")
+        self.tokenizer = Tokenizer.from_file(str(tokenizer_path))
+
+        bs = (
+            list(range(ord("!"), ord("~") + 1))
+            + list(range(ord("¡"), ord("¬") + 1))
+            + list(range(ord("®"), ord("ÿ") + 1))
+        )
+        cs = bs[:]
+        n = 0
+        for b in range(2**8):
+            if b not in bs:
+                bs.append(b)
+                cs.append(2**8 + n)
+                n += 1
+        self._char_to_byte = {chr(c): b for b, c in zip(bs, cs)}
+
+    def encode(self, text: str, **kwargs: object) -> list[int]:
+        del kwargs
+        return self.tokenizer.encode(text).ids
+
+    def decode(self, token_ids: Sequence[int], **kwargs: object) -> str:
+        del kwargs
+        return self.tokenizer.decode(list(token_ids), skip_special_tokens=False)
+
+    def decode_single_token_bytes(self, token_id: int) -> bytes:
+        token_str = self.tokenizer.id_to_token(token_id)
+        if token_str is None:
+            return b""
+        return bytes([self._char_to_byte.get(c, ord(c) & 0xFF) for c in token_str])
+
+
 def _load_rsft_tokenizer_module():
     module_name = "small_llm_rsft_tokenizer"
     existing = sys.modules.get(module_name)
@@ -129,11 +181,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         description="Download a completed Small-LLM artifact from Hugging Face and chat locally."
     )
     parser.add_argument(
+        "--moe",
+        action="store_true",
+        help="select the pinned best MoE checkpoint from moe-100b-superbpe-003 (step 75,000)",
+    )
+    parser.add_argument(
         "--model_params",
         "--model-params",
         dest="model_params",
         type=_parse_quantity,
-        required=True,
+        required=False,
+        default=None,
         help="model parameter profile, e.g. 20M or 100M",
     )
     parser.add_argument(
@@ -141,17 +199,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--num-tokens",
         dest="num_tokens",
         type=_parse_quantity,
-        required=True,
+        required=False,
+        default=None,
         help="parent pretraining token profile, e.g. 500M or 2B",
     )
     parser.add_argument(
         "--run-id",
         help=(
-            "SFT/R-SFT: explicitly select a completed post-training run instead of the "
-            "registered default"
+            "explicitly select a run ID instead of the registered default"
         ),
     )
-    stage = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="allow loading intermediate or incomplete training checkpoints",
+    )
+    stage = parser.add_mutually_exclusive_group(required=False)
     stage.add_argument(
         "--pre-trained",
         "--pretrained",
@@ -174,16 +237,43 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         const=_STAGE_R_SFT,
         help="select a registered completed R-SFT artifact and its reasoning special-token tokenizer",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.moe:
+        if args.stage not in {None, _STAGE_PRETRAINED}:
+            parser.error("--moe only supports --pre-trained at this time")
+        if args.run_id and not args.run_id.startswith("moe-"):
+            parser.error("--moe --run-id requires a MoE run ID")
+        args.stage = _STAGE_PRETRAINED
+    else:
+        if args.stage is None and args.run_id and args.run_id.startswith("moe-"):
+            args.stage = _STAGE_PRETRAINED
+        if args.stage is None:
+            parser.error("one of the arguments --pre-trained, --sft, --r-sft (or --moe) is required")
+        if (args.model_params is None or args.num_tokens is None) and not (
+            args.run_id and args.run_id.startswith("moe-") and args.stage == _STAGE_PRETRAINED
+        ):
+            parser.error("the following arguments are required: --model_params, --num_tokens")
+    return args
 
 
 def _resolve_chat_run(
-    model_params: int,
-    num_tokens: int,
+    model_params: int | None = None,
+    num_tokens: int | None = None,
     *,
     stage: str,
     run_id: str | None = None,
+    moe: bool = False,
 ) -> tuple[str, str]:
+    if moe or (run_id and run_id.startswith("moe-")):
+        if stage != _STAGE_PRETRAINED:
+            raise RuntimeError("MoE chat only supports --pre-trained")
+        resolved_run_id = run_id or _DEFAULT_MOE_RUN_ID
+        _safe_cache_component(resolved_run_id, label="run_id")
+        return resolved_run_id, _SOURCE_STORAGE_BUCKET
+
+    if model_params is None or num_tokens is None:
+        raise RuntimeError("model_params and num_tokens are required when not using --moe")
+
     key = (model_params, num_tokens)
     try:
         registry = _STAGE_REGISTRIES[stage]
@@ -303,6 +393,8 @@ def _load_completed_checkpoint(
     *,
     device: object,
     stage: str,
+    run_id: str | None = None,
+    allow_incomplete: bool = False,
 ):
     """Load one verified completed checkpoint and enforce its tokenizer-stage contract."""
 
@@ -362,19 +454,32 @@ def _load_completed_checkpoint(
     if isinstance(consumed, bool) or not isinstance(consumed, int) or consumed < 0:
         raise RuntimeError("checkpoint has an invalid consumed_tokens counter")
     if consumed != expected_consumed:
-        raise RuntimeError(
-            "checkpoint exists on Hugging Face but is not complete: "
-            f"consumed_loss_targets={consumed:,}, full_schedule_targets={expected_consumed:,}"
+        incomplete_permitted = (
+            allow_incomplete
+            or (run_id is not None and run_id in _INCOMPLETE_ALLOWED_RUNS)
         )
+        if not incomplete_permitted:
+            raise RuntimeError(
+                "checkpoint exists on Hugging Face but is not complete: "
+                f"consumed_loss_targets={consumed:,}, full_schedule_targets={expected_consumed:,}"
+            )
 
     raw_config = state.get("model_config")
     model_state = state.get("model")
     if not isinstance(raw_config, Mapping) or not isinstance(model_state, Mapping):
         raise RuntimeError("checkpoint does not contain self-describing model weights")
-    config_values = dict(raw_config)
-    if isinstance(config_values.get("layer_pattern"), list):
-        config_values["layer_pattern"] = tuple(config_values["layer_pattern"])
-    config = ModelConfig(**config_values)  # type: ignore[arg-type]
+
+    is_moe = "dense" in raw_config or "num_experts" in raw_config
+    if is_moe:
+        from MOE_model.evaluation import normalize_moe_model_config
+        from MOE_model.model import MoESmallLLM
+
+        config = normalize_moe_model_config(raw_config)
+    else:
+        config_values = dict(raw_config)
+        if isinstance(config_values.get("layer_pattern"), list):
+            config_values["layer_pattern"] = tuple(config_values["layer_pattern"])
+        config = ModelConfig(**config_values)  # type: ignore[arg-type]
 
     if stage == _STAGE_R_SFT:
         tokenizer_module = _load_rsft_tokenizer_module()
@@ -384,10 +489,14 @@ def _load_completed_checkpoint(
                 f"R-SFT checkpoint semantic_vocab_size={config.semantic_vocab_size} does not match "
                 f"reasoning tokenizer vocabulary {expected_vocab}"
             )
-    elif config.semantic_vocab_size != _GPT2_SEMANTIC_VOCAB_SIZE:
+    elif config.semantic_vocab_size not in (
+        _GPT2_SEMANTIC_VOCAB_SIZE,
+        _SUPERBPE_SEMANTIC_VOCAB_SIZE,
+    ):
         raise RuntimeError(
-            f"{stage} chat requires the normal {_GPT2_SEMANTIC_VOCAB_SIZE}-token GPT-2 "
-            f"vocabulary, got semantic_vocab_size={config.semantic_vocab_size}"
+            f"{stage} chat requires either the normal {_GPT2_SEMANTIC_VOCAB_SIZE}-token GPT-2 "
+            f"or the {_SUPERBPE_SEMANTIC_VOCAB_SIZE}-token SuperBPE vocabulary, "
+            f"got semantic_vocab_size={config.semantic_vocab_size}"
         )
 
     # The optimizer/scaler/RNG payloads are irrelevant for inference. Drop them
@@ -403,7 +512,10 @@ def _load_completed_checkpoint(
         state.pop(name, None)
     gc.collect()
 
-    model = SmallLLM(config)
+    if is_moe:
+        model = MoESmallLLM(config)
+    else:
+        model = SmallLLM(config)
     model.load_state_dict(model_state, strict=True)
     del model_state
     del state
@@ -496,7 +608,38 @@ def _write_cached_checkpoint_metadata(
     metadata_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, device: object):
+def _invoke_checkpoint_loader(
+    checkpoint_root: Path,
+    *,
+    device: object,
+    stage: str,
+    run_id: str | None = None,
+    allow_incomplete: bool = False,
+):
+    import inspect
+
+    sig = inspect.signature(_load_completed_checkpoint)
+    kwargs: dict[str, object] = {"device": device, "stage": stage}
+    accepts_var_kwargs = any(
+        param.kind == inspect.Parameter.VAR_KEYWORD
+        for param in sig.parameters.values()
+    )
+    if "run_id" in sig.parameters or accepts_var_kwargs:
+        kwargs["run_id"] = run_id
+    if "allow_incomplete" in sig.parameters or accepts_var_kwargs:
+        kwargs["allow_incomplete"] = allow_incomplete
+    return _load_completed_checkpoint(checkpoint_root, **kwargs)
+
+
+def _download_model(
+    *,
+    repo_id: str,
+    run_id: str,
+    source: str,
+    stage: str,
+    device: object,
+    allow_incomplete: bool = False,
+):
     token = os.environ.get("HF_TOKEN")
     cache_root = _chat_model_cache_dir(run_id=run_id, stage=stage)
     cached = _read_cached_checkpoint(
@@ -509,10 +652,12 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
     if cached is not None:
         checkpoint_root, cached_info = cached
         try:
-            model, config, consumed, reasoning_spec = _load_completed_checkpoint(
+            model, config, consumed, reasoning_spec = _invoke_checkpoint_loader(
                 checkpoint_root,
                 device=device,
                 stage=stage,
+                run_id=run_id,
+                allow_incomplete=allow_incomplete,
             )
         except Exception:
             _remove_managed_cache(cache_root)
@@ -553,41 +698,27 @@ def _download_model(*, repo_id: str, run_id: str, source: str, stage: str, devic
                 destination=cache_root,
             )
         elif source == _SOURCE_STORAGE_BUCKET:
-            try:
-                from trainer.post_pretraining_prompt_suite_bucket import (
-                    download_verified_bucket_checkpoint,
-                )
+            from trainer.post_pretraining_prompt_suite_bucket import (
+                download_verified_bucket_checkpoint,
+            )
 
-                checkpoint_root, info = download_verified_bucket_checkpoint(
-                    repo_id=repo_id,
-                    run_id=run_id,
-                    token=token,
-                    revision=None,
-                    pointer_name="latest",
-                    destination=cache_root,
-                )
-            except Exception as bucket_error:
-                _remove_managed_cache(cache_root)
-                cache_root.mkdir(parents=True, exist_ok=True)
-                try:
-                    from trainer.model_artifact import download_verified_model_artifact
-
-                    checkpoint_root, info = download_verified_model_artifact(
-                        repo_id=repo_id,
-                        run_id=run_id,
-                        token=token,
-                        revision=None,
-                        destination=cache_root,
-                    )
-                except Exception:
-                    raise bucket_error
+            checkpoint_root, info = download_verified_bucket_checkpoint(
+                repo_id=repo_id,
+                run_id=run_id,
+                token=token,
+                revision=None,
+                pointer_name="latest",
+                destination=cache_root,
+            )
         else:
             raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 
-        model, config, consumed, reasoning_spec = _load_completed_checkpoint(
+        model, config, consumed, reasoning_spec = _invoke_checkpoint_loader(
             checkpoint_root,
             device=device,
             stage=stage,
+            run_id=run_id,
+            allow_incomplete=allow_incomplete,
         )
         _write_cached_checkpoint_metadata(
             cache_root,
@@ -700,8 +831,26 @@ def _stream_sample_token_ids(
     return generated
 
 
-def _build_chat_encoding(*, stage: str, reasoning_spec=None, base_encoding: object | None = None):
-    """Select normal GPT-2 or the artifact-defined R-SFT tokenizer."""
+def _resolve_eos_token_id(config: object) -> int:
+    if getattr(config, "semantic_vocab_size", None) == _SUPERBPE_SEMANTIC_VOCAB_SIZE:
+        return _SUPERBPE_EOS_TOKEN_ID
+    return 50_256
+
+
+def _build_chat_encoding(
+    *,
+    stage: str,
+    reasoning_spec=None,
+    base_encoding: object | None = None,
+    config: object | None = None,
+):
+    """Select SuperBPE, normal GPT-2, or the artifact-defined R-SFT tokenizer."""
+
+    if (
+        base_encoding is None
+        and getattr(config, "semantic_vocab_size", None) == _SUPERBPE_SEMANTIC_VOCAB_SIZE
+    ):
+        return SuperBPEChatEncoding()
 
     if base_encoding is None:
         try:
@@ -736,7 +885,7 @@ def _generation_settings(config, *, device) -> dict[str, object]:
         "base_seed": SEED,
         "seed_policy": "base_seed + zero_based_turn_index",
         "max_seq_len": config.max_seq_len,
-        "eos_token_id": 50_256,
+        "eos_token_id": _resolve_eos_token_id(config),
         "precision": "fp16" if getattr(device, "type", None) == "cuda" else "fp32",
     }
 
@@ -745,9 +894,14 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
     from post_training.sft.schema import ChatMessage
     from post_training.sft.template import GPT2ChatTemplate
 
-    encoding = _build_chat_encoding(stage=stage, reasoning_spec=reasoning_spec)
+    eos_token_id = _resolve_eos_token_id(config)
+    encoding = _build_chat_encoding(
+        stage=stage,
+        reasoning_spec=reasoning_spec,
+        config=config,
+    )
     template = GPT2ChatTemplate(
-        eos_token_id=50_256,
+        eos_token_id=eos_token_id,
         maximum_context_tokens=config.max_seq_len,
         maximum_assistant_tokens=min(MAX_NEW_TOKENS, 512),
     )
@@ -788,7 +942,7 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None) -> None:
                 prompt_ids,
                 max_new_tokens=MAX_NEW_TOKENS,
                 max_seq_len=config.max_seq_len,
-                eos_token_id=50_256,
+                eos_token_id=eos_token_id,
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
                 top_k=TOP_K,
@@ -815,6 +969,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.num_tokens,
         stage=args.stage,
         run_id=args.run_id,
+        moe=args.moe,
     )
     repo_id = _repo_id(source=source)
 
@@ -834,10 +989,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             source=source,
             stage=args.stage,
             device=device,
+            allow_incomplete=args.allow_incomplete,
         )
     except Exception as error:
         raise RuntimeError(
-            f"could not load a completed {args.stage} chat artifact for {run_id} from {repo_id}: {error}"
+            f"could not load a verified {args.stage} chat artifact for {run_id} from {repo_id}: {error}"
         ) from error
 
     print(
