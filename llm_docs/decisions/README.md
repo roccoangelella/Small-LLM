@@ -53,6 +53,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md`](0144-consolidate-100m-10b-probes-and-test-low-lr-tail.md)
 - [`0179-production-checkpoint-sequence.md`](0179-production-checkpoint-sequence.md)
 - [`0181-take-the-production-schedule-from-the-corpus-run-contract.md`](0181-take-the-production-schedule-from-the-corpus-run-contract.md)
+- [`0183-continue-moe-training-across-provider-accounts.md`](0183-continue-moe-training-across-provider-accounts.md)
 
 ### 3. Datasets, Tokenization & Remote Durability
 - [`0043-prepare-modal-block64-corpus-on-vps.md`](0043-prepare-modal-block64-corpus-on-vps.md)
@@ -63,6 +64,7 @@ Each ADR records one durable choice, its context, alternatives, outcome, and con
 - [`0070-use-vps-fed-beam-volume-for-10b-dataset-production.md`](0070-use-vps-fed-beam-volume-for-10b-dataset-production.md)
 - [`0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md`](0178-publish-moe-100b-superbpe-corpus-to-public-hf-bucket.md)
 - [`0182-stream-the-moe-corpus-while-it-is-produced.md`](0182-stream-the-moe-corpus-while-it-is-produced.md)
+- [`0184-select-the-corpus-tokenizer-by-contract-id.md`](0184-select-the-corpus-tokenizer-by-contract-id.md) — status: proposed, pending owner acceptance
 
 ### 4. Post-Training & R-SFT Reasoning
 - [`0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md`](0032-scale-sft-budget-with-pretraining-and-qualify-on-500m-first.md)

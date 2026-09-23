@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import random
 import tempfile
 import unittest
 from unittest import mock
@@ -207,6 +208,8 @@ class RemoteCheckpointTest(unittest.TestCase):
             manifest = self._one_shard_manifest(first, shards)
             trainer = MockTrainer()
             trainer.state["model"] = 7
+            # The coordinator includes Python RNG in fallback trainer snapshots.
+            trainer.state["python_rng_state"] = random.getstate()
             coordinator = CheckpointCoordinator(
                 first / "checkpoints",
                 configuration_hash="cfg",

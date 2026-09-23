@@ -40,6 +40,8 @@ This directory is the repository's system of record and uses progressive disclos
 
 ## Current operational entry points
 
+- [`runbooks/moe-provider-continuation.md`](runbooks/moe-provider-continuation.md) — accepted MoE cross-provider checkpoint and W&B continuation.
+
 - [`runbooks/modal_training_launcher.md`](runbooks/modal_training_launcher.md) — current Modal provider launcher contract.
 - [`runbooks/unified_kaggle_launcher.md`](runbooks/unified_kaggle_launcher.md) — stable Kaggle pretraining/data launcher surface.
 - [`runbooks/eval_core_v1_runbook.md`](runbooks/eval_core_v1_runbook.md) — frozen eval-core construction/verification.

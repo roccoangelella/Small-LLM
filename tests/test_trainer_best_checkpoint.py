@@ -283,6 +283,7 @@ class TrainerBestCheckpointTests(unittest.TestCase):
             steps=1,
             validation_blocks=1,
             resume=None,
+            checkpoint_dir=Path("/tmp"),
         )
         setup_result = (
             object(),

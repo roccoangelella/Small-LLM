@@ -23,7 +23,7 @@ from .best_model import (
     publish_dedicated_best_model,
 )
 from .cli_setup import setup, validation_reader
-from .remote_publication import cleanup_remote_publication, configure_remote_publication
+from .remote_publication import cleanup_remote_publication, configure_remote_publication, promote_best_pointer
 from .wandb_logging import configure_wandb
 
 
@@ -101,6 +101,11 @@ def main(
     started_wall = time.monotonic()
     args = (parse_args_fn or parse_args)(argv)
     model_config, trainer_config, engine, session, coordinator = (setup_fn or setup)(args)
+    if getattr(args, "source_commit", None):
+        coordinator.executor_metadata = {
+            "version": 1, "source_commit": args.source_commit,
+            "run_source_commit": getattr(args, "run_source_commit", None) or args.source_commit,
+        }
     observer = None
     if getattr(args, "experiment_dir", None) is not None:
         from .observation import RunObservation
@@ -176,6 +181,7 @@ def main(
         trainer_config=trainer_config,
         engine=engine,
     ) if is_primary_process else None
+    uploader = None
     validation: dict[str, object] | None = None
     saved: set[str] = set()
     saved_paths: dict[str, Path] = {}
@@ -200,6 +206,8 @@ def main(
         result = engine.evaluate(
             reader.iter_from_start(args.validation_blocks),
             maximum_batches=args.validation_blocks,
+            **({"microbatch_size": args.validation_microbatch_size}
+               if getattr(args, "validation_microbatch_size", 1) != 1 else {}),
         )
         elapsed = time.perf_counter() - started
         last_validation_step = engine.global_step
@@ -219,6 +227,9 @@ def main(
         return dict(result)
 
     def ensure_local_checkpoint(checkpoint_id: str) -> Path:
+        # Finish the previous immutable snapshot before any save/prune can remove it.
+        if uploader is not None:
+            uploader.poll(wait=True)
         if checkpoint_id in saved:
             path = saved_paths.get(checkpoint_id)
             if path is not None:
@@ -323,14 +334,11 @@ def main(
             best_local_checkpoint_id = checkpoint_id
         best_model_metric = metric
 
-    def publish_remote_checkpoint(checkpoint_id: str, *, final: bool) -> None:
+    def perform_remote_publication(checkpoint_id: str, *, final: bool, metric, step: int,
+                                   verified_latest: Mapping[str, object] | None = None):
         nonlocal best_remote_metric
-        if remote is None or checkpoint_id in remotely_published:
-            return
-        ensure_local_checkpoint(checkpoint_id)
-        metric = _validation_metric(validation)
         started = time.perf_counter()
-        result = coordinator.publish(
+        result = {"latest": verified_latest} if verified_latest is not None else coordinator.publish(
             remote.publisher,
             checkpoint_id=checkpoint_id,
             drive_manifest=remote.drive_manifest,
@@ -351,43 +359,62 @@ def main(
             write_json = getattr(store, "write_json", None)
             if not isinstance(run_id, str) or not run_id or not callable(write_json):
                 raise RuntimeError("remote publication cannot write the best pointer")
-            checkpoint_manifest = latest.get("checkpoint_manifest")
-            last_prefix = latest.get("last_prefix")
-            if not isinstance(checkpoint_manifest, Mapping) or not isinstance(last_prefix, str):
-                raise RuntimeError("verified latest pointer is missing its manifest or prefix")
-            write_json(
-                f"run/{run_id}/best.json",
-                {
-                    "checkpoint_id": checkpoint_id,
-                    "best_prefix": last_prefix,
-                    "checkpoint_manifest": dict(checkpoint_manifest),
-                    "metric": metric,
-                    "source_checkpoint_id": checkpoint_id,
-                },
-            )
+            promote_best_pointer(store, run_id=run_id, latest=latest,
+                                 metric=metric, best_metric=best_remote_metric)
             best_remote_metric = metric
             best_updated = True
         cleanup = cleanup_remote_publication(remote, checkpoint_id=checkpoint_id)
         elapsed = time.perf_counter() - started
         event = {
             "checkpoint_id": checkpoint_id,
+            "step": step,
             "elapsed_seconds": elapsed,
             "final": final,
             "best_updated": best_updated,
             "validation_loss": None if metric is None else -metric,
             "rolling_cleanup": cleanup,
         }
+        return event
+
+    def observe_publication(event):
         print(json.dumps({"remote_publication": event}, sort_keys=True), flush=True)
         if telemetry is not None:
             telemetry.log_remote_publication(
-                step=engine.global_step,
-                checkpoint_id=checkpoint_id,
-                elapsed_seconds=elapsed,
-                final=final,
+                step=event["step"], checkpoint_id=event["checkpoint_id"],
+                elapsed_seconds=event["elapsed_seconds"], final=event["final"],
             )
-        remotely_published.add(checkpoint_id)
+        remotely_published.add(event["checkpoint_id"])
+
+    def publish_remote_checkpoint(checkpoint_id: str, *, final: bool,
+                                  verified_latest=None, synchronous=False):
+        if remote is None:
+            return
+        if uploader is not None:
+            uploader.poll(wait=True)
+        if checkpoint_id in remotely_published:
+            return
+        ensure_local_checkpoint(checkpoint_id)
+        # Capture metadata now. The worker only reads the persisted snapshot,
+        # never live tensors, the current validation result, or W&B state.
+        kwargs = dict(final=final, metric=_validation_metric(validation),
+                      step=engine.global_step, verified_latest=verified_latest)
+        if uploader is not None and not synchronous:
+            uploader.submit(perform_remote_publication, checkpoint_id, **kwargs)
+        else:
+            observe_publication(perform_remote_publication(checkpoint_id, **kwargs))
+
+    if remote is not None and getattr(args, "async_checkpoint_upload", False):
+        from .async_publication import AsyncPublication
+        uploader = AsyncPublication(observe_publication)
 
     try:
+        # A provider can die after a local save but before its remote upload.
+        # Repair that boundary before computing more updates on this provider.
+        if remote is not None and getattr(remote, "keep_latest_and_best", False) and args.resume:
+            validation = read_json(Path(args.checkpoint_dir) / args.resume / "checkpoint.json").get("validation_metrics") or None
+            latest = remote.publisher.store.read_json(f"run/{remote.drive_manifest['run_id']}/latest.json")
+            publish_remote_checkpoint(args.resume, final=False, synchronous=True,
+                verified_latest=latest if latest is not None and latest.get("checkpoint_id") == args.resume else None)
         checkpoint_steps = set(getattr(args, "checkpoint_at_steps", ()))
         if engine.global_step in checkpoint_steps:
             if args.validation_blocks:
@@ -395,6 +422,8 @@ def main(
             ensure_local_checkpoint(f"step-{engine.global_step:08d}")
         drained_reason: str | None = None
         for _ in range(args.steps):
+            if uploader is not None:
+                uploader.poll()
             step_started = time.monotonic()
             try:
                 with observer.profile(engine.global_step + 1) if observer else nullcontext():
@@ -438,6 +467,8 @@ def main(
         ensure_local_checkpoint(checkpoint_id)
         publish_best_model_if_improved(checkpoint_id)
         publish_remote_checkpoint(checkpoint_id, final=True)
+        if uploader is not None:
+            uploader.close()
         print(json.dumps({"checkpoint_id": checkpoint_id}, sort_keys=True), flush=True)
         if drained_reason is not None:
             drained = {
@@ -452,6 +483,11 @@ def main(
         if torch.cuda.is_available():
             torch.cuda.synchronize()
     except BaseException:
+        if uploader is not None:
+            try:
+                uploader.close()
+            except Exception as publication_error:
+                sys.stderr.write(f"Checkpoint finalization also failed: {publication_error}\n")
         if observer is not None:
             try:
                 observer.finish(failed=True)

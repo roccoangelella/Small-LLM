@@ -102,8 +102,9 @@ class TrainerEngine:
         batches: Iterable[TokenBatch],
         *,
         maximum_batches: int | None = None,
+        microbatch_size: int = 1,
     ) -> dict[str, float | int]:
-        return evaluate_batches(self, batches, maximum_batches=maximum_batches)
+        return evaluate_batches(self, batches, maximum_batches=maximum_batches, microbatch_size=microbatch_size)
 
     def state_dict(self) -> dict[str, object]:
         return engine_state_dict(self)

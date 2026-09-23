@@ -80,12 +80,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-unsafe-low-disk", action="store_true")
     parser.add_argument(
         "--tokenizer-contract",
-        choices=("gpt2", "superbpe_8000"),
+        choices=("gpt2", "superbpe_8000", "superbpe_8000_v2"),
         default="gpt2",
         help=(
             "Token representation counted by scheduling and written to shards. "
             "superbpe_8000 decodes each accepted GPT-2 source document and re-encodes "
-            "it with tokenizer/superbpe_8000.json before stratification."
+            "it with tokenizer/superbpe_8000.json before stratification; "
+            "superbpe_8000_v2 uses tokenizer/superbpe_8000_v2.json, the different "
+            "8k artifact the 100B v2 corpus was built with. The two are not "
+            "interchangeable within one corpus."
         ),
     )
     parser.add_argument(
@@ -165,11 +168,12 @@ def main(
     args = build_parser().parse_args(argv)
     tokenizer_installation = None
     try:
-        if args.tokenizer_contract == "superbpe_8000":
+        if args.tokenizer_contract != "gpt2":
             from dataset.superbpe_retokenization import install_superbpe_retokenization
 
             tokenizer_installation = install_superbpe_retokenization(
-                Path(__file__).resolve().parents[2]
+                Path(__file__).resolve().parents[2],
+                tokenizer_contract=args.tokenizer_contract,
             )
         if args.allow_local_only and args.evict_remote_shards:
             raise RuntimeError("--evict-remote-shards requires HF bucket durability")

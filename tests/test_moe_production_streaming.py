@@ -203,6 +203,23 @@ def test_finished_streaming_run_does_not_stage_again(tmp_path, corpus):
     assert result["training_complete"] is True
 
 
+def test_finished_durable_run_validates_last_block_and_repairs_publication(tmp_path, corpus):
+    store, _, _, request = corpus
+    store.json_objects[store.object_key("dataset-001", SHARD_FRONTIER_FILENAME)]["producer_complete"] = True
+    request = replace(request, total_steps=2, checkpoint_bucket="owner/checkpoints", resume="latest")
+    _write_checkpoint(production.checkpoint_dir(request, run_root=tmp_path), 2)
+    with patch("moe_production._dataset_store", return_value=store), patch(
+        "moe_checkpoint_transport.restore_checkpoint", return_value={"receipt": "verified"},
+    ), patch("moe_checkpoint_transport.prepare_receipt") as receipt, patch(
+        "moe_checkpoint_transport.finalize_completed_run",
+    ) as finalize:
+        result = production.prepare_dataset(request, run_root=tmp_path)
+    assert result["training_complete"] is True
+    assert result["first_block_id"] == 1  # Do not wait for a nonexistent next training block.
+    receipt.assert_called_once_with(request, run_root=tmp_path, previous={"receipt": "verified"})
+    finalize.assert_called_once_with(request, run_root=tmp_path)
+
+
 def test_streaming_store_requires_existing_token_and_never_creates_bucket(corpus):
     request = corpus[3]
     with patch.dict("os.environ", {"HF_TOKEN": ""}), pytest.raises(RuntimeError, match="HF_TOKEN"):

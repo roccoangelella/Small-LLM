@@ -16,6 +16,7 @@ import torch
 from torch.nn import functional as F
 
 from .identity import canonical_hash
+from .config import MOE_RESUME_EXECUTION_FIELDS
 from .precision import autocast_context
 
 
@@ -115,7 +116,22 @@ class RunObservation:
         }
         identity_path = self.root / "identity.json"
         if identity_path.exists():
-            if json.loads(identity_path.read_text()) != json.loads(json.dumps(identity)):
+            previous_identity = json.loads(identity_path.read_text())
+            current_identity = json.loads(json.dumps(identity))
+            if getattr(model_config, "version", None) == 3:
+                for value in (previous_identity, current_identity):
+                    value["trainer"] = {key: item for key, item in value["trainer"].items()
+                                        if key not in MOE_RESUME_EXECUTION_FIELDS}
+            run_source = getattr(args, "run_source_commit", None)
+            if (getattr(model_config, "version", None) == 3
+                    and getattr(args, "resume", None) and run_source):
+                if previous_identity["source_commit"] != run_source:
+                    raise ValueError("observation origin differs from declared run source")
+                # Root identity remains immutable; each segment records its executor.
+                for value in (previous_identity, current_identity):
+                    for key in ("source_commit", "source_tree_sha256", "source_tree_dirty"):
+                        value.pop(key, None)
+            if previous_identity != current_identity:
                 raise ValueError("experiment directory belongs to a different model, recipe or dataset")
         else:
             write_json(identity_path, identity)
@@ -156,6 +172,7 @@ class RunObservation:
 
         manifest_payload = {
             **identity,
+            "run_source_commit": getattr(args, "run_source_commit", None) or identity["source_commit"],
             "model_class": f"{type(engine.model).__module__}.{type(engine.model).__name__}",
             "model_state_sha256": _model_hash(engine.model),
             "parameters": sum(p.numel() for p in engine.model.parameters()),
