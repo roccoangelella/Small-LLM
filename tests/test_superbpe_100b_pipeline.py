@@ -350,13 +350,13 @@ class TokenizerContractSelectionTests(unittest.TestCase):
             sorted(action.choices), ["gpt2", "superbpe_8000", "superbpe_8000_v2"]
         )
 
-    def test_only_the_dataset_producer_loads_a_tokenizer_artifact(self) -> None:
-        """The trainer/inference side reads semantic_vocab_size, never the 8k JSON."""
+    def test_training_runtime_does_not_load_a_tokenizer_artifact(self) -> None:
+        """The trainer reads token IDs, not a tokenizer JSON; chat and packer do load one."""
         offenders = []
         for path in sorted(ROOT.rglob("*.py")):
             relative = path.relative_to(ROOT)
             head = relative.parts[0]
-            if head in {"dataset", "tests", ".venv", "build", "__pycache__"}:
+            if head in {"dataset", "tests", "tools", ".venv", "build", "__pycache__"} or relative == Path("chat.py"):
                 continue
             if "superbpe_8000" in path.read_text(encoding="utf-8", errors="ignore"):
                 offenders.append(str(relative))

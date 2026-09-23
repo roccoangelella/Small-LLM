@@ -16,6 +16,7 @@ Evidence records completed observations: measured results, verification reports,
 
 ## Execution profiles
 
+- [`moe_chat_tokenizer_mismatch_2026-09-23.md`](moe_chat_tokenizer_mismatch_2026-09-23.md) — paired v1/v2 tokenizer cross-entropy on two MoE checkpoints identifies the step-75k chat gibberish as an inference tokenizer mismatch; pretrained chat repetition remains.
 - [`moe_provider_continuation_cpu_2026-09-13.md`](moe_provider_continuation_cpu_2026-09-13.md) — actual tiny-MoE CLI continuation through fake remote SDKs, interruption recovery, latest/best retention, and live verification limits.
 
 - [`production_review_fixes_2026-09-12.md`](production_review_fixes_2026-09-12.md) — six verified production review fixes, per-fix CPU test results, and pending commits blocked by worktree metadata permissions.

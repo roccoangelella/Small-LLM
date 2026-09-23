@@ -331,29 +331,15 @@ def test_download_model_storage_bucket_persists_and_reuses_cache(
     ]
 
 
-def test_download_model_storage_bucket_falls_back_to_model_artifact(
+def test_download_model_storage_bucket_fails_closed_on_missing_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
     def fake_download_bucket(**kwargs):
         raise RuntimeError("bucket not found")
 
-    recorded = {}
-
-    def fake_download_artifact(*, repo_id, run_id, token, revision, destination):
-        recorded["artifact"] = {
-            "repo_id": repo_id,
-            "run_id": run_id,
-            "token": token,
-            "revision": revision,
-            "destination": destination,
-        }
-        checkpoint_root = destination / "step-00076294"
-        checkpoint_root.mkdir(parents=True)
-        return checkpoint_root, {"checkpoint_id": "step-00076294"}
-
-    def fake_load(checkpoint_root, *, device, stage):
-        return "model", "config", 10_000_007_168, None
+    def fake_download_artifact(**kwargs):
+        pytest.fail("must not fall back to a different artifact source")
 
     monkeypatch.setattr(
         "trainer.post_pretraining_prompt_suite_bucket.download_verified_bucket_checkpoint",
@@ -363,20 +349,17 @@ def test_download_model_storage_bucket_falls_back_to_model_artifact(
         "trainer.model_artifact.download_verified_model_artifact",
         fake_download_artifact,
     )
-    monkeypatch.setattr(chat, "_load_completed_checkpoint", fake_load)
     monkeypatch.setattr(chat, "_CHAT_MODEL_CACHE_DIR", tmp_path / "chat_models")
 
-    _model, _config, _consumed, _reasoning_spec, info, cache_root = chat._download_model(
-        repo_id="owner/repo",
-        run_id="100m-10b-deep-decay-from-step15500",
-        source=chat._SOURCE_STORAGE_BUCKET,
-        stage=chat._STAGE_PRETRAINED,
-        device="cpu",
-    )
-    assert recorded["artifact"]["run_id"] == "100m-10b-deep-decay-from-step15500"
-    assert info["checkpoint_id"] == "step-00076294"
-    assert info["cache_status"] == "downloaded"
-    assert cache_root.is_dir()
+    with pytest.raises(RuntimeError, match="bucket not found"):
+        chat._download_model(
+            repo_id="owner/repo",
+            run_id=chat._DEFAULT_MOE_RUN_ID,
+            source=chat._SOURCE_STORAGE_BUCKET,
+            stage=chat._STAGE_PRETRAINED,
+            device="cpu",
+        )
+    assert not (tmp_path / "chat_models" / chat._STAGE_PRETRAINED / chat._DEFAULT_MOE_RUN_ID).exists()
 
 
 def test_generation_settings_report_effective_chat_sampler() -> None:
@@ -398,3 +381,241 @@ def test_generation_settings_report_effective_chat_sampler() -> None:
         "eos_token_id": 50_256,
         "precision": "fp16",
     }
+
+
+def test_moe_cli_resolution() -> None:
+    args_moe = chat._parse_args(["--moe"])
+    assert args_moe.moe
+    assert args_moe.stage == chat._STAGE_PRETRAINED
+    assert args_moe.model_params is None
+    assert args_moe.num_tokens is None
+    assert not args_moe.allow_incomplete
+    assert chat._resolve_chat_run(
+        stage=args_moe.stage,
+        moe=args_moe.moe,
+    ) == (chat._DEFAULT_MOE_RUN_ID, chat._SOURCE_STORAGE_BUCKET)
+
+    args_moe_explicit = chat._parse_args(
+        ["--moe", "--pre-trained", "--allow-incomplete"]
+    )
+    assert args_moe_explicit.moe
+    assert args_moe_explicit.allow_incomplete
+    assert args_moe_explicit.stage == chat._STAGE_PRETRAINED
+    assert chat._resolve_chat_run(
+        stage=args_moe_explicit.stage,
+        moe=args_moe_explicit.moe,
+    ) == (chat._DEFAULT_MOE_RUN_ID, chat._SOURCE_STORAGE_BUCKET)
+
+    args_run_id = chat._parse_args(
+        ["--run-id", "moe-100b-superbpe-001", "--pre-trained"]
+    )
+    assert chat._resolve_chat_run(
+        stage=args_run_id.stage,
+        run_id=args_run_id.run_id,
+    ) == ("moe-100b-superbpe-001", chat._SOURCE_STORAGE_BUCKET)
+    assert chat._parse_args(["--run-id", chat._DEFAULT_MOE_RUN_ID]).stage == chat._STAGE_PRETRAINED
+
+    with pytest.raises(SystemExit):
+        chat._parse_args(["--moe", "--run-id", "not-a-moe-run"])
+    with pytest.raises(RuntimeError, match="only supports --pre-trained"):
+        chat._resolve_chat_run(stage=chat._STAGE_SFT, run_id=chat._DEFAULT_MOE_RUN_ID)
+    with pytest.raises(SystemExit):
+        chat._parse_args(["--moe", "--sft"])
+
+    # 100M 100B is not a registered profile
+    with pytest.raises(RuntimeError, match="no registered pre-trained chat profile"):
+        chat._resolve_chat_run(
+            100_000_000,
+            100_000_000_000,
+            stage=chat._STAGE_PRETRAINED,
+        )
+
+
+def test_superbpe_eos_token_id_and_generation_settings() -> None:
+    class MoEConfig:
+        semantic_vocab_size = 8_000
+        max_seq_len = 2048
+
+    class StandardConfig:
+        semantic_vocab_size = 50_257
+        max_seq_len = 2048
+
+    class Device:
+        type = "cpu"
+
+    assert chat._resolve_eos_token_id(MoEConfig()) == 7_992
+    assert chat._resolve_eos_token_id(StandardConfig()) == 50_256
+
+    settings = chat._generation_settings(
+        MoEConfig(), device=Device(), run_id=chat._DEFAULT_MOE_RUN_ID
+    )
+    assert settings["eos_token_id"] == 7_992
+    assert settings["precision"] == "fp32"
+
+
+def test_superbpe_chat_encoding_encode_decode_stream() -> None:
+    encoding = chat.SuperBPEChatEncoding()
+    text = "Hello, world! 🍕 Ciao caffè."
+    ids = encoding.encode(text)
+    assert isinstance(ids, list)
+    assert ids
+    assert encoding.decode(ids) == text
+
+    streamer = chat._TokenTextStreamer(encoding)
+    chunks = [streamer.push(tid) for tid in ids]
+    chunks.append(streamer.finish())
+    assert "".join(chunks) == text
+
+
+def test_build_chat_encoding_selects_pinned_superbpe_per_run() -> None:
+    class MoEConfig:
+        semantic_vocab_size = 8_000
+        max_seq_len = 2048
+
+    for run_id, expected_filename in (
+        ("moe-100b-superbpe-001", "superbpe_8000.json"),
+        (chat._DEFAULT_MOE_RUN_ID, "superbpe_8000_v2.json"),
+    ):
+        encoding = chat._build_chat_encoding(
+            stage=chat._STAGE_PRETRAINED,
+            config=MoEConfig(),
+            run_id=run_id,
+        )
+        assert isinstance(encoding, chat.SuperBPEChatEncoding)
+        settings = chat._generation_settings(MoEConfig(), device=type("Device", (), {"type": "cpu"})(), run_id=run_id)
+        assert settings["tokenizer_artifact"] == f"tokenizer/{expected_filename}"
+        assert settings["tokenizer_sha256"] == chat._MOE_CHAT_TOKENIZERS[run_id][1]
+        assert encoding.decode(encoding.encode("The capital of France is Paris.")) == (
+            "The capital of France is Paris."
+        )
+
+    previous = chat._build_chat_encoding(
+        stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id="moe-100b-superbpe-001"
+    )
+    latest = chat._build_chat_encoding(
+        stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id=chat._DEFAULT_MOE_RUN_ID
+    )
+    assert previous.encode("The capital of France is Paris.") != latest.encode(
+        "The capital of France is Paris."
+    )
+    with pytest.raises(RuntimeError, match="no verified SuperBPE tokenizer identity"):
+        chat._build_chat_encoding(
+            stage=chat._STAGE_PRETRAINED, config=MoEConfig(), run_id="moe-unknown"
+        )
+    with pytest.raises(RuntimeError, match="no verified SuperBPE tokenizer identity"):
+        chat._generation_settings(MoEConfig(), device=type("Device", (), {"type": "cpu"})())
+
+
+def test_superbpe_artifact_drift_rejected(tmp_path) -> None:
+    path = tmp_path / "modified.json"
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="artifact identity mismatch"):
+        chat.SuperBPEChatEncoding(path, expected_sha256=chat._MOE_CHAT_TOKENIZERS[chat._DEFAULT_MOE_RUN_ID][1])
+
+
+def test_load_completed_checkpoint_handles_moe_and_superbpe(tmp_path) -> None:
+    import hashlib
+    import json
+    import pickle
+    import torch
+    from MOE_model.config import MoEModelConfig
+    from MOE_model.model import MoESmallLLM
+    from model.config import ModelConfig
+
+    dense = ModelConfig(
+        semantic_vocab_size=8000,
+        padded_vocab_size=8192,
+        max_seq_len=16,
+        d_model=64,
+        n_layers=4,
+        d_ff=96,
+        n_heads=2,
+        head_dim=32,
+        gdn_num_key_heads=2,
+        gdn_num_value_heads=2,
+        gdn_key_dim=32,
+        gdn_value_dim=32,
+        gdn_conv_kernel_size=4,
+        gdn_chunk_size=4,
+    )
+    moe_config = MoEModelConfig(
+        dense=dense,
+        num_experts=8,
+        top_k=1,
+        expert_d_ff=96,
+        moe_layer_indices=(0, 1, 2, 3),
+    )
+    model = MoESmallLLM(moe_config)
+
+    checkpoint_dir = tmp_path / "moe_checkpoint"
+    checkpoint_dir.mkdir()
+    (checkpoint_dir / "checkpoint.json").write_text(
+        json.dumps({"version": 1, "pipeline_state": {}}), encoding="utf-8"
+    )
+
+    trainer_state = {
+        "version": 1,
+        "config": {
+            "schedule": "wsd",
+            "warmup_tokens": 100,
+            "stable_tokens": 800,
+            "decay_tokens": 100,
+        },
+        "consumed_tokens": 500,
+        "model_config": moe_config.as_dict(),
+        "model": model.state_dict(),
+    }
+    with (checkpoint_dir / "trainer_state.pkl").open("wb") as handle:
+        pickle.dump(trainer_state, handle)
+
+    def _sha(p):
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+
+    manifest = {
+        "version": 1,
+        "files": [
+            {
+                "name": "checkpoint.json",
+                "sha256": _sha(checkpoint_dir / "checkpoint.json"),
+                "byte_size": (checkpoint_dir / "checkpoint.json").stat().st_size,
+            },
+            {
+                "name": "trainer_state.pkl",
+                "sha256": _sha(checkpoint_dir / "trainer_state.pkl"),
+                "byte_size": (checkpoint_dir / "trainer_state.pkl").stat().st_size,
+            },
+        ],
+    }
+    (checkpoint_dir / "local_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Incomplete without permission raises
+    with pytest.raises(RuntimeError, match="not complete"):
+        chat._load_completed_checkpoint(
+            checkpoint_dir,
+            device=torch.device("cpu"),
+            stage=chat._STAGE_PRETRAINED,
+            run_id="other-run",
+            allow_incomplete=False,
+        )
+
+    # Incomplete with allow_incomplete=True succeeds and returns MoESmallLLM
+    loaded_model, loaded_config, consumed, _ = chat._load_completed_checkpoint(
+        checkpoint_dir,
+        device=torch.device("cpu"),
+        stage=chat._STAGE_PRETRAINED,
+        run_id="other-run",
+        allow_incomplete=True,
+    )
+    assert isinstance(loaded_model, MoESmallLLM)
+    assert loaded_config.semantic_vocab_size == 8000
+    assert consumed == 500
+
+    # The pinned, verified chat snapshot is an intermediate training checkpoint.
+    moe_loaded, _, _, _ = chat._load_completed_checkpoint(
+        checkpoint_dir,
+        device=torch.device("cpu"),
+        stage=chat._STAGE_PRETRAINED,
+        run_id=chat._DEFAULT_MOE_RUN_ID,
+        allow_incomplete=False,
+    )
+    assert isinstance(moe_loaded, MoESmallLLM)

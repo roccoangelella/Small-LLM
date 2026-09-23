@@ -1,6 +1,6 @@
 # Current Small-LLM Project Status
 
-Last reviewed: 2026-09-14
+Last reviewed: 2026-09-23
 
 Verification: [CPU provider continuation](../evidence/moe_provider_continuation_cpu_2026-09-13.md).
 
@@ -37,6 +37,15 @@ but retains mathematics clusters. It does not guarantee conversational-only or
 code-free text. Tokenizer provenance is ADR 0175: 10 GB decoded from the existing
 10B-token qualification corpus, with stage 2 on a 2 GB prefix. No tokenizer or
 dataset recipe is changed by the continuation work.
+
+MoE local chat: the pinned step-75,000 `moe-100b-superbpe-003` snapshot needs
+`tokenizer/superbpe_8000_v2.json`, not run 001's `superbpe_8000.json`.
+A same-checkpoint, same-text test scores 3.074 CE with v2 versus 10.569 with v1;
+run 001 reverses that relationship. Chat now pins and hashes the tokenizer per
+known run and rejects unknown 8k identities. This fixes the gibberish, **not**
+pretrained-model instruction following: greedy `hello` under the SFT-style chat
+template still loops on `Assistant:`. Dataset manifest tokenizer identity is not
+yet checked by the trainer. [Measured evidence](../evidence/moe_chat_tokenizer_mismatch_2026-09-23.md).
 
 ## Historical detail through 2026-09-11
 

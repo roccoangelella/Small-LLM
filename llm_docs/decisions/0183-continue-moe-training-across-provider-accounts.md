@@ -1,14 +1,27 @@
-# Continue the MoE run across provider accounts
+---
+status: accepted
+date: 2026-09-13
+supersedes: null
+---
+
+# 0183 — Continue the MoE run across provider accounts
 
 - Status: accepted
 - Date: 2026-09-13
 - Scope: accepted MoE production; historical dense and pilot recipes stay separate.
 
-## Decision
+## Context and problem statement
 
 Edo requested the ability to consume the available provider credits, then continue the
 same training on another account/GPU. No credit monitor, scheduler, or preventive
 budget shutdown is needed. Checkpoints are the recovery boundary.
+
+## Considered options
+
+- Rely on the current provider's volume alone: not portable across accounts.
+- Publish verified checkpoints to the existing HF Storage Bucket and resume explicitly.
+
+## Decision outcome
 
 Both MoE launchers now use the existing HF Storage Bucket transport. Every cadence
 checkpoint and final checkpoint is uploaded synchronously, verified by read-back
