@@ -1,7 +1,7 @@
 # Usage:
 #   python chat.py --model_params 100M --num_tokens 2B --pre-trained   # stable pretrained run
 #   python chat.py --model_params 100M --num_tokens 10B --pre-trained  # completed 10B pretrained run
-#   python chat.py --moe  # pinned best step 75,000 from moe-100b-superbpe-003
+#   python chat.py --moe  # track verified best checkpoint from moe-100b-superbpe-003
 #   python chat.py --model_params 20M --num_tokens 500M --sft         # completed SFT run
 #   python chat.py --model_params 100M --num_tokens 10B --sft         # completed 100M/10B SFT run
 #   python chat.py --model_params 100M --num_tokens 2B --r-sft        # accepted atomic R-SFT run
@@ -10,10 +10,11 @@
 # --model_params: model parameter profile (for example 20M or 100M)
 # --num_tokens: parent pretraining token profile (for example 500M, 2B, 10B, or 100B)
 # Exactly one stage flag is required: --pre-trained, --sft, or --r-sft.
+# Each input is a standalone raw completion prefix; no role labels or chat history.
 
-TEMPERATURE = 0.0
-TOP_K = 0
-TOP_P = 1.0
+TEMPERATURE = 1.0
+TOP_K = 20
+TOP_P = 0.9
 MAX_NEW_TOKENS = 128
 SEED = 17
 
@@ -27,6 +28,7 @@ import math
 import os
 import shutil
 import sys
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -44,8 +46,11 @@ _STAGE_R_SFT = "r-sft"
 _GPT2_SEMANTIC_VOCAB_SIZE = 50_257
 _SUPERBPE_SEMANTIC_VOCAB_SIZE = 8_000
 _SUPERBPE_EOS_TOKEN_ID = 7_992
-_DEFAULT_MOE_RUN_ID = "moe-100b-superbpe-003-chat-best-step-00075000"
-_INCOMPLETE_ALLOWED_RUNS = frozenset({_DEFAULT_MOE_RUN_ID, "moe-100b-superbpe-001"})
+_DEFAULT_MOE_RUN_ID = "moe-100b-superbpe-003"
+_MOE_SNAPSHOT_RUN_ID = "moe-100b-superbpe-003-chat-best-step-00075000"
+_INCOMPLETE_ALLOWED_RUNS = frozenset(
+    {_DEFAULT_MOE_RUN_ID, _MOE_SNAPSHOT_RUN_ID, "moe-100b-superbpe-001"}
+)
 # Same 8k geometry and EOS, but different ID-to-text mappings. Do not infer the
 # tokenizer from semantic_vocab_size or silently use v1 for an unknown run.
 _MOE_CHAT_TOKENIZERS = {
@@ -54,6 +59,10 @@ _MOE_CHAT_TOKENIZERS = {
         "4220ad83137407434877a128cb7f6b314161e8ed241514bfe9ba15045e899b06",
     ),
     _DEFAULT_MOE_RUN_ID: (
+        "superbpe_8000_v2.json",
+        "068e20ef8a16b1bff2a2a1d161e5a6f1cfd0935befa7c0ae734c9ec376d373bb",
+    ),
+    _MOE_SNAPSHOT_RUN_ID: (
         "superbpe_8000_v2.json",
         "068e20ef8a16b1bff2a2a1d161e5a6f1cfd0935befa7c0ae734c9ec376d373bb",
     ),
@@ -205,7 +214,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--moe",
         action="store_true",
-        help="select the pinned best MoE checkpoint from moe-100b-superbpe-003 (step 75,000)",
+        help="track the verified best MoE checkpoint from moe-100b-superbpe-003",
     )
     parser.add_argument(
         "--model_params",
@@ -653,6 +662,31 @@ def _invoke_checkpoint_loader(
     return _load_completed_checkpoint(checkpoint_root, **kwargs)
 
 
+def _remote_moe_best(*, repo_id: str, run_id: str, token: str | None) -> dict[str, str]:
+    """Read the live best pointer before trusting the local chat cache."""
+    from dataset.src.hf_bucket_checkpoint import HuggingFaceBucketCheckpointStore
+    from trainer.post_pretraining_prompt_suite import _checkpoint_prefix
+    from trainer.post_pretraining_prompt_suite_bucket import _resolve_bucket_id
+
+    bucket_id = _resolve_bucket_id(repo_id)
+    pointer = HuggingFaceBucketCheckpointStore(bucket_id, token=token, private=True).read_json(
+        f"run/{run_id}/best.json"
+    )
+    if pointer is None:
+        raise RuntimeError(
+            f"Hugging Face Storage Bucket best pointer is missing: "
+            f"{bucket_id}/run/{run_id}/best.json"
+        )
+    checkpoint_id, prefix = _checkpoint_prefix(pointer, run_id=run_id, pointer_name="best")
+    digest = hashlib.sha256(json.dumps(pointer, sort_keys=True).encode("utf-8")).hexdigest()
+    return {
+        "checkpoint_id": checkpoint_id,
+        "prefix": prefix,
+        "bucket_id": bucket_id,
+        "best_pointer_sha256": digest,
+    }
+
+
 def _download_model(
     *,
     repo_id: str,
@@ -661,8 +695,12 @@ def _download_model(
     stage: str,
     device: object,
     allow_incomplete: bool = False,
+    track_best: bool = False,
 ):
+    if track_best and (run_id != _DEFAULT_MOE_RUN_ID or source != _SOURCE_STORAGE_BUCKET):
+        raise RuntimeError("live MoE best tracking requires the registered MoE run and Storage Bucket")
     token = os.environ.get("HF_TOKEN")
+    best = _remote_moe_best(repo_id=repo_id, run_id=run_id, token=token) if track_best else None
     cache_root = _chat_model_cache_dir(run_id=run_id, stage=stage)
     cached = _read_cached_checkpoint(
         cache_root,
@@ -671,7 +709,13 @@ def _download_model(
         source=source,
         stage=stage,
     )
-    if cached is not None:
+    if cached is not None and (
+        best is None
+        or (
+            all(cached[1].get(key) == value for key, value in best.items())
+            and cached[1].get("pointer") == "best"
+        )
+    ):
         checkpoint_root, cached_info = cached
         try:
             model, config, consumed, reasoning_spec = _invoke_checkpoint_loader(
@@ -682,7 +726,8 @@ def _download_model(
                 allow_incomplete=allow_incomplete,
             )
         except Exception:
-            _remove_managed_cache(cache_root)
+            if not track_best:
+                _remove_managed_cache(cache_root)
         else:
             return (
                 model,
@@ -693,8 +738,14 @@ def _download_model(
                 cache_root,
             )
 
-    _remove_managed_cache(cache_root)
-    cache_root.mkdir(parents=True, exist_ok=True)
+    # Stage a new best before replacing the old verified checkpoint.
+    if track_best:
+        cache_root.parent.mkdir(parents=True, exist_ok=True)
+        destination = Path(tempfile.mkdtemp(prefix=f".{run_id}-new-", dir=cache_root.parent))
+    else:
+        _remove_managed_cache(cache_root)
+        cache_root.mkdir(parents=True, exist_ok=True)
+        destination = cache_root
     try:
         if source in {_SOURCE_SFT, _SOURCE_R_SFT}:
             from trainer.post_pretraining_prompt_suite import (
@@ -707,7 +758,7 @@ def _download_model(
                 token=token,
                 revision=None,
                 pointer_name="latest",
-                destination=cache_root,
+                destination=destination,
             )
         elif source == _SOURCE_STABLE_MODEL:
             from trainer.model_artifact import download_verified_model_artifact
@@ -717,21 +768,39 @@ def _download_model(
                 run_id=run_id,
                 token=token,
                 revision=None,
-                destination=cache_root,
+                destination=destination,
             )
         elif source == _SOURCE_STORAGE_BUCKET:
-            from trainer.post_pretraining_prompt_suite_bucket import (
-                download_verified_bucket_checkpoint,
-            )
+            if track_best:
+                from trainer.bucket_checkpoint_eval import download_verified_checkpoint
 
-            checkpoint_root, info = download_verified_bucket_checkpoint(
-                repo_id=repo_id,
-                run_id=run_id,
-                token=token,
-                revision=None,
-                pointer_name="latest",
-                destination=cache_root,
-            )
+                checkpoint_root, info = download_verified_checkpoint(
+                    repo_id=best["bucket_id"],
+                    run_id=run_id,
+                    token=token,
+                    revision=None,
+                    pointer_name="best",
+                    destination=destination,
+                )
+                if (
+                    any(info.get(key) != best[key] for key in ("checkpoint_id", "prefix", "bucket_id"))
+                    or _remote_moe_best(repo_id=repo_id, run_id=run_id, token=token) != best
+                ):
+                    raise RuntimeError("MoE best pointer changed during download; retry")
+                info = {**info, "best_pointer_sha256": best["best_pointer_sha256"]}
+            else:
+                from trainer.post_pretraining_prompt_suite_bucket import (
+                    download_verified_bucket_checkpoint,
+                )
+
+                checkpoint_root, info = download_verified_bucket_checkpoint(
+                    repo_id=repo_id,
+                    run_id=run_id,
+                    token=token,
+                    revision=None,
+                    pointer_name="latest",
+                    destination=destination,
+                )
         else:
             raise RuntimeError(f"unsupported chat artifact source: {source!r}")
 
@@ -743,15 +812,30 @@ def _download_model(
             allow_incomplete=allow_incomplete,
         )
         _write_cached_checkpoint_metadata(
-            cache_root,
+            destination,
             repo_id=repo_id,
             run_id=run_id,
             source=source,
             stage=stage,
             info=info,
         )
+        if track_best:
+            backup = Path(tempfile.mkdtemp(prefix=f".{run_id}-old-", dir=cache_root.parent))
+            backup.rmdir()
+            moved_old = False
+            try:
+                if cache_root.exists() or cache_root.is_symlink():
+                    os.replace(cache_root, backup)
+                    moved_old = True
+                os.replace(destination, cache_root)
+            except Exception:
+                if moved_old:
+                    os.replace(backup, cache_root)
+                raise
+            if moved_old:
+                _remove_managed_cache(backup)
     except Exception:
-        _remove_managed_cache(cache_root)
+        _remove_managed_cache(destination)
         raise
     return (
         model,
@@ -763,24 +847,18 @@ def _download_model(
     )
 
 
-def _fit_generation_prompt(history, *, template, encoding, max_prompt_tokens: int):
-    """Keep the newest complete turns while reserving room for the next answer."""
+def _encode_raw_prompt(text: str, *, encoding: object, max_prompt_tokens: int) -> list[int]:
+    """Encode exactly the input text, leaving room for the generated continuation."""
 
-    while True:
-        try:
-            prompt_ids = template.encode_generation_prompt(history, encoding)
-        except ValueError as error:
-            if "generation prompt exceeds model context" not in str(error):
-                raise
-            prompt_ids = None
-        if prompt_ids is not None and len(prompt_ids) <= max_prompt_tokens:
-            return history, prompt_ids
-        if len(history) <= 1:
-            raise RuntimeError(
-                f"message is too long; the chat prompt must fit within {max_prompt_tokens} tokens "
-                f"after reserving {MAX_NEW_TOKENS} tokens for the answer"
-            )
-        history = history[2:]
+    prompt_ids = encoding.encode(text)
+    if not prompt_ids:
+        raise ValueError("prompt encodes to no tokens")
+    if len(prompt_ids) > max_prompt_tokens:
+        raise ValueError(
+            f"prompt is {len(prompt_ids)} tokens; maximum is {max_prompt_tokens} "
+            "after reserving room for the completion"
+        )
+    return prompt_ids
 
 
 def _stream_sample_token_ids(
@@ -919,7 +997,7 @@ def _generation_settings(config, *, device, run_id: str | None = None) -> dict[s
         "top_k": TOP_K,
         "max_new_tokens": MAX_NEW_TOKENS,
         "base_seed": SEED,
-        "seed_policy": "base_seed + zero_based_turn_index",
+        "seed_policy": "fixed_seed_per_prompt",
         "max_seq_len": config.max_seq_len,
         "eos_token_id": _resolve_eos_token_id(config),
         "precision": "fp16" if getattr(device, "type", None) == "cuda" else "fp32",
@@ -932,9 +1010,6 @@ def _generation_settings(config, *, device, run_id: str | None = None) -> dict[s
 
 
 def _chat(model, config, *, device, stage: str, reasoning_spec=None, run_id: str | None = None) -> None:
-    from post_training.sft.schema import ChatMessage
-    from post_training.sft.template import GPT2ChatTemplate
-
     eos_token_id = _resolve_eos_token_id(config)
     encoding = _build_chat_encoding(
         stage=stage,
@@ -942,44 +1017,28 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None, run_id: str
         config=config,
         run_id=run_id,
     )
-    template = GPT2ChatTemplate(
-        eos_token_id=eos_token_id,
-        maximum_context_tokens=config.max_seq_len,
-        maximum_assistant_tokens=min(MAX_NEW_TOKENS, 512),
-    )
     precision = str(_generation_settings(config, device=device, run_id=run_id)["precision"])
     max_prompt_tokens = config.max_seq_len - MAX_NEW_TOKENS
     if max_prompt_tokens <= 0:
         raise RuntimeError("MAX_NEW_TOKENS must be smaller than the model context length")
 
-    history: list[ChatMessage] = []
-    turn = 0
-    print("Type /clear to clear history, or /quit to exit.")
+    print("Type /quit to exit. Each input is a standalone completion prompt.")
     while True:
         try:
-            text = input("\nyou> ").strip()
+            text = input("\nprompt> ")
         except (EOFError, KeyboardInterrupt):
             print()
             return
         if not text:
             continue
-        if text.lower() in {"/quit", "/exit"}:
+        command = text.strip().lower()
+        if command in {"/quit", "/exit"}:
             return
-        if text.lower() == "/clear":
-            history.clear()
-            print("history cleared")
-            continue
-
-        candidate = [*history, ChatMessage(role="user", content=text)]
-        candidate, prompt_ids = _fit_generation_prompt(
-            candidate,
-            template=template,
-            encoding=encoding,
-            max_prompt_tokens=max_prompt_tokens,
+        prompt_ids = _encode_raw_prompt(
+            text, encoding=encoding, max_prompt_tokens=max_prompt_tokens
         )
-        print("assistant> ", end="", flush=True)
         try:
-            generated = _stream_sample_token_ids(
+            _stream_sample_token_ids(
                 model,
                 prompt_ids,
                 max_new_tokens=MAX_NEW_TOKENS,
@@ -988,20 +1047,14 @@ def _chat(model, config, *, device, stage: str, reasoning_spec=None, run_id: str
                 temperature=TEMPERATURE,
                 top_p=TOP_P,
                 top_k=TOP_K,
-                seed=SEED + turn,
+                seed=SEED,
                 precision=precision,
                 encoding=encoding,
             )
         except BaseException:
             print()
             raise
-        turn += 1
-        response = encoding.decode(generated).strip()
-        if not response:
-            print("[ended turn without text]")
-            continue
         print()
-        history = [*candidate, ChatMessage(role="assistant", content=response)]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1032,6 +1085,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage=args.stage,
             device=device,
             allow_incomplete=args.allow_incomplete,
+            track_best=args.moe and run_id == _DEFAULT_MOE_RUN_ID,
         )
     except Exception as error:
         raise RuntimeError(

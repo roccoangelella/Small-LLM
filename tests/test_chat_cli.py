@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from types import SimpleNamespace
 
 import pytest
 
@@ -151,40 +152,6 @@ def test_chat_stage_flag_is_mandatory_and_mutually_exclusive() -> None:
     assert pretrained_10b.num_tokens == 10_000_000_000
 
 
-class _FakeTemplate:
-    def __init__(self, hard_limit: int = 25) -> None:
-        self.hard_limit = hard_limit
-
-    def encode_generation_prompt(self, history, encoding):
-        del encoding
-        size = len(history) * 10
-        if size > self.hard_limit:
-            raise ValueError("generation prompt exceeds model context")
-        return tuple(range(size))
-
-
-def test_fit_generation_prompt_drops_oldest_complete_turn() -> None:
-    history = ["u1", "a1", "u2"]
-    fitted, prompt_ids = chat._fit_generation_prompt(
-        history,
-        template=_FakeTemplate(),
-        encoding=object(),
-        max_prompt_tokens=20,
-    )
-    assert fitted == ["u2"]
-    assert len(prompt_ids) == 10
-
-
-def test_fit_generation_prompt_rejects_single_overlong_message() -> None:
-    with pytest.raises(RuntimeError, match="message is too long"):
-        chat._fit_generation_prompt(
-            ["u1"],
-            template=_FakeTemplate(hard_limit=5),
-            encoding=object(),
-            max_prompt_tokens=5,
-        )
-
-
 class _SplitUtf8Encoding:
     _TOKENS = {
         1: b"plain ",
@@ -216,6 +183,74 @@ class _ByteEncoding:
 
     def decode_single_token_bytes(self, token_id: int) -> bytes:
         return bytes([token_id])
+
+
+def test_raw_prompt_is_exact_and_rejects_overlong_input() -> None:
+    encoding = _ByteEncoding()
+    assert chat._encode_raw_prompt(" France is ", encoding=encoding, max_prompt_tokens=11) == list(
+        b" France is "
+    )
+    with pytest.raises(ValueError, match="maximum is 10"):
+        chat._encode_raw_prompt(" France is ", encoding=encoding, max_prompt_tokens=10)
+    with pytest.raises(ValueError, match="no tokens"):
+        chat._encode_raw_prompt("", encoding=encoding, max_prompt_tokens=10)
+
+
+def test_chat_uses_standalone_raw_prompts_and_unlabelled_output(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prompts = iter([" The capital of France is ", "Once upon a time", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr(chat, "_build_chat_encoding", lambda **kwargs: _ByteEncoding())
+    calls = []
+
+    def fake_sample(model, prompt_ids, **kwargs):
+        calls.append((prompt_ids, kwargs["seed"]))
+        print(("Paris", "a fox")[len(calls) - 1], end="")
+        return []
+
+    monkeypatch.setattr(chat, "_stream_sample_token_ids", fake_sample)
+    chat._chat(
+        object(), SimpleNamespace(max_seq_len=256, semantic_vocab_size=50_257),
+        device=SimpleNamespace(type="cpu"), stage=chat._STAGE_PRETRAINED,
+    )
+    assert calls == [
+        (list(b" The capital of France is "), chat.SEED),
+        (list(b"Once upon a time"), chat.SEED),
+    ]
+    output = capsys.readouterr().out
+    assert "Paris\n" in output and "a fox\n" in output
+    assert "User:" not in output and "Assistant:" not in output
+    assert "you>" not in output and "assistant>" not in output
+
+
+def test_every_prompt_is_independent_and_clear_is_not_a_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    prompts = iter(["first", "second", "first", "/clear", "/quit"])
+    monkeypatch.setattr("builtins.input", lambda prompt: next(prompts))
+    monkeypatch.setattr(chat, "_build_chat_encoding", lambda **kwargs: _ByteEncoding())
+    calls = []
+
+    def fake_sample(model, prompt_ids, **kwargs):
+        calls.append((prompt_ids, kwargs["seed"]))
+        print(f"output-{kwargs['seed']}", end="")
+        return []
+
+    monkeypatch.setattr(chat, "_stream_sample_token_ids", fake_sample)
+    chat._chat(
+        object(), SimpleNamespace(max_seq_len=256, semantic_vocab_size=50_257),
+        device=SimpleNamespace(type="cpu"), stage=chat._STAGE_PRETRAINED,
+    )
+    assert calls == [
+        (list(b"first"), chat.SEED),
+        (list(b"second"), chat.SEED),
+        (list(b"first"), chat.SEED),
+        (list(b"/clear"), chat.SEED),
+    ]
+    output = capsys.readouterr().out
+    assert "new chat started" not in output
+    assert output.count(f"output-{chat.SEED}\n") == 4
 
 
 def test_chat_tokenizer_selection_keeps_normal_stages_plain_and_rsft_extended() -> None:
@@ -376,7 +411,7 @@ def test_generation_settings_report_effective_chat_sampler() -> None:
         "top_k": chat.TOP_K,
         "max_new_tokens": chat.MAX_NEW_TOKENS,
         "base_seed": chat.SEED,
-        "seed_policy": "base_seed + zero_based_turn_index",
+        "seed_policy": "fixed_seed_per_prompt",
         "max_seq_len": 1024,
         "eos_token_id": 50_256,
         "precision": "fp16",
