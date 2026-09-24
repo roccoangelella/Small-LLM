@@ -29,8 +29,9 @@ integration has not been run. [Procedure](../runbooks/moe-provider-continuation.
 Kaggle 2×T4 read-only continuation qualification (2026-09-24): the live run 003
 checkpoint/corpus restored and passed the CPU gate. A MoE-specific two-rank
 adapter replayed the full 64-sequence block across both GPUs; offline CLI
-validation/save and a second exact local resume passed, with global router
-quantiles and rank-zero-only side effects. The original W&B writer was still
+validation/save and a second exact local resume passed on the public
+`moe-8e-top1` checkout (`7ed4e29`), with global router quantiles and
+rank-zero-only side effects. The original W&B writer was still
 `running`; live Kaggle W&B resume and remote publication have **not** been
 qualified. Do not start another writer. [Kaggle runbook](../runbooks/moe-kaggle-continuation.md).
 

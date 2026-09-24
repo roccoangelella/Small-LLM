@@ -89,7 +89,10 @@ publication disabled. The first dual update reached ~10,703 target tokens/s
 and 4.32 GB peak per-GPU allocation at microbatch 1; microbatch 2 was
 slower (~9,241 targets/s), so the production default remains 1. Router bias
 matched the serial update **exactly** and the largest model-weight difference
-was 2.67e-5 (BF16/reduction-order drift). [Measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md).
+was 2.67e-5 (BF16/reduction-order drift). The clean public
+`moe-8e-top1` checkout at `7ed4e29` separately passed preflight at HF
+step 277,500, then completed an isolated two-rank GPU step and an exact
+second local resume from its newly saved checkpoint. [Measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md).
 
 **This does not authorize starting now.** W&B still reported the original
 writer `running` during qualification; no simultaneous second writer, live W&B

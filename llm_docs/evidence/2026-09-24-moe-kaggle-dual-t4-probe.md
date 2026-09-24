@@ -51,6 +51,18 @@ order rather than a different logical batch. The unit test also independently
 checks a two-rank synthetic top-M merge against the exact global fourth-order
 statistic.
 
+After pushing the adapter to public `moe-8e-top1` as
+`7ed4e291e86882455ad187070301cab3ebc38b47`, a **clean checkout in the
+same Kaggle notebook** passed the actual read-only preflight at step 277,500
+(the first attempt failed closed because the remote latest pointer advanced
+during the CPU gate; retry restored the new pointer). The public two-rank
+entrypoint then completed an isolated update from step 277,500 to 277,501
+(~11,008 targets/s), validated, and saved its own checkpoint. A second
+public-checkout torchrun restored that saved checkpoint and completed 277,502
+with another validation/save. No shared HF/W&B writes occurred in either
+probe. Both GPUs participated; the public branch's scientific source commit
+was recorded in the test checkpoint metadata.
+
 **Limit:** this is offline training/validation/local-save/exact-resume, not a
 live W&B `must` resume or HF upload. The original run still reported
 `running`; sending this slower replica to the same latest pointer at the same
