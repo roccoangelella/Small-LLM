@@ -93,7 +93,7 @@ def kaggle_popen(command: list[str], **kwargs: object) -> subprocess.Popen:
 def request(commit: str, work_dir: Path) -> ProductionRequest:
     return ProductionRequest(
         run_id=RUN_ID, dataset_dir=str(work_dir / "dataset"), total_steps=TARGET_STEPS,
-        precision="bf16", microbatch_size=1, validation_microbatch_size=1,
+        precision="bf16", microbatch_size=4, validation_microbatch_size=1,
         source_commit=commit, resume_source_commit=RUN_ORIGIN, resume="latest",
         checkpoint_every_steps=1000, validation_blocks=16, keep_last_checkpoints=2,
         max_wall_seconds=9 * 60 * 60, compile_mode="off",  # T4: no qualified compile lane

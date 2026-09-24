@@ -24,6 +24,9 @@ if str(ROOT) not in sys.path:
 
 WORLD_SIZE = 2
 GLOBAL_SEQUENCES = 64
+# Microbatch 8 nearly exhausted T4 memory on a real four-step replay (~14.95 GiB
+# reserved); 4 retained headroom and consistently beat 1 on the same blocks.
+QUALIFIED_MICROBATCH_SIZES = (1, 2, 4)
 
 
 class FollowerCache:
@@ -159,8 +162,8 @@ def distributed_step(engine: Any, batch: Any) -> Any:
     started = time.perf_counter()
     torch.cuda.reset_peak_memory_stats(engine.device)
     size = engine.config.microbatch_size
-    if size not in {1, 2} or (GLOBAL_SEQUENCES // WORLD_SIZE) % size:
-        raise RuntimeError("MoE T4 microbatch must divide 32 and be qualified as 1 or 2")
+    if size not in QUALIFIED_MICROBATCH_SIZES or (GLOBAL_SEQUENCES // WORLD_SIZE) % size:
+        raise RuntimeError("MoE T4 microbatch must divide 32 and be qualified as 1, 2, or 4")
     inputs, labels = _ordered_batch_tensors(batch)
     total_positions = int(inputs.numel())
     routers = [block.ffn.router for block in raw.blocks]

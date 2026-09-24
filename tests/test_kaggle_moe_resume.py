@@ -28,6 +28,7 @@ class KaggleMoEResumeTests(TestCase):
         self.assertEqual(req.resume_source_commit, "5f08941028cce913f336a8aa2f8ce5fb6231ca4c")
         self.assertEqual(req.resume, "latest")
         self.assertEqual(req.precision, "bf16")
+        self.assertEqual(req.microbatch_size, 4)
         self.assertEqual(req.total_steps, 762940)
 
     def test_wrong_checkout_or_public_head_fails(self) -> None:

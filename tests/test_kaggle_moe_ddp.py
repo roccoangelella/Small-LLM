@@ -20,6 +20,10 @@ SPEC.loader.exec_module(moe_ddp)
 
 
 class KaggleMoEDDPTests(TestCase):
+    def test_only_measured_microbatches_with_t4_headroom_are_qualified(self) -> None:
+        self.assertEqual(moe_ddp.QUALIFIED_MICROBATCH_SIZES, (1, 2, 4))
+        self.assertEqual(moe_ddp.GLOBAL_SEQUENCES // moe_ddp.WORLD_SIZE, 32)
+
     def test_wall_drain_from_either_rank_reaches_both(self) -> None:
         with mock.patch.object(torch.distributed, "all_reduce", side_effect=lambda flag, op: flag.fill_(1)):
             self.assertTrue(moe_ddp.any_rank_drain(False, torch.device("cpu")))
