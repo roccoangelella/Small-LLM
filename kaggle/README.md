@@ -30,7 +30,7 @@ The wrapper normalizes repository paths after the `kaggle/src/` reorganization b
 
 MoE run 003 uses the separate, fail-closed `python kaggle/moe_resume.py` entrypoint
 (preflight by default; `--start` only after the previous writer stops). It runs
-on **one** of Kaggle's two T4s, not the dense DDP runtime. Notebook setup,
+on **both** Kaggle T4s via the MoE-specific DDP adapter, not the dense DDP runtime. Notebook setup,
 run-specific identities, and the remaining live-publication gate are documented
 in [`llm_docs/runbooks/moe-kaggle-continuation.md`](../llm_docs/runbooks/moe-kaggle-continuation.md).
 

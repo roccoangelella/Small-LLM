@@ -27,12 +27,12 @@ the actual CLI and byte-accurate bucket/W&B fakes. Live cross-GPU migration with
 integration has not been run. [Procedure](../runbooks/moe-provider-continuation.md).
 
 Kaggle 2×T4 read-only continuation qualification (2026-09-24): the live run 003
-checkpoint/corpus restored and passed the CPU gate; one T4 replayed a BF16
-step, local validation/save, and a second exact local resume with no live
-HF/W&B writes. The second T4 is unused (the MoE engine is single-device).
-The original W&B writer was still `running`; live Kaggle W&B resume and
-remote publication have **not** been qualified. Do not start another writer.
-See [the Kaggle runbook](../runbooks/moe-kaggle-continuation.md).
+checkpoint/corpus restored and passed the CPU gate. A MoE-specific two-rank
+adapter replayed the full 64-sequence block across both GPUs; offline CLI
+validation/save and a second exact local resume passed, with global router
+quantiles and rank-zero-only side effects. The original W&B writer was still
+`running`; live Kaggle W&B resume and remote publication have **not** been
+qualified. Do not start another writer. [Kaggle runbook](../runbooks/moe-kaggle-continuation.md).
 
 The authorized 100B run is active on Modal after an OOM recovery at microbatch32;
 remote checkpoints through32500 were observed by the local supervisor on September13.

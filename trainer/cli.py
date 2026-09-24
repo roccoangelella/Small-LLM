@@ -454,10 +454,14 @@ def main(
             publish_best_model_if_improved(checkpoint_id)
             if remote is not None and engine.global_step % remote.every_steps == 0:
                 publish_remote_checkpoint(checkpoint_id, final=False)
-            if (
+            local_drain = bool(
                 max_wall_seconds
                 and time.monotonic() - started_wall + step_seconds >= max_wall_seconds
-            ):
+            )
+            # A distributed adapter may have rank-specific publication latency.
+            # It must agree on draining before either rank leaves the step loop.
+            distributed_drain = getattr(engine, "_small_llm_distributed_drain", None)
+            if (distributed_drain(local_drain) if callable(distributed_drain) else local_drain):
                 drained_reason = "max_wall_seconds"
                 break
 

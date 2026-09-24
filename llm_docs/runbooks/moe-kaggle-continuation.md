@@ -1,12 +1,15 @@
 # MoE run 003 on the Kaggle two-T4 notebook
 
-This is a *single-T4* continuation in a two-T4 Kaggle allocation. The accepted MoE
-engine is single-device; `kaggle/src/dual_t4_train.py` is a **dense-model** DDP
-shim, not an interchangeable MoE launcher. Do not use `torchrun` or change the
-run's BF16 precision. T4 lacks native BF16, but the tested PyTorch 2.10 stack
-executed the existing checkpoint in BF16 autocast. This is much slower than
-H100. The six-config Triton autotune cap is installed before FLA imports;
-initial kernel tuning can take several minutes and the cache is session-local.
+This continuation uses **both T4s** through the accepted MoE-specific adapter
+`kaggle/moe_train_dual_t4.py`. It splits each 64-sequence optimizer block 32/32,
+reduces the global gradients, merges per-expert score quantiles across ranks,
+and commits the same Quantile Balancing buffers on both replicas. Rank 0 alone
+owns W&B, validation, checkpoints, HF uploads and shard eviction; rank 1 reads
+the verified local rolling shard window. `kaggle/src/dual_t4_train.py` is a
+**dense-model** DDP shim; do not use it to train MoE. Do not change the run's
+BF16 precision. T4 lacks native BF16, but the pinned PyTorch 2.10 stack
+executed the live checkpoint in BF16 autocast. The six-config Triton autotune
+cap is installed before FLA imports; the cache is session-local.
 
 This run is `moe-100b-superbpe-003`, not the older run 001 or the older
 `roccoangelella/small-llm-moe-100b-superbpe-dataset` corpus. The verified
@@ -73,19 +76,25 @@ local checkpoint behind remote latest.
 
 ## Qualification / remaining gate
 
-On the supplied Kaggle session, the HF token read the private step-265,000
-checkpoint and v2 corpus; the CPU gate restored the optimizer/cursor and
-verified the first resumed block 265,000. An isolated GPU test (no W&B writes,
-no HF writes, no live run mutation) completed step 265,001 with loss 2.77538,
-validated one held-out block, wrote a 1.16 GB local checkpoint, and then
-resumed *that* checkpoint to step 265,002 with a second validation and local
-save. Peak GPU allocation was 4.32 GB. Warm execution took roughly 20 seconds
-per update with one T4; the first capped FLA/Triton tuning took ~5 minutes.
-Both tests used the real accepted MoE model and frozen scientific schedule.
+On the supplied Kaggle session, the HF token read the private checkpoint and
+v2 corpus; the CPU gate restored the optimizer/cursor and staged the matching
+train/validation window. An earlier **single-T4** isolated probe at step
+265,000 completed two updates and local checkpoint restores (~7,050 target
+tokens/s); this is historical qualification, not the production topology.
+The dual-T4 offline probe restored the real step-272,500 snapshot, trained
+step 272,501, validated one block, saved a 1.16 GB exact-resume checkpoint,
+and reloaded that new checkpoint across both ranks to complete step 272,502.
+It used the real accepted model and frozen WSD schedule with W&B and remote
+publication disabled. The first dual update reached ~10,703 target tokens/s
+and 4.32 GB peak per-GPU allocation at microbatch 1; microbatch 2 was
+slower (~9,241 targets/s), so the production default remains 1. Router bias
+matched the serial update **exactly** and the largest model-weight difference
+was 2.67e-5 (BF16/reduction-order drift). [Measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md).
 
 **This does not authorize starting now.** W&B still reported the original
 writer `running` during qualification; no simultaneous second writer, live W&B
 resume, or live HF publication was attempted. The Kaggle notebook's new cells
 must be saved via its UI before background execution; a Jupyter proxy kernel
 execution alone does not modify the saved notebook source. Verify latest/W&B
-state immediately before requesting a background run.
+state immediately before requesting a background run. A slower second writer
+can still overwrite a newer `latest.json`, so speed is not a concurrency guard.

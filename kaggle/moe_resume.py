@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Read-only preflight or explicitly start run 003 from its verified HF latest.
 
-This is a *single-device* MoE continuation on cuda:0. The second T4 is not
-used: the canonical MoE engine has no distributed training implementation.
+Two-T4 data-parallel continuation of the original 64-sequence optimizer block.
 Never start while another provider is writing this W&B/HF run.
 """
 from __future__ import annotations
@@ -85,8 +84,10 @@ def wandb_state() -> str:
 def kaggle_popen(command: list[str], **kwargs: object) -> subprocess.Popen:
     if command[:3] != [sys.executable, "-m", "MOE_model"]:
         raise RuntimeError("unexpected production training command; refusing to replace its entrypoint")
-    return subprocess.Popen([sys.executable, str(ROOT / "kaggle" / "moe_train_single_t4.py"),
-                             *command[3:]], **kwargs)
+    return subprocess.Popen([
+        sys.executable, "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=2",
+        str(ROOT / "kaggle" / "moe_train_dual_t4.py"), *command[3:],
+    ], **kwargs)
 
 
 def request(commit: str, work_dir: Path) -> ProductionRequest:

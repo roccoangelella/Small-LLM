@@ -116,5 +116,7 @@ class KaggleMoEResumeTests(TestCase):
         with mock.patch.object(launch.subprocess, "Popen") as popen:
             launch.kaggle_popen([sys.executable, "-m", "MOE_model", "--resume", "step-00000001"], cwd="/tmp")
             command = popen.call_args.args[0]
-            self.assertEqual(Path(command[1]).name, "moe_train_single_t4.py")
-            self.assertEqual(command[2:], ["--resume", "step-00000001"])
+            self.assertEqual(command[:5], [sys.executable, "-m", "torch.distributed.run",
+                                          "--standalone", "--nproc-per-node=2"])
+            self.assertEqual(Path(command[5]).name, "moe_train_dual_t4.py")
+            self.assertEqual(command[6:], ["--resume", "step-00000001"])
