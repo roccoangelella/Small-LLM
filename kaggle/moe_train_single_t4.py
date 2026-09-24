@@ -21,7 +21,10 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["FLA_CACHE_RESULTS"] = "1"
     import torch
 
-    if torch.cuda.device_count() != 2 or any(torch.cuda.get_device_capability(i) != (7, 5) for i in range(2)):
+    if torch.cuda.device_count() != 2 or any(
+        torch.cuda.get_device_name(i) != "Tesla T4" or torch.cuda.get_device_capability(i) != (7, 5)
+        for i in range(2)
+    ):
         raise RuntimeError("this execution shim is restricted to Kaggle's two Tesla T4 GPUs")
     source = ROOT / "kaggle" / "src" / "dual_t4_train.py"
     spec = importlib.util.spec_from_file_location("small_llm_t4_autotune", source)

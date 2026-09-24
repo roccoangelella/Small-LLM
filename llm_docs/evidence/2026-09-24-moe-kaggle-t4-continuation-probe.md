@@ -49,6 +49,12 @@ rerun succeeded. The isolated probe never advanced HF latest or wrote W&B.
 **Not verified:** a saved/background Kaggle notebook, an authenticated W&B
 `resume=must` from Kaggle, or publishing a Kaggle-created checkpoint to the
 live HF latest pointer. The existing writer was still running, so testing
-these on the same run would be a double-writer risk. This is not a green light
-for background training. Procedure and safety gates:
+these on the same run would be a double-writer risk. After publishing the
+implementation as `0cb240872a587256ea5df44daf91a9ca39c61dcd` on public
+`moe-8e-top1`, the *actual* clean Kaggle checkout ran
+`python kaggle/moe_resume.py` successfully against the newer HF step-270,000
+pointer (first staged block 270,000). Executing the public `--start` entrypoint
+while W&B remained `running` exited before the CPU gate or GPU launch with
+its previous-writer guard. No Kaggle checkpoint was published. This is not a
+green light for background training. Procedure and safety gates:
 [MoE Kaggle continuation](../runbooks/moe-kaggle-continuation.md).
