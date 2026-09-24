@@ -42,9 +42,15 @@ This fails with `UnpicklingError` for the *valid* local MoE checkpoint, even
 though the direct training resume loader understands the format. The scanner
 now selects the existing streamed Torch loader for ZIP checkpoints and keeps
 plain-pickle support; a focused regression test covers production `latest`
-resolution. A clean Kaggle checkout still needs to verify this fix against the
-actual saved test checkpoint. This test did **not** resume the live W&B run
-or publish anything to its HF checkpoint bucket.
+resolution. The first clean Kaggle checkout at `46fe269` subsequently
+verified `complete_checkpoint` on the **actual** saved ZIP state (step 277,516,
+36,374,577,152 consumed targets); a fresh Python process also resolved
+`latest` to that step with exactly one remaining update. A long-lived notebook
+kernel had cached the older scanner module and incorrectly quarantined a later
+isolated test snapshot; that snapshot was restored **only after** checking
+its local manifest, metadata, and Torch state in a fresh process. New
+background notebook processes import the fixed module. This test did **not**
+resume the live W&B run or publish to its HF checkpoint bucket.
 
 W&B setup note: the first launch using `--wandb-resume never` failed to create
 a new run (`no data but must resume` in W&B core), before any optimizer step.

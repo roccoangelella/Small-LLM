@@ -31,12 +31,16 @@ checkpoint/corpus restored and passed the CPU gate. A MoE-specific two-rank
 adapter replayed the full 64-sequence block across both GPUs; offline CLI
 validation/save and a second exact local resume passed on the public
 `moe-8e-top1` checkout (`7ed4e29`), with global router quantiles and
-rank-zero-only side effects. A separate 16-step Kaggle W&B test finished
-at **15.3k warmed-up targets/s** across both T4s (versus ~346k on the H100
-writer); T4 has **no native BF16**, explaining much of this gap. The temporary
-run validated and saved locally without HF publication. The original W&B
-writer was still `running`; live Kaggle W&B resume and remote publication have
-**not** been qualified. Do not start another writer. [Kaggle runbook](../runbooks/moe-kaggle-continuation.md) · [W&B test](../evidence/2026-09-24-moe-kaggle-wandb-perf-test.md).
+rank-zero-only side effects. Two isolated 16-step Kaggle W&B runs measured
+**15.3k → 18.2k warmed-up targets/s (+18.9%)** when the safe microbatch
+increased from 1 to 4; both validated/saved locally without HF publication.
+T4 has **no native BF16**, and the H100 writer reported ~346k with compiled
+blocks and microbatch 32; do not promise hardware parity. The original W&B
+writer was `running` during the isolated tests but last queried as `crashed`;
+its actual owner/process and latest HF pointer are not reconciled. Live Kaggle
+W&B resume and remote publication remain **unqualified**. Do not start another
+writer without confirming the old process has stopped and rerunning preflight.
+[Kaggle runbook](../runbooks/moe-kaggle-continuation.md) · [W&B test](../evidence/2026-09-24-moe-kaggle-wandb-perf-test.md) · [Optimization](../evidence/2026-09-24-moe-kaggle-mb4-optimization.md).
 
 The authorized 100B run is active on Modal after an OOM recovery at microbatch32;
 remote checkpoints through32500 were observed by the local supervisor on September13.

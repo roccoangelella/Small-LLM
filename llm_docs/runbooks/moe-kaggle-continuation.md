@@ -88,24 +88,31 @@ step 272,501, validated one block, saved a 1.16 GB exact-resume checkpoint,
 and reloaded that new checkpoint across both ranks to complete step 272,502.
 It used the real accepted model and frozen WSD schedule with W&B and remote
 publication disabled. The first dual update reached ~10,703 target tokens/s
-and 4.32 GB peak per-GPU allocation at microbatch 1; microbatch 2 was
-slower (~9,241 targets/s), so the production default remains 1. Router bias
-matched the serial update **exactly** and the largest model-weight difference
+and 4.32 GB peak per-GPU allocation at microbatch 1; a *cold single-step*
+microbatch-2 probe was slower (~9,241 targets/s). Warm multi-step throughput
+changed that result; the qualified production default is now **microbatch 4**.
+Router bias matched the serial update **exactly** and the largest model-weight difference
 was 2.67e-5 (BF16/reduction-order drift). The clean public
 `moe-8e-top1` checkout at `7ed4e29` separately passed preflight at HF
 step 277,500, then completed an isolated two-rank GPU step and an exact
 second local resume from its newly saved checkpoint. A separate 16-step
 **online W&B** benchmark with a unique ID confirmed 15.3k warmed-up targets/s
-on both T4s; the original H100 run showed ~346k at BF16 microbatch 32 with
-compiled blocks. W&B logged all 16 steps, final validation and local save
-passed, and HF checkpoint publication was disabled. Its Torch-ZIP checkpoint
-also exposed a generic `latest` discovery bug fixed in
-`dataset/src/checkpoint_sequence.py`; direct resume alone did not test this
-path. [Offline measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md) · [W&B benchmark](../evidence/2026-09-24-moe-kaggle-wandb-perf-test.md).
+on both T4s. The newly qualified **microbatch-4** lane reached **18.2k
+warmed-up targets/s, +18.9%** on a separate 16-step W&B run from the same
+starting block. The original H100 showed ~346k at native BF16, microbatch 32,
+compiled blocks. Both W&B test runs validated/saved locally, with no HF
+publication; the MB4 checkpoint loaded into an exact additional two-rank
+step. MB8 reached ~14.95 GB reserved and has inadequate memory headroom.
+Changing the DDP bucket size did not help. The Torch-ZIP checkpoint scanner
+fix in `dataset/src/checkpoint_sequence.py` also passed on a real Kaggle test
+checkpoint in a **fresh process** (an already-running notebook kernel can
+still hold the old module in memory). [Offline measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md) · [W&B baseline](../evidence/2026-09-24-moe-kaggle-wandb-perf-test.md) · [Optimization measurements](../evidence/2026-09-24-moe-kaggle-mb4-optimization.md).
 
-**This does not authorize starting now.** W&B still reported the original
-writer `running` during qualification; no simultaneous second writer, live W&B
-resume, or live HF publication was attempted. The Kaggle notebook's new cells
+**This does not authorize starting now.** W&B reported the original writer
+`running` during the isolated tests and later `crashed` in a read-only query;
+that W&B state alone does not prove its process is gone or reconcile HF latest.
+No simultaneous writer, live-run W&B resume, or live HF publication was
+attempted. The Kaggle notebook's new cells
 must be saved via its UI before background execution; a Jupyter proxy kernel
 execution alone does not modify the saved notebook source. Verify latest/W&B
 state immediately before requesting a background run. A slower second writer
