@@ -14,6 +14,7 @@ import pickle
 import re
 import shutil
 import time
+import zipfile
 
 from .joint_checkpoint import verify_local_manifest
 from .storage import read_json
@@ -54,8 +55,16 @@ def complete_checkpoint(path: Path, *, verify_state: bool = True) -> dict[str, o
     result: dict[str, object] = {"checkpoint_id": path.name, "step": step, "path": path}
     if not verify_state:
         return result
-    with (path / "trainer_state.pkl").open("rb") as handle:
-        state = pickle.load(handle)
+    state_path = path / "trainer_state.pkl"
+    if zipfile.is_zipfile(state_path):
+        # TrainerEngine streams torch.save ZIP state into the historical .pkl
+        # filename. Plain pickle cannot load its persistent tensor references.
+        from trainer.state import load_trainer_state_file
+
+        state = load_trainer_state_file(state_path, map_location="cpu")
+    else:
+        with state_path.open("rb") as handle:
+            state = pickle.load(handle)
     if not isinstance(state, Mapping) or state.get("global_step") != step:
         raise ValueError("checkpoint state step differs from its identity")
     tokens = state.get("consumed_tokens")

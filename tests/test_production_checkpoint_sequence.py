@@ -368,6 +368,29 @@ class AutoResumeTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--resume") + 1], "step-00000006")
                 self.assertEqual(command[command.index("--steps") + 1], "4")
 
+    def test_latest_resolves_streamed_torch_zip_checkpoint(self) -> None:
+        import torch
+
+        class _StreamedTrainer:
+            def save_checkpoint_state(self, path: Path) -> None:
+                torch.save({"global_step": 6, "consumed_tokens": 6 * 131072,
+                            "model": {"weight": torch.arange(4)}}, path)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            request = self._request(root, resume="latest")
+            checkpoints = production.checkpoint_dir(request, run_root=root / "runs")
+            _coordinator(checkpoints).save(
+                checkpoint_id="step-00000006", trainer=_StreamedTrainer(),
+                pipeline_state={"last_consumed_block_id": 5,
+                                "gradient_accumulation_position": 0},
+                optimizer_step_complete=True,
+            )
+            plan = production.resolve_resume(request, run_root=root / "runs")
+            self.assertEqual(plan["resume"], "step-00000006")
+            self.assertEqual(plan["remaining_steps"], 4)
+            self.assertEqual(find_latest_complete_checkpoint(checkpoints)["consumed_tokens"], 786432)
+
     def test_auto_resume_quarantines_all_invalid_steps_and_allows_resaving(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

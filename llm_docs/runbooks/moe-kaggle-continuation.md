@@ -7,9 +7,11 @@ and commits the same Quantile Balancing buffers on both replicas. Rank 0 alone
 owns W&B, validation, checkpoints, HF uploads and shard eviction; rank 1 reads
 the verified local rolling shard window. `kaggle/src/dual_t4_train.py` is a
 **dense-model** DDP shim; do not use it to train MoE. Do not change the run's
-BF16 precision. T4 lacks native BF16, but the pinned PyTorch 2.10 stack
-executed the live checkpoint in BF16 autocast. The six-config Triton autotune
-cap is installed before FLA imports; the cache is session-local.
+BF16 precision. T4 lacks native BF16: the pinned PyTorch 2.10 stack
+**emulates** BF16 here. Training works, but it is much slower than on H100;
+do not extrapolate the first cold step or silently switch the live checkpoint
+to FP16. The six-config Triton autotune cap is installed before FLA imports;
+the cache is session-local.
 
 This run is `moe-100b-superbpe-003`, not the older run 001 or the older
 `roccoangelella/small-llm-moe-100b-superbpe-dataset` corpus. The verified
@@ -92,7 +94,14 @@ matched the serial update **exactly** and the largest model-weight difference
 was 2.67e-5 (BF16/reduction-order drift). The clean public
 `moe-8e-top1` checkout at `7ed4e29` separately passed preflight at HF
 step 277,500, then completed an isolated two-rank GPU step and an exact
-second local resume from its newly saved checkpoint. [Measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md).
+second local resume from its newly saved checkpoint. A separate 16-step
+**online W&B** benchmark with a unique ID confirmed 15.3k warmed-up targets/s
+on both T4s; the original H100 run showed ~346k at BF16 microbatch 32 with
+compiled blocks. W&B logged all 16 steps, final validation and local save
+passed, and HF checkpoint publication was disabled. Its Torch-ZIP checkpoint
+also exposed a generic `latest` discovery bug fixed in
+`dataset/src/checkpoint_sequence.py`; direct resume alone did not test this
+path. [Offline measurements](../evidence/2026-09-24-moe-kaggle-dual-t4-probe.md) · [W&B benchmark](../evidence/2026-09-24-moe-kaggle-wandb-perf-test.md).
 
 **This does not authorize starting now.** W&B still reported the original
 writer `running` during qualification; no simultaneous second writer, live W&B
