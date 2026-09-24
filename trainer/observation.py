@@ -125,9 +125,12 @@ class RunObservation:
             run_source = getattr(args, "run_source_commit", None)
             if (getattr(model_config, "version", None) == 3
                     and getattr(args, "resume", None) and run_source):
-                if previous_identity["source_commit"] != run_source:
+                if previous_identity["source_commit"] not in {run_source, args.source_commit}:
                     raise ValueError("observation origin differs from declared run source")
-                # Root identity remains immutable; each segment records its executor.
+                # A fresh provider may have only its own executor's artifacts: on
+                # the next segment that executor is the existing observation root.
+                # The checkpoint receipt still pins the immutable run origin.
+                # Each segment records its executor separately.
                 for value in (previous_identity, current_identity):
                     for key in ("source_commit", "source_tree_sha256", "source_tree_dirty"):
                         value.pop(key, None)

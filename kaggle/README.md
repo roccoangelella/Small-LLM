@@ -28,6 +28,12 @@ python kaggle/probes_100m_10b.py --probe active
 
 The wrapper normalizes repository paths after the `kaggle/src/` reorganization before delegating to `src/probes_100m_10b.py`, ensuring the continuation code resolves the provider-neutral `beam/runtime.py` and the canonical Kaggle dual-T4 wrapper. The launcher owns the current constant-`1e-5` and constant-`2e-5` hold probes. The earlier Probe A files were merged under ADR 0144 and should not be reintroduced as parallel scientific probe implementations.
 
+MoE run 003 uses the separate, fail-closed `python kaggle/moe_resume.py` entrypoint
+(preflight by default; `--start` only after the previous writer stops). It runs
+on **one** of Kaggle's two T4s, not the dense DDP runtime. Notebook setup,
+run-specific identities, and the remaining live-publication gate are documented
+in [`llm_docs/runbooks/moe-kaggle-continuation.md`](../llm_docs/runbooks/moe-kaggle-continuation.md).
+
 See [`src/README.md`](src/README.md) for the current source-file groups.
 
 When adding new Kaggle code, prefer `kaggle/src/` for Python, `kaggle/env/` for dependency or environment files, and keep the root reserved for stable launch wrappers plus this index.
